@@ -90,10 +90,12 @@ export default function PromptBarPreviewPage() {
               variant="outline"
               size="sm"
               className="h-8 text-xs"
-              onClick={() => setShowModelPopover((prev) => !prev)}
+              onClick={() => {
+                setShowModelPopover(false);
+                setShowReasoningPopover(false);
+              }}
             >
-              <SlidersHorizontal className="mr-1.5 h-3.5 w-3.5" />
-              Toggle Popover ({showModelPopover ? 'Open' : 'Closed'})
+              Close All Popovers
             </Button>
           </div>
         </div>
@@ -104,7 +106,7 @@ export default function PromptBarPreviewPage() {
         {/* Navigation Concepts */}
         <div className="mb-10 flex flex-wrap gap-2 border-b border-border pb-4">
           {[
-            { id: 1, name: 'Concept 1: Popover Control Panel', tag: 'Recommended' },
+            { id: 1, name: 'Concept 1: Unified Popover Panel', tag: 'Recommended' },
             { id: 2, name: 'Concept 2: Dual Embedded Chips', tag: 'v0 / Bolt' },
             { id: 3, name: 'Concept 3: Expandable Drawer', tag: 'Linear / Raycast' },
           ].map((concept) => (
@@ -113,7 +115,8 @@ export default function PromptBarPreviewPage() {
               type="button"
               onClick={() => {
                 setActiveConcept(concept.id);
-                setShowModelPopover(true);
+                setShowModelPopover(concept.id === 1 || concept.id === 2);
+                setShowReasoningPopover(false);
               }}
               className={cn(
                 'flex items-center gap-2.5 rounded-lg px-4 py-2.5 text-xs font-medium transition-all',
@@ -144,7 +147,7 @@ export default function PromptBarPreviewPage() {
             <div className="rounded-2xl border border-border bg-[#111111] p-8">
               <div className="mb-6 flex items-center justify-between">
                 <div>
-                  <h2 className="text-lg font-semibold text-white">Concept 1: Popover Control Panel</h2>
+                  <h2 className="text-lg font-semibold text-white">Concept 1: Unified Popover Panel</h2>
                   <p className="mt-1 text-xs text-foreground-muted">
                     Clicking the model chip opens a unified popover containing Model Search/Selection and a Reasoning Effort Slider.
                   </p>
@@ -309,7 +312,7 @@ export default function PromptBarPreviewPage() {
                 <div>
                   <h2 className="text-lg font-semibold text-white">Concept 2: Dual Embedded Chips</h2>
                   <p className="mt-1 text-xs text-foreground-muted">
-                    v0 & Bolt inspired. Dedicated side-by-side chips for Model selection and Reasoning level.
+                    v0 & Bolt inspired. Click either chip to open its dedicated Model or Reasoning popover!
                   </p>
                 </div>
                 <Badge variant="outline" className="border-border text-foreground-secondary">
@@ -317,40 +320,163 @@ export default function PromptBarPreviewPage() {
                 </Badge>
               </div>
 
-              <div className="mx-auto max-w-2xl rounded-2xl border border-white/10 bg-[#161618] p-3 shadow-2xl">
-                <textarea
-                  value={sampleText}
-                  onChange={(e) => setSampleText(e.target.value)}
-                  rows={2}
-                  className="w-full resize-none bg-transparent px-2 text-sm text-white focus:outline-none"
-                />
+              <div className="relative mx-auto max-w-2xl">
+                {/* MODEL POPOVER FOR CONCEPT 2 */}
+                {showModelPopover && (
+                  <div className="absolute bottom-full left-0 mb-3 z-30 w-72 rounded-2xl border border-white/15 bg-[#161618] p-3 shadow-2xl backdrop-blur-xl">
+                    <div className="mb-2 flex items-center justify-between border-b border-white/10 pb-2">
+                      <span className="text-xs font-semibold text-white">Select Model</span>
+                      <button
+                        type="button"
+                        onClick={() => setShowModelPopover(false)}
+                        className="rounded p-0.5 text-foreground-muted hover:text-white"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <div className="space-y-1">
+                      {SAMPLE_MODELS.map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedModel(m.name);
+                            setShowModelPopover(false);
+                          }}
+                          className={cn(
+                            'flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition-colors',
+                            selectedModel === m.name
+                              ? 'bg-primary/15 text-primary font-medium'
+                              : 'text-foreground-secondary hover:bg-white/5 hover:text-white',
+                          )}
+                        >
+                          <div className="flex items-center gap-2">
+                            <Zap className="h-3.5 w-3.5" />
+                            <span>{m.name}</span>
+                          </div>
+                          {selectedModel === m.name && <Check className="h-3.5 w-3.5 text-primary" />}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
-                <div className="mt-3 flex items-center justify-between border-t border-white/[0.06] pt-2.5">
-                  <div className="flex items-center gap-2">
+                {/* REASONING POPOVER FOR CONCEPT 2 */}
+                {showReasoningPopover && (
+                  <div className="absolute bottom-full left-32 mb-3 z-30 w-72 rounded-2xl border border-white/15 bg-[#161618] p-3 shadow-2xl backdrop-blur-xl">
+                    <div className="mb-2 flex items-center justify-between border-b border-white/10 pb-2">
+                      <span className="text-xs font-semibold text-white">Reasoning Effort</span>
+                      <button
+                        type="button"
+                        onClick={() => setShowReasoningPopover(false)}
+                        className="rounded p-0.5 text-foreground-muted hover:text-white"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-5 gap-1 rounded-lg border border-white/10 bg-black/30 p-1">
+                      {REASONING_LEVELS.map((r) => (
+                        <button
+                          key={r.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedReasoning(r.id);
+                            setShowReasoningPopover(false);
+                          }}
+                          className={cn(
+                            'rounded py-1 text-[10px] font-semibold transition-all',
+                            selectedReasoning === r.id
+                              ? 'bg-primary text-primary-foreground shadow'
+                              : 'text-foreground-muted hover:text-white',
+                          )}
+                        >
+                          {r.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* MAIN CAPSULE */}
+                <div className="rounded-2xl border border-white/10 bg-[#161618] p-3 shadow-2xl">
+                  {selectedElement && (
+                    <div className="mb-2.5 flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs">
+                      <Crosshair className="h-3.5 w-3.5 text-primary" />
+                      <span className="text-foreground-secondary">
+                        Editing <span className="font-mono font-medium text-foreground">{selectedElement.selector}</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setHasTarget(false)}
+                        className="ml-auto text-foreground-muted hover:text-white"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )}
+
+                  <textarea
+                    value={sampleText}
+                    onChange={(e) => setSampleText(e.target.value)}
+                    placeholder="Describe what you want to build or change…"
+                    rows={2}
+                    className="w-full resize-none bg-transparent px-2 text-sm text-white placeholder:text-foreground-muted focus:outline-none"
+                  />
+
+                  <div className="mt-3 flex items-center justify-between border-t border-white/[0.06] pt-2.5">
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowModelPopover((prev) => !prev);
+                          setShowReasoningPopover(false);
+                        }}
+                        className={cn(
+                          'flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-all',
+                          showModelPopover
+                            ? 'border-primary/50 bg-primary/10 text-primary'
+                            : 'border-white/10 bg-white/5 text-foreground-secondary hover:bg-white/10 hover:text-white',
+                        )}
+                      >
+                        <Zap className="h-3.5 w-3.5 text-primary" />
+                        <span>{selectedModel} ▾</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowReasoningPopover((prev) => !prev);
+                          setShowModelPopover(false);
+                        }}
+                        className={cn(
+                          'flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-all',
+                          showReasoningPopover
+                            ? 'border-amber-500/50 bg-amber-500/10 text-amber-400'
+                            : 'border-white/10 bg-white/5 text-foreground-secondary hover:bg-white/10 hover:text-white',
+                        )}
+                      >
+                        <Brain className="h-3.5 w-3.5 text-amber-400" />
+                        <span>Reasoning: {selectedReasoning} ▾</span>
+                      </button>
+                    </div>
+
                     <button
                       type="button"
-                      className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-foreground-secondary hover:bg-white/10 hover:text-white"
+                      onClick={() => setIsSending((prev) => !prev)}
+                      disabled={!sampleText.trim() && !isSending}
+                      className={cn(
+                        'flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-semibold transition-all',
+                        isSending
+                          ? 'bg-red-500/20 text-red-400'
+                          : sampleText.trim()
+                            ? 'bg-primary text-primary-foreground shadow-md'
+                            : 'bg-white/10 text-white/40 cursor-not-allowed',
+                      )}
                     >
-                      <Zap className="h-3.5 w-3.5 text-primary" />
-                      <span>{selectedModel} ▾</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-foreground-secondary hover:bg-white/10 hover:text-white"
-                    >
-                      <Brain className="h-3.5 w-3.5 text-amber-400" />
-                      <span>Reasoning: {selectedReasoning} ▾</span>
+                      {isSending ? 'Stop' : 'Send'}
+                      <ArrowUp className="h-3.5 w-3.5" />
                     </button>
                   </div>
-
-                  <button
-                    type="button"
-                    className="flex items-center gap-1.5 rounded-xl bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground"
-                  >
-                    <span>Send</span>
-                    <ArrowUp className="h-3.5 w-3.5" />
-                  </button>
                 </div>
               </div>
             </div>
@@ -363,7 +489,7 @@ export default function PromptBarPreviewPage() {
                 <div>
                   <h2 className="text-lg font-semibold text-white">Concept 3: Expandable Drawer</h2>
                   <p className="mt-1 text-xs text-foreground-muted">
-                    Linear & Raycast inspired. Expandable options drawer directly inside the prompt bar footer.
+                    Linear & Raycast inspired. Fully interactive expandable controls drawer directly inside the prompt bar.
                   </p>
                 </div>
                 <Badge variant="outline" className="border-border text-foreground-secondary">
@@ -372,9 +498,26 @@ export default function PromptBarPreviewPage() {
               </div>
 
               <div className="mx-auto max-w-2xl rounded-2xl border border-white/10 bg-[#161618] p-3 shadow-2xl">
+                {selectedElement && (
+                  <div className="mb-2.5 flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs">
+                    <Crosshair className="h-3.5 w-3.5 text-primary" />
+                    <span className="text-foreground-secondary">
+                      Editing <span className="font-mono font-medium text-foreground">{selectedElement.selector}</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setHasTarget(false)}
+                      className="ml-auto text-foreground-muted hover:text-white"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                )}
+
                 <textarea
                   value={sampleText}
                   onChange={(e) => setSampleText(e.target.value)}
+                  placeholder="Describe what you want to build or change…"
                   rows={2}
                   className="w-full resize-none bg-transparent px-2 text-sm text-white focus:outline-none"
                 />
@@ -386,7 +529,7 @@ export default function PromptBarPreviewPage() {
                     <select
                       value={selectedModel}
                       onChange={(e) => setSelectedModel(e.target.value)}
-                      className="rounded bg-white/10 px-2 py-1 text-xs text-white focus:outline-none"
+                      className="rounded border border-white/10 bg-[#141414] px-2.5 py-1 text-xs text-white focus:outline-none"
                     >
                       {SAMPLE_MODELS.map((m) => (
                         <option key={m.id} value={m.name} className="bg-[#141414] text-white">
@@ -405,8 +548,8 @@ export default function PromptBarPreviewPage() {
                           type="button"
                           onClick={() => setSelectedReasoning(r.id)}
                           className={cn(
-                            'rounded px-2 py-0.5 text-[10px] font-medium',
-                            selectedReasoning === r.id ? 'bg-primary text-primary-foreground' : 'bg-white/10 text-foreground-secondary',
+                            'rounded px-2 py-1 text-[10px] font-semibold transition-all',
+                            selectedReasoning === r.id ? 'bg-primary text-primary-foreground shadow' : 'bg-white/10 text-foreground-secondary hover:text-white',
                           )}
                         >
                           {r.label}
@@ -420,9 +563,10 @@ export default function PromptBarPreviewPage() {
                   <span className="text-xs text-foreground-muted">Configured: {selectedModel} • {selectedReasoning}</span>
                   <button
                     type="button"
-                    className="flex items-center gap-1.5 rounded-xl bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground"
+                    onClick={() => setIsSending((prev) => !prev)}
+                    className="flex items-center gap-1.5 rounded-xl bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground shadow-md"
                   >
-                    <span>Send</span>
+                    <span>{isSending ? 'Stop' : 'Send'}</span>
                     <ArrowUp className="h-3.5 w-3.5" />
                   </button>
                 </div>
