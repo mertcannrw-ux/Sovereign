@@ -5,30 +5,60 @@ import Link from 'next/link';
 import {
   ArrowLeft,
   ArrowUp,
-  CornerDownLeft,
+  Brain,
+  ChevronDown,
+  ChevronUp,
   Crosshair,
+  Search,
   Sparkles,
   Square,
+  SlidersHorizontal,
   X,
   Zap,
-  Send,
-  SlidersHorizontal,
-  ChevronDown,
+  Check,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@app-builder/ui/utils';
 
+const SAMPLE_MODELS = [
+  { id: 'Agents-A1', name: 'Agents-A1', provider: 'Default', isDefault: true },
+  { id: 'claude-3-5-sonnet', name: 'Claude 3.5 Sonnet', provider: 'Anthropic' },
+  { id: 'gpt-4o', name: 'GPT-4o', provider: 'OpenAI' },
+  { id: 'gemini-1-5-pro', name: 'Gemini 1.5 Pro', provider: 'Google' },
+  { id: 'llama-3-3-70b', name: 'Llama 3.3 70B', provider: 'Groq' },
+];
+
+const REASONING_LEVELS = [
+  { id: 'auto', label: 'Auto', desc: 'Dynamic reasoning based on prompt complexity' },
+  { id: 'off', label: 'Off', desc: 'Fastest response time' },
+  { id: 'low', label: 'Low', desc: 'Light analytical thinking' },
+  { id: 'medium', label: 'Medium', desc: 'Balanced reasoning & code architecture' },
+  { id: 'high', label: 'High', desc: 'Deep step-by-step reasoning' },
+];
+
 export default function PromptBarPreviewPage() {
-  const [activeOption, setActiveOption] = useState<number>(1);
+  const [activeConcept, setActiveConcept] = useState<number>(1);
   const [hasTarget, setHasTarget] = useState<boolean>(true);
   const [sampleText, setSampleText] = useState<string>('Make the background dark and change button to green');
   const [isSending, setIsSending] = useState<boolean>(false);
   const [selectedModel, setSelectedModel] = useState<string>('Agents-A1');
+  const [selectedReasoning, setSelectedReasoning] = useState<string>('auto');
+
+  // Popover state toggles
+  const [showModelPopover, setShowModelPopover] = useState<boolean>(true);
+  const [showReasoningPopover, setShowReasoningPopover] = useState<boolean>(false);
+  const [modelSearch, setModelSearch] = useState<string>('');
 
   const selectedElement = hasTarget
     ? { tagName: 'button', selector: 'button.hero-cta' }
     : null;
+
+  const filteredModels = SAMPLE_MODELS.filter(
+    (m) =>
+      m.name.toLowerCase().includes(modelSearch.toLowerCase()) ||
+      m.provider.toLowerCase().includes(modelSearch.toLowerCase()),
+  );
 
   return (
     <div className="min-h-screen bg-[#0A0A0A] text-foreground">
@@ -44,7 +74,7 @@ export default function PromptBarPreviewPage() {
               Back to Dashboard
             </Link>
             <span className="text-border">|</span>
-            <h1 className="text-base font-semibold">AI Prompt Bar Redesign Concepts</h1>
+            <h1 className="text-base font-semibold">Prompt Bar Model Picker & Reasoning Redesigns</h1>
           </div>
           <div className="flex items-center gap-2">
             <Button
@@ -60,9 +90,10 @@ export default function PromptBarPreviewPage() {
               variant="outline"
               size="sm"
               className="h-8 text-xs"
-              onClick={() => setSampleText((prev) => (prev ? '' : 'Add a modern glassmorphism navbar'))}
+              onClick={() => setShowModelPopover((prev) => !prev)}
             >
-              {sampleText ? 'Clear Text' : 'Fill Sample Text'}
+              <SlidersHorizontal className="mr-1.5 h-3.5 w-3.5" />
+              Toggle Popover ({showModelPopover ? 'Open' : 'Closed'})
             </Button>
           </div>
         </div>
@@ -70,35 +101,37 @@ export default function PromptBarPreviewPage() {
 
       {/* Main Content */}
       <main className="mx-auto max-w-6xl px-6 py-10">
-        {/* Navigation Tabs */}
+        {/* Navigation Concepts */}
         <div className="mb-10 flex flex-wrap gap-2 border-b border-border pb-4">
           {[
-            { id: 1, name: 'Option 1: Unified Floating Capsule', tag: 'Recommended' },
-            { id: 2, name: 'Option 2: Floating Slim Bar', tag: 'Linear / Raycast' },
-            { id: 3, name: 'Option 3: Structured Target Dock', tag: 'Cursor / Bolt' },
-            { id: 4, name: 'Option 4: Flush Integrated Dock', tag: 'Apple Minimalist' },
-          ].map((option) => (
+            { id: 1, name: 'Concept 1: Popover Control Panel', tag: 'Recommended' },
+            { id: 2, name: 'Concept 2: Dual Embedded Chips', tag: 'v0 / Bolt' },
+            { id: 3, name: 'Concept 3: Expandable Drawer', tag: 'Linear / Raycast' },
+          ].map((concept) => (
             <button
-              key={option.id}
+              key={concept.id}
               type="button"
-              onClick={() => setActiveOption(option.id)}
+              onClick={() => {
+                setActiveConcept(concept.id);
+                setShowModelPopover(true);
+              }}
               className={cn(
                 'flex items-center gap-2.5 rounded-lg px-4 py-2.5 text-xs font-medium transition-all',
-                activeOption === option.id
+                activeConcept === concept.id
                   ? 'bg-primary text-primary-foreground shadow-sm'
                   : 'bg-background-subtle text-foreground-muted hover:bg-background-muted hover:text-foreground',
               )}
             >
-              <span>{option.name}</span>
+              <span>{concept.name}</span>
               <span
                 className={cn(
                   'rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider',
-                  activeOption === option.id
+                  activeConcept === concept.id
                     ? 'bg-black/20 text-primary-foreground'
                     : 'bg-background-muted text-foreground-secondary',
                 )}
               >
-                {option.tag}
+                {concept.tag}
               </span>
             </button>
           ))}
@@ -106,14 +139,14 @@ export default function PromptBarPreviewPage() {
 
         {/* Display Area */}
         <div className="grid gap-12 lg:grid-cols-1">
-          {/* OPTION 1 */}
-          {activeOption === 1 && (
+          {/* CONCEPT 1 */}
+          {activeConcept === 1 && (
             <div className="rounded-2xl border border-border bg-[#111111] p-8">
               <div className="mb-6 flex items-center justify-between">
                 <div>
-                  <h2 className="text-lg font-semibold text-white">Option 1: Unified Floating Capsule</h2>
+                  <h2 className="text-lg font-semibold text-white">Concept 1: Popover Control Panel</h2>
                   <p className="mt-1 text-xs text-foreground-muted">
-                    OpenAI / v0 style. All controls (model picker, prompt enhancement, send button) are contained within a sleek floating card.
+                    Clicking the model chip opens a unified popover containing Model Search/Selection and a Reasoning Effort Slider.
                   </p>
                 </div>
                 <Badge variant="outline" className="border-primary/40 text-primary">
@@ -121,35 +154,177 @@ export default function PromptBarPreviewPage() {
                 </Badge>
               </div>
 
-              {/* Live Interactive Component */}
-              <div className="mx-auto max-w-2xl rounded-2xl border border-white/10 bg-[#161618] p-3 shadow-2xl transition-all focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/40">
-                {/* Target badge */}
-                {selectedElement && (
-                  <div className="mb-2.5 flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs">
-                    <Crosshair className="h-3.5 w-3.5 text-primary" />
-                    <span className="text-foreground-secondary">
-                      Editing <span className="font-mono font-medium text-foreground">{selectedElement.selector}</span>
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setHasTarget(false)}
-                      className="ml-auto rounded p-0.5 text-foreground-muted hover:text-white"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
+              {/* Interactive Capsule with Popover */}
+              <div className="relative mx-auto max-w-2xl">
+                {/* FLOATING POPOVER */}
+                {showModelPopover && (
+                  <div className="absolute bottom-full left-0 mb-3 z-30 w-80 rounded-2xl border border-white/15 bg-[#161618] p-3 shadow-2xl backdrop-blur-xl">
+                    <div className="mb-2.5 flex items-center justify-between border-b border-white/10 pb-2">
+                      <span className="text-xs font-semibold text-white">Model & Reasoning Config</span>
+                      <button
+                        type="button"
+                        onClick={() => setShowModelPopover(false)}
+                        className="rounded p-1 text-foreground-muted hover:text-white"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+
+                    {/* Search Models Input */}
+                    <div className="relative mb-3">
+                      <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-foreground-muted" />
+                      <input
+                        type="text"
+                        value={modelSearch}
+                        onChange={(e) => setModelSearch(e.target.value)}
+                        placeholder="Search models or providers..."
+                        className="w-full rounded-lg border border-white/10 bg-black/40 pl-8 pr-3 py-1.5 text-xs text-white placeholder:text-foreground-muted focus:border-primary focus:outline-none"
+                      />
+                    </div>
+
+                    {/* Models List */}
+                    <div className="max-h-40 overflow-y-auto space-y-1 pr-1">
+                      {filteredModels.map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => setSelectedModel(m.name)}
+                          className={cn(
+                            'flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition-colors',
+                            selectedModel === m.name
+                              ? 'bg-primary/15 text-primary font-medium'
+                              : 'text-foreground-secondary hover:bg-white/5 hover:text-white',
+                          )}
+                        >
+                          <div className="flex items-center gap-2">
+                            <Zap className="h-3.5 w-3.5" />
+                            <span>{m.name}</span>
+                          </div>
+                          {selectedModel === m.name && <Check className="h-3.5 w-3.5 text-primary" />}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Reasoning Effort Segmented Slider */}
+                    <div className="mt-3 border-t border-white/10 pt-2.5">
+                      <div className="mb-1.5 flex items-center justify-between text-[11px]">
+                        <span className="font-semibold text-foreground-secondary">Reasoning Effort</span>
+                        <span className="font-mono text-primary uppercase">{selectedReasoning}</span>
+                      </div>
+                      <div className="grid grid-cols-5 gap-1 rounded-lg border border-white/10 bg-black/30 p-1">
+                        {REASONING_LEVELS.map((r) => (
+                          <button
+                            key={r.id}
+                            type="button"
+                            onClick={() => setSelectedReasoning(r.id)}
+                            className={cn(
+                              'rounded py-1 text-[10px] font-semibold transition-all',
+                              selectedReasoning === r.id
+                                ? 'bg-primary text-primary-foreground shadow'
+                                : 'text-foreground-muted hover:text-white',
+                            )}
+                          >
+                            {r.label}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="mt-1.5 text-[10px] text-foreground-muted">
+                        {REASONING_LEVELS.find((r) => r.id === selectedReasoning)?.desc}
+                      </p>
+                    </div>
                   </div>
                 )}
 
-                {/* Text input */}
+                {/* CAPSULE CARD */}
+                <div className="rounded-2xl border border-white/10 bg-[#161618] p-3 shadow-2xl transition-all focus-within:border-primary/50">
+                  {selectedElement && (
+                    <div className="mb-2.5 flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs">
+                      <Crosshair className="h-3.5 w-3.5 text-primary" />
+                      <span className="text-foreground-secondary">
+                        Editing <span className="font-mono font-medium text-foreground">{selectedElement.selector}</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setHasTarget(false)}
+                        className="ml-auto text-foreground-muted hover:text-white"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )}
+
+                  <textarea
+                    value={sampleText}
+                    onChange={(e) => setSampleText(e.target.value)}
+                    placeholder="Describe what you want to build or change…"
+                    rows={2}
+                    className="w-full resize-none bg-transparent px-2 text-sm text-white placeholder:text-foreground-muted focus:outline-none"
+                  />
+
+                  <div className="mt-3 flex items-center justify-between border-t border-white/[0.06] pt-2.5">
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowModelPopover((prev) => !prev)}
+                        className={cn(
+                          'flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-all',
+                          showModelPopover
+                            ? 'border-primary/50 bg-primary/10 text-primary'
+                            : 'border-white/10 bg-white/5 text-foreground-secondary hover:bg-white/10 hover:text-white',
+                        )}
+                      >
+                        <Zap className="h-3.5 w-3.5 text-primary" />
+                        <span>{selectedModel}</span>
+                        <span className="text-[10px] text-foreground-muted">• {selectedReasoning}</span>
+                        <ChevronUp className="h-3 w-3 opacity-60" />
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setIsSending((prev) => !prev)}
+                      disabled={!sampleText.trim() && !isSending}
+                      className={cn(
+                        'flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-semibold transition-all',
+                        isSending
+                          ? 'bg-red-500/20 text-red-400'
+                          : sampleText.trim()
+                            ? 'bg-primary text-primary-foreground shadow-md'
+                            : 'bg-white/10 text-white/40 cursor-not-allowed',
+                      )}
+                    >
+                      {isSending ? 'Stop' : 'Send'}
+                      <ArrowUp className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* CONCEPT 2 */}
+          {activeConcept === 2 && (
+            <div className="rounded-2xl border border-border bg-[#111111] p-8">
+              <div className="mb-6 flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-white">Concept 2: Dual Embedded Chips</h2>
+                  <p className="mt-1 text-xs text-foreground-muted">
+                    v0 & Bolt inspired. Dedicated side-by-side chips for Model selection and Reasoning level.
+                  </p>
+                </div>
+                <Badge variant="outline" className="border-border text-foreground-secondary">
+                  v0 / Bolt
+                </Badge>
+              </div>
+
+              <div className="mx-auto max-w-2xl rounded-2xl border border-white/10 bg-[#161618] p-3 shadow-2xl">
                 <textarea
                   value={sampleText}
                   onChange={(e) => setSampleText(e.target.value)}
-                  placeholder={selectedElement ? `Describe change for ${selectedElement.tagName}…` : 'Describe what you want to build or change…'}
                   rows={2}
-                  className="w-full resize-none bg-transparent px-2 text-sm text-white placeholder:text-foreground-muted focus:outline-none"
+                  className="w-full resize-none bg-transparent px-2 text-sm text-white focus:outline-none"
                 />
 
-                {/* Footer Controls Bar */}
                 <div className="mt-3 flex items-center justify-between border-t border-white/[0.06] pt-2.5">
                   <div className="flex items-center gap-2">
                     <button
@@ -157,61 +332,38 @@ export default function PromptBarPreviewPage() {
                       className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-foreground-secondary hover:bg-white/10 hover:text-white"
                     >
                       <Zap className="h-3.5 w-3.5 text-primary" />
-                      <span>{selectedModel}</span>
-                      <ChevronDown className="h-3 w-3 opacity-60" />
+                      <span>{selectedModel} ▾</span>
                     </button>
 
                     <button
                       type="button"
-                      className="flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs text-foreground-muted hover:bg-white/5 hover:text-white"
+                      className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-foreground-secondary hover:bg-white/10 hover:text-white"
                     >
-                      <Sparkles className="h-3.5 w-3.5 text-amber-400" />
-                      <span>Enhance prompt</span>
+                      <Brain className="h-3.5 w-3.5 text-amber-400" />
+                      <span>Reasoning: {selectedReasoning} ▾</span>
                     </button>
                   </div>
 
                   <button
                     type="button"
-                    onClick={() => setIsSending((prev) => !prev)}
-                    disabled={!sampleText.trim() && !isSending}
-                    className={cn(
-                      'flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-semibold transition-all',
-                      isSending
-                        ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
-                        : sampleText.trim()
-                          ? 'bg-primary text-primary-foreground shadow-md hover:bg-primary/90'
-                          : 'bg-white/10 text-white/40 cursor-not-allowed',
-                    )}
+                    className="flex items-center gap-1.5 rounded-xl bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground"
                   >
-                    {isSending ? (
-                      <>
-                        <Square className="h-3.5 w-3.5 fill-current" />
-                        <span>Stop</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>Send</span>
-                        <ArrowUp className="h-3.5 w-3.5" />
-                      </>
-                    )}
+                    <span>Send</span>
+                    <ArrowUp className="h-3.5 w-3.5" />
                   </button>
                 </div>
               </div>
-
-              <p className="mt-4 text-center text-[11px] text-foreground-muted">
-                Press <kbd className="rounded border border-white/10 bg-white/5 px-1 font-mono">⌘ Enter</kbd> to send, <kbd className="rounded border border-white/10 bg-white/5 px-1 font-mono">Shift Enter</kbd> for new line
-              </p>
             </div>
           )}
 
-          {/* OPTION 2 */}
-          {activeOption === 2 && (
+          {/* CONCEPT 3 */}
+          {activeConcept === 3 && (
             <div className="rounded-2xl border border-border bg-[#111111] p-8">
               <div className="mb-6 flex items-center justify-between">
                 <div>
-                  <h2 className="text-lg font-semibold text-white">Option 2: Floating Slim Bar</h2>
+                  <h2 className="text-lg font-semibold text-white">Concept 3: Expandable Drawer</h2>
                   <p className="mt-1 text-xs text-foreground-muted">
-                    Linear & Raycast inspired. Ultra-compact, single-line focus with integrated right action pill.
+                    Linear & Raycast inspired. Expandable options drawer directly inside the prompt bar footer.
                   </p>
                 </div>
                 <Badge variant="outline" className="border-border text-foreground-secondary">
@@ -219,158 +371,60 @@ export default function PromptBarPreviewPage() {
                 </Badge>
               </div>
 
-              {/* Live Interactive Component */}
-              <div className="mx-auto max-w-2xl">
-                {selectedElement && (
-                  <div className="mb-2 inline-flex items-center gap-1.5 rounded-full border border-primary/40 bg-primary/10 px-3 py-1 text-xs">
-                    <Crosshair className="h-3 w-3 text-primary" />
-                    <span className="text-foreground-secondary">
-                      Target: <span className="font-mono text-foreground">{selectedElement.selector}</span>
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setHasTarget(false)}
-                      className="ml-1 text-foreground-muted hover:text-white"
+              <div className="mx-auto max-w-2xl rounded-2xl border border-white/10 bg-[#161618] p-3 shadow-2xl">
+                <textarea
+                  value={sampleText}
+                  onChange={(e) => setSampleText(e.target.value)}
+                  rows={2}
+                  className="w-full resize-none bg-transparent px-2 text-sm text-white focus:outline-none"
+                />
+
+                {/* Expanded Drawer Area */}
+                <div className="mt-3 space-y-3 rounded-xl border border-white/10 bg-black/40 p-3">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-foreground-muted">Select Model:</span>
+                    <select
+                      value={selectedModel}
+                      onChange={(e) => setSelectedModel(e.target.value)}
+                      className="rounded bg-white/10 px-2 py-1 text-xs text-white focus:outline-none"
                     >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </div>
-                )}
-
-                <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-[#141416] p-2 pl-4 shadow-xl transition-all focus-within:border-white/25">
-                  <input
-                    type="text"
-                    value={sampleText}
-                    onChange={(e) => setSampleText(e.target.value)}
-                    placeholder="Describe what you want to build…"
-                    className="flex-1 bg-transparent text-sm text-white placeholder:text-foreground-muted focus:outline-none"
-                  />
-
-                  <div className="flex items-center gap-1 rounded-xl bg-white/[0.06] p-1">
-                    <span className="px-2 text-xs font-medium text-foreground-muted">{selectedModel}</span>
-                    <button
-                      type="button"
-                      onClick={() => setIsSending((prev) => !prev)}
-                      disabled={!sampleText.trim() && !isSending}
-                      className={cn(
-                        'flex h-7 w-7 items-center justify-center rounded-lg transition-all',
-                        isSending
-                          ? 'bg-red-500 text-white'
-                          : sampleText.trim()
-                            ? 'bg-primary text-primary-foreground'
-                            : 'bg-white/10 text-white/30',
-                      )}
-                    >
-                      {isSending ? <Square className="h-3 w-3 fill-current" /> : <ArrowUp className="h-4 w-4" />}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* OPTION 3 */}
-          {activeOption === 3 && (
-            <div className="rounded-2xl border border-border bg-[#111111] p-8">
-              <div className="mb-6 flex items-center justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold text-white">Option 3: Structured Target Dock</h2>
-                  <p className="mt-1 text-xs text-foreground-muted">
-                    Cursor & Bolt style. Tabbed element header with dual-bar layout for element-heavy editing.
-                  </p>
-                </div>
-                <Badge variant="outline" className="border-border text-foreground-secondary">
-                  Cursor / Bolt
-                </Badge>
-              </div>
-
-              {/* Live Interactive Component */}
-              <div className="mx-auto max-w-2xl overflow-hidden rounded-xl border border-white/15 bg-[#141414] shadow-2xl">
-                {/* Header Tab */}
-                <div className="flex items-center justify-between border-b border-white/10 bg-[#1A1A1A] px-4 py-2 text-xs">
-                  <div className="flex items-center gap-2">
-                    <Crosshair className="h-3.5 w-3.5 text-primary" />
-                    <span className="font-mono text-white">
-                      {selectedElement ? selectedElement.selector : 'Global Workspace'}
-                    </span>
-                  </div>
-                  <span className="text-[10px] uppercase text-foreground-muted">Target Context</span>
-                </div>
-
-                {/* Main Textarea */}
-                <div className="p-4">
-                  <textarea
-                    value={sampleText}
-                    onChange={(e) => setSampleText(e.target.value)}
-                    placeholder="Describe prompt changes…"
-                    rows={3}
-                    className="w-full resize-none bg-transparent text-sm text-white placeholder:text-foreground-muted focus:outline-none"
-                  />
-                </div>
-
-                {/* Lower Toolbar */}
-                <div className="flex items-center justify-between border-t border-white/10 bg-[#181818] px-4 py-2.5">
-                  <div className="flex items-center gap-2 text-xs text-foreground-muted">
-                    <Zap className="h-3.5 w-3.5 text-primary" />
-                    <span>{selectedModel}</span>
+                      {SAMPLE_MODELS.map((m) => (
+                        <option key={m.id} value={m.name} className="bg-[#141414] text-white">
+                          {m.name} ({m.provider})
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
-                  <Button
-                    size="sm"
-                    className="h-8 gap-2 text-xs"
-                    onClick={() => setIsSending((prev) => !prev)}
-                    disabled={!sampleText.trim() && !isSending}
-                  >
-                    <span>{isSending ? 'Cancel' : 'Generate'}</span>
-                    <Send className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* OPTION 4 */}
-          {activeOption === 4 && (
-            <div className="rounded-2xl border border-border bg-[#111111] p-8">
-              <div className="mb-6 flex items-center justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold text-white">Option 4: Flush Integrated Dock</h2>
-                  <p className="mt-1 text-xs text-foreground-muted">
-                    Apple Minimalist style. Edge-to-edge flush dock with minimal icon buttons.
-                  </p>
-                </div>
-                <Badge variant="outline" className="border-border text-foreground-secondary">
-                  Apple Minimalist
-                </Badge>
-              </div>
-
-              {/* Live Interactive Component */}
-              <div className="mx-auto max-w-2xl border-t border-b border-white/15 bg-[#121212] p-4">
-                {selectedElement && (
-                  <div className="mb-2 text-xs text-primary">
-                    Editing <code className="rounded bg-primary/10 px-1 py-0.5">{selectedElement.selector}</code>
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-foreground-muted">Reasoning Effort:</span>
+                    <div className="flex gap-1">
+                      {REASONING_LEVELS.map((r) => (
+                        <button
+                          key={r.id}
+                          type="button"
+                          onClick={() => setSelectedReasoning(r.id)}
+                          className={cn(
+                            'rounded px-2 py-0.5 text-[10px] font-medium',
+                            selectedReasoning === r.id ? 'bg-primary text-primary-foreground' : 'bg-white/10 text-foreground-secondary',
+                          )}
+                        >
+                          {r.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                )}
-                <div className="relative">
-                  <textarea
-                    value={sampleText}
-                    onChange={(e) => setSampleText(e.target.value)}
-                    placeholder="Describe changes…"
-                    rows={2}
-                    className="w-full resize-none bg-transparent pr-12 text-sm text-white placeholder:text-foreground-muted focus:outline-none"
-                  />
+                </div>
+
+                <div className="mt-3 flex items-center justify-between border-t border-white/[0.06] pt-2.5">
+                  <span className="text-xs text-foreground-muted">Configured: {selectedModel} • {selectedReasoning}</span>
                   <button
                     type="button"
-                    onClick={() => setIsSending((prev) => !prev)}
-                    disabled={!sampleText.trim() && !isSending}
-                    className="absolute right-0 bottom-2 flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground hover:bg-primary/90"
+                    className="flex items-center gap-1.5 rounded-xl bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground"
                   >
-                    <CornerDownLeft className="h-4 w-4" />
+                    <span>Send</span>
+                    <ArrowUp className="h-3.5 w-3.5" />
                   </button>
-                </div>
-                <div className="mt-2 flex items-center justify-between text-[11px] text-foreground-muted">
-                  <span>Model: {selectedModel}</span>
-                  <span>Press Enter to send</span>
                 </div>
               </div>
             </div>
