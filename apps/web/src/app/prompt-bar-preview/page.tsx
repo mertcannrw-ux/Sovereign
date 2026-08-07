@@ -324,11 +324,11 @@ export default function PromptBarPreviewPage() {
                       <button
                         type="button"
                         onClick={() => fileInputRef.current?.click()}
-                        className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-muted transition-colors hover:bg-white/10 hover:text-white"
+                        className="flex h-9 w-9 items-center justify-center rounded-full text-[#A1A1A1] transition-all hover:bg-white/[0.08] hover:text-white active:scale-95"
                         title="Append images or files"
                         aria-label="Append images or files"
                       >
-                        <Plus className="h-4.5 w-4.5" />
+                        <Plus className="h-5 w-5" strokeWidth={2.2} />
                       </button>
 
                       {/* Attached File Preview Chips */}
