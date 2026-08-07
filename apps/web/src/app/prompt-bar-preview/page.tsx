@@ -298,7 +298,7 @@ export default function PromptBarPreviewPage() {
                     onChange={(e) => setSampleText(e.target.value)}
                     placeholder="Describe what you want to build or change…"
                     rows={2}
-                    className="w-full resize-none bg-transparent px-1 text-sm text-white placeholder:text-foreground-muted focus:outline-none"
+                    className="w-full resize-none border-none bg-transparent px-1 text-sm text-white shadow-none placeholder:text-foreground-muted outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0"
                   />
 
                   {/* FOOTER BAR: RIGHT ALIGNED CONFIG TRIGGER & CIRCULAR SEND */}

@@ -1067,7 +1067,7 @@ export default function ProjectWorkspace() {
                       onKeyDown={handleKeyDown}
                       placeholder={selectedPreviewElement ? `Describe the change for this ${selectedPreviewElement.tagName}…` : 'Describe what you want to build or change…'}
                       rows={2}
-                      className="max-h-36 min-h-[44px] w-full resize-none bg-transparent px-2 text-sm text-white placeholder:text-foreground-muted focus:outline-none"
+                      className="max-h-36 min-h-[44px] w-full resize-none border-none bg-transparent px-2 text-sm text-white shadow-none placeholder:text-foreground-muted outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0"
                     />
 
                     {/* Footer Controls Bar */}
