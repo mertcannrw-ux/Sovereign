@@ -50,6 +50,9 @@ import {
   ChevronRight,
   ArrowUp,
   Zap,
+  Plus,
+  Paperclip,
+  Check,
 } from 'lucide-react';
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -206,6 +209,10 @@ export default function ProjectWorkspace() {
   const [isReviewingClarifications, setIsReviewingClarifications] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
   const [selectedPreviewElement, setSelectedPreviewElement] = useState<SelectedPreviewElement | null>(null);
+  const [showModelPopover, setShowModelPopover] = useState(false);
+  const [activeSubMenu, setActiveSubMenu] = useState<'root' | 'models' | 'effort'>('root');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [attachedFiles, setAttachedFiles] = useState<Array<{ name: string; file?: File }>>([]);
   const availableModels = useMemo(
     () =>
       (modelsQuery.data ?? [])
@@ -675,109 +682,6 @@ export default function ProjectWorkspace() {
         />
 
         <div className="ml-auto flex items-center gap-2">
-          {/* Model selector */}
-          {modelsQuery.isLoading ? (
-            <div className="hidden h-9 w-[180px] items-center justify-center rounded-lg border border-border text-xs text-foreground-muted sm:flex">
-              <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> Loading models
-            </div>
-          ) : availableModels.length > 0 ? (
-            <Select
-              value={selectedModelKey}
-              onValueChange={(val) => {
-                setSelectedModelKey(val);
-                setModelSearchQuery('');
-              }}
-            >
-              <SelectTrigger
-                aria-label="Model"
-                className="hidden h-9 w-[240px] max-w-[30vw] text-xs sm:flex"
-              >
-                <SelectValue placeholder="Select model" />
-              </SelectTrigger>
-              <SelectContent className="max-h-[min(28rem,var(--radix-select-content-available-height))] min-w-[320px] p-0">
-                <div
-                  className="sticky -top-1 -mt-1 z-30 border-b border-border bg-[#141414] p-2 pt-2.5"
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onKeyDown={(e) => e.stopPropagation()}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <div className="relative flex items-center">
-                    <Search className="pointer-events-none absolute left-3 h-4 w-4 text-foreground-muted" />
-                    <input
-                      type="text"
-                      placeholder="Search models..."
-                      value={modelSearchQuery}
-                      onChange={(e) => setModelSearchQuery(e.target.value)}
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onKeyDown={(e) => {
-                        e.stopPropagation();
-                        if (e.key === 'Escape') {
-                          setModelSearchQuery('');
-                        }
-                      }}
-                      className="h-[38px] w-full rounded-md border border-border bg-background-muted pl-9 pr-8 text-xs text-foreground placeholder:text-foreground-muted focus:border-border-focus focus:outline-none focus:ring-1 focus:ring-primary/20"
-                    />
-                    {modelSearchQuery && (
-                      <button
-                        type="button"
-                        onPointerDown={(e) => e.stopPropagation()}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setModelSearchQuery('');
-                        }}
-                        className="absolute right-2.5 rounded-sm p-1 text-foreground-muted hover:text-foreground"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-                <div className="p-1">
-                  {filteredModels.length > 0 ? (
-                    filteredModels.map(
-                      (group: { provider: string; label: string; models: string[] }) => (
-                        <SelectGroup key={group.provider}>
-                          <SelectLabel>{group.label}</SelectLabel>
-                          {group.models.map((model: string) => (
-                            <SelectItem
-                              key={`${group.provider}:${model}`}
-                              value={`${group.provider}:${model}`}
-                              className="text-xs"
-                            >
-                              {model}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      ),
-                    )
-                  ) : (
-                    <div className="p-4 text-center text-xs text-foreground-muted">
-                      No models matching &quot;{modelSearchQuery}&quot;
-                    </div>
-                  )}
-                </div>
-              </SelectContent>
-            </Select>
-          ) : (
-            <Button variant="outline" size="sm" onClick={() => router.push('/settings')}>
-              Add an API key
-            </Button>
-          )}
-
-          {/* Reasoning level */}
-          <Select value={reasoningEffort} onValueChange={setReasoningEffort}>
-            <SelectTrigger aria-label="Reasoning level" className="hidden h-9 w-[120px] text-xs sm:flex">
-              <SelectValue placeholder="Reasoning" />
-            </SelectTrigger>
-            <SelectContent className="min-w-[160px]">
-              {REASONING_LEVELS.filter((level) => level.value !== 'off' || REASONING_OFF_PROVIDERS.has(selectedProvider ?? '')).map((level) => (
-                <SelectItem key={level.value} value={level.value} className="text-xs">
-                  {level.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
           {/* Deploy button */}
           <Button size="sm" className="gap-1.5">
             <Rocket className="h-3.5 w-3.5" />
@@ -980,11 +884,162 @@ export default function ProjectWorkspace() {
           </div>
 
           <div className="border-t border-border bg-background-subtle p-3 sm:p-4">
-            <div className="mx-auto max-w-3xl">
+            <div className="relative mx-auto max-w-3xl">
               {clarifyingQuestions.length > 0 ? (
                 <p className="py-2 text-center text-xs text-foreground-muted">Complete or cancel the clarification above to continue chatting.</p>
               ) : (
                 <>
+                  {/* FLOATING MODEL & REASONING POPOVER */}
+                  {showModelPopover && (
+                    <div className="absolute bottom-full right-12 mb-3 z-30 w-80 overflow-hidden rounded-2xl border border-white/15 bg-[#1a1a1c] p-3 shadow-2xl backdrop-blur-xl">
+                      {/* ROOT MENU (Model & Effort rows) */}
+                      {activeSubMenu === 'root' && (
+                        <div className="space-y-1">
+                          <button
+                            type="button"
+                            onClick={() => setActiveSubMenu('models')}
+                            className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-white/5"
+                          >
+                            <span className="text-foreground-secondary">Model</span>
+                            <div className="flex items-center gap-1 text-white">
+                              <span>{selectedModel || 'Select model'}</span>
+                              <ChevronRight className="h-3.5 w-3.5 opacity-60" />
+                            </div>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setActiveSubMenu('effort')}
+                            className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-white/5"
+                          >
+                            <span className="text-foreground-secondary">Effort</span>
+                            <div className="flex items-center gap-1 text-white">
+                              <span className="capitalize">
+                                {REASONING_LEVELS.find((r) => r.value === reasoningEffort)?.label ?? 'Auto'}
+                              </span>
+                              <ChevronRight className="h-3.5 w-3.5 opacity-60" />
+                            </div>
+                          </button>
+                        </div>
+                      )}
+
+                      {/* MODELS SUB-MENU */}
+                      {activeSubMenu === 'models' && (
+                        <div>
+                          <div className="mb-2 flex items-center justify-between border-b border-white/10 pb-2 text-xs font-semibold text-white">
+                            <button
+                              type="button"
+                              onClick={() => setActiveSubMenu('root')}
+                              className="flex items-center gap-1 text-foreground-muted hover:text-white"
+                            >
+                              <ArrowLeft className="h-3.5 w-3.5" /> Back
+                            </button>
+                            <span>Select Model</span>
+                          </div>
+
+                          {/* Model Search Input */}
+                          <div className="relative mb-2">
+                            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-foreground-muted" />
+                            <input
+                              type="text"
+                              placeholder="Search models..."
+                              value={modelSearchQuery}
+                              onChange={(e) => setModelSearchQuery(e.target.value)}
+                              className="h-8 w-full rounded-md border border-white/10 bg-black/40 pl-8 pr-3 text-xs text-white placeholder:text-foreground-muted focus:border-primary focus:outline-none"
+                            />
+                          </div>
+
+                          <div className="max-h-52 overflow-y-auto space-y-2 pr-1">
+                            {filteredModels.length > 0 ? (
+                              filteredModels.map((group) => (
+                                <div key={group.provider} className="space-y-0.5">
+                                  <div className="px-2 text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">
+                                    {group.label}
+                                  </div>
+                                  {group.models.map((model) => {
+                                    const key = `${group.provider}:${model}`;
+                                    const isSelected = key === selectedModelKey;
+                                    return (
+                                      <button
+                                        key={key}
+                                        type="button"
+                                        onClick={() => {
+                                          setSelectedModelKey(key);
+                                          setActiveSubMenu('root');
+                                        }}
+                                        className={cn(
+                                          'flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition-colors',
+                                          isSelected
+                                            ? 'bg-primary/15 font-medium text-primary'
+                                            : 'text-foreground-secondary hover:bg-white/5 hover:text-white',
+                                        )}
+                                      >
+                                        <div className="flex items-center gap-2">
+                                          <Zap className="h-3.5 w-3.5" />
+                                          <span>{model}</span>
+                                        </div>
+                                        {isSelected && <Check className="h-3.5 w-3.5 text-primary" />}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              ))
+                            ) : (
+                              <div className="p-3 text-center text-xs text-foreground-muted">
+                                No models found
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* EFFORT SUB-MENU */}
+                      {activeSubMenu === 'effort' && (
+                        <div>
+                          <div className="mb-2 flex items-center justify-between border-b border-white/10 pb-2 text-xs font-semibold text-white">
+                            <button
+                              type="button"
+                              onClick={() => setActiveSubMenu('root')}
+                              className="flex items-center gap-1 text-foreground-muted hover:text-white"
+                            >
+                              <ArrowLeft className="h-3.5 w-3.5" /> Back
+                            </button>
+                            <span>Reasoning Effort</span>
+                          </div>
+                          <div className="space-y-1">
+                            {REASONING_LEVELS.filter(
+                              (level) =>
+                                level.value !== 'off' ||
+                                REASONING_OFF_PROVIDERS.has(selectedProvider ?? ''),
+                            ).map((level) => {
+                              const isSelected = level.value === reasoningEffort;
+                              return (
+                                <button
+                                  key={level.value}
+                                  type="button"
+                                  onClick={() => {
+                                    setReasoningEffort(level.value);
+                                    setActiveSubMenu('root');
+                                  }}
+                                  className={cn(
+                                    'flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition-colors',
+                                    isSelected
+                                      ? 'bg-primary/15 font-medium text-primary'
+                                      : 'text-foreground-secondary hover:bg-white/5 hover:text-white',
+                                  )}
+                                >
+                                  <span>{level.label}</span>
+                                  {isSelected && <Check className="h-3.5 w-3.5 text-primary" />}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* PROMPT CAPSULE CARD */}
                   <div className="rounded-2xl border border-white/10 bg-[#161618] p-3 shadow-2xl transition-all focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/40">
                     {/* Target element badge inside capsule */}
                     {selectedPreviewElement && (
@@ -1015,49 +1070,104 @@ export default function ProjectWorkspace() {
                       className="max-h-36 min-h-[44px] w-full resize-none bg-transparent px-2 text-sm text-white placeholder:text-foreground-muted focus:outline-none"
                     />
 
-                    {/* Footer Controls Bar inside capsule */}
-                    <div className="mt-2 flex items-center justify-between border-t border-white/[0.06] pt-2.5">
+                    {/* Footer Controls Bar */}
+                    <div className="mt-3 flex items-center justify-between border-t border-white/[0.06] pt-2.5">
+                      {/* Left side: Plus attachment trigger & file chips */}
                       <div className="flex items-center gap-2">
-                        {selectedModel && (
-                          <div className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-foreground-secondary">
-                            <Zap className="h-3.5 w-3.5 text-primary" />
-                            <span>{selectedModel}</span>
+                        <input
+                          type="file"
+                          ref={fileInputRef}
+                          className="hidden"
+                          multiple
+                          onChange={(e) => {
+                            const files = Array.from(e.target.files ?? []);
+                            if (files.length > 0) {
+                              setAttachedFiles((prev) => [
+                                ...prev,
+                                ...files.map((f) => ({ name: f.name, file: f })),
+                              ]);
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="flex h-9 w-9 items-center justify-center rounded-full text-[#A1A1A1] transition-all hover:bg-white/[0.08] hover:text-white active:scale-95"
+                          title="Append images or files"
+                          aria-label="Append images or files"
+                        >
+                          <Plus className="h-5 w-5" strokeWidth={2.2} />
+                        </button>
+
+                        {attachedFiles.map((file, idx) => (
+                          <div
+                            key={idx}
+                            className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white"
+                          >
+                            <Paperclip className="h-3 w-3 text-primary" />
+                            <span className="max-w-[120px] truncate">{file.name}</span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setAttachedFiles((prev) => prev.filter((_, i) => i !== idx))
+                              }
+                              className="text-foreground-muted hover:text-white"
+                              aria-label="Remove attachment"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
                           </div>
-                        )}
+                        ))}
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (isSending) {
-                            handleStop();
-                          } else {
-                            void handleSend();
-                          }
-                        }}
-                        disabled={isSending ? false : (!input.trim() || !selectedModel || !selectedProvider)}
-                        className={cn(
-                          'flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-semibold transition-all',
-                          isSending
-                            ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
-                            : input.trim() && selectedModel && selectedProvider
-                              ? 'bg-primary text-primary-foreground shadow-md hover:bg-primary/90'
-                              : 'bg-white/10 text-white/40 cursor-not-allowed',
-                        )}
-                        aria-label={isSending ? "Stop agent" : "Send message"}
-                      >
-                        {isSending ? (
-                          <>
+                      {/* Right side: Config trigger pill & Circular send button */}
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowModelPopover((prev) => !prev);
+                            setActiveSubMenu('root');
+                          }}
+                          className={cn(
+                            'flex items-center rounded-full bg-transparent px-3 py-1.5 text-xs transition-all hover:bg-white/[0.08]',
+                            showModelPopover && 'bg-white/[0.10] ring-1 ring-white/15',
+                          )}
+                        >
+                          <span className="font-medium text-[#E5E5E5]">
+                            {selectedModel || 'Select Model'}
+                          </span>
+                          <span className="ml-2.5 font-normal text-[#9A9A9A]">
+                            {REASONING_LEVELS.find((r) => r.value === reasoningEffort)?.label ?? 'Auto'}
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isSending) {
+                              handleStop();
+                            } else {
+                              void handleSend();
+                            }
+                          }}
+                          disabled={isSending ? false : (!input.trim() || !selectedModel || !selectedProvider)}
+                          className={cn(
+                            'flex h-9 w-9 items-center justify-center rounded-full transition-all',
+                            isSending
+                              ? 'bg-red-500 text-white shadow-md'
+                              : input.trim() && selectedModel && selectedProvider
+                                ? 'bg-white text-black hover:bg-white/90 shadow-md'
+                                : 'bg-white/20 text-white/40 cursor-not-allowed',
+                          )}
+                          aria-label={isSending ? "Stop agent" : "Send message"}
+                        >
+                          {isSending ? (
                             <Square className="h-3.5 w-3.5 fill-current" />
-                            <span>Stop</span>
-                          </>
-                        ) : (
-                          <>
-                            <span>Send</span>
-                            <ArrowUp className="h-3.5 w-3.5" />
-                          </>
-                        )}
-                      </button>
+                          ) : (
+                            <ArrowUp className="h-4 w-4" />
+                          )}
+                        </button>
+                      </div>
                     </div>
                   </div>
 
