@@ -883,7 +883,7 @@ export default function ProjectWorkspace() {
             <div ref={messagesEndRef} />
           </div>
 
-          <div className="border-t border-border bg-background-subtle p-3 sm:p-4">
+          <div className="border-t border-border bg-background-subtle p-2.5 sm:p-3">
             <div className="relative mx-auto max-w-3xl">
               {clarifyingQuestions.length > 0 ? (
                 <p className="py-2 text-center text-xs text-foreground-muted">Complete or cancel the clarification above to continue chatting.</p>
@@ -1171,9 +1171,6 @@ export default function ProjectWorkspace() {
                     </div>
                   </div>
 
-                  <p className="mt-2.5 text-center text-[11px] text-foreground-muted">
-                    Press <kbd className="rounded border border-white/10 bg-white/5 px-1 font-mono">Enter</kbd> to send, <kbd className="rounded border border-white/10 bg-white/5 px-1 font-mono">Shift Enter</kbd> for new line
-                  </p>
                 </>
               )}
             </div>
