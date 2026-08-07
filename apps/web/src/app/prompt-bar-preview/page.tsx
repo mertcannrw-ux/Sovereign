@@ -35,7 +35,7 @@ const REASONING_LEVELS = [
   { id: 'off', label: 'Off', desc: 'Fastest response time' },
   { id: 'low', label: 'Low', desc: 'Light analytical thinking' },
   { id: 'medium', label: 'Medium', desc: 'Balanced reasoning & code architecture' },
-  { id: 'high', label: 'High / Extra High', desc: 'Deep step-by-step reasoning' },
+  { id: 'high', label: 'Extra High', desc: 'Deep step-by-step reasoning' },
 ];
 
 export default function PromptBarPreviewPage() {
@@ -305,14 +305,12 @@ export default function PromptBarPreviewPage() {
                           setActiveSubMenu('root');
                         }}
                         className={cn(
-                          'flex items-center gap-2 rounded-lg px-2.5 py-1 text-xs transition-colors',
-                          showModelPopover
-                            ? 'bg-white/10 text-white font-medium'
-                            : 'text-foreground-muted hover:bg-white/5 hover:text-white',
+                          'flex items-center rounded-full bg-white/[0.08] px-3.5 py-1.5 text-xs transition-all hover:bg-white/[0.14]',
+                          showModelPopover && 'bg-white/[0.14] ring-1 ring-white/20',
                         )}
                       >
-                        <span className="font-medium text-white">{selectedModel}</span>
-                        <span className="capitalize text-foreground-secondary font-mono">
+                        <span className="font-medium text-[#E5E5E5]">{selectedModel}</span>
+                        <span className="ml-2.5 font-normal text-[#9A9A9A]">
                           {REASONING_LEVELS.find((r) => r.id === selectedReasoning)?.label}
                         </span>
                       </button>
