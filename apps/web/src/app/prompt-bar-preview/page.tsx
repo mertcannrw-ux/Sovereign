@@ -305,8 +305,8 @@ export default function PromptBarPreviewPage() {
                           setActiveSubMenu('root');
                         }}
                         className={cn(
-                          'flex items-center rounded-full bg-white/[0.08] px-3.5 py-1.5 text-xs transition-all hover:bg-white/[0.14]',
-                          showModelPopover && 'bg-white/[0.14] ring-1 ring-white/20',
+                          'flex items-center rounded-full bg-transparent px-3 py-1.5 text-xs transition-all hover:bg-white/[0.08]',
+                          showModelPopover && 'bg-white/[0.10] ring-1 ring-white/15',
                         )}
                       >
                         <span className="font-medium text-[#E5E5E5]">{selectedModel}</span>
