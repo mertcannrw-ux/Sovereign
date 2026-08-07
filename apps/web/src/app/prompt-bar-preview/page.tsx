@@ -187,21 +187,6 @@ export default function PromptBarPreviewPage() {
                           </div>
                         </button>
 
-                        <div className="pt-2 border-t border-white/10 flex items-center justify-between">
-                          <button
-                            type="button"
-                            className="rounded-lg bg-white/10 px-2.5 py-1 text-[11px] font-medium text-foreground-secondary hover:bg-white/15 hover:text-white"
-                          >
-                            Advanced ^
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setShowModelPopover(false)}
-                            className="text-[11px] text-foreground-muted hover:text-white"
-                          >
-                            Close
-                          </button>
-                        </div>
                       </div>
                     )}
 
