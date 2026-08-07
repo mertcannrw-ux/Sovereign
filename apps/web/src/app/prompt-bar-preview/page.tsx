@@ -296,17 +296,7 @@ export default function PromptBarPreviewPage() {
                   />
 
                   {/* FOOTER BAR: RIGHT ALIGNED CONFIG TRIGGER & CIRCULAR SEND */}
-                  <div className="mt-3 flex items-center justify-between pt-2">
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-foreground-muted hover:bg-white/5 hover:text-white"
-                      >
-                        <Sparkles className="h-3.5 w-3.5 text-amber-400" />
-                        <span>Enhance</span>
-                      </button>
-                    </div>
-
+                  <div className="mt-3 flex items-center justify-end gap-3 pt-2">
                     <div className="flex items-center gap-3">
                       <button
                         type="button"
