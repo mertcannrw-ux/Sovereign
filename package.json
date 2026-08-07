@@ -50,7 +50,7 @@
   "packageManager": "npm@11.16.0",
   "dependencies": {
     "@prisma/adapter-pg": "7.8.0",
-    "@tanstack/react-query": "5.101.2",
+    "@tanstack/react-query": "5.101.4",
     "@trpc/client": "11.18.0",
     "@trpc/next": "11.18.0",
     "@trpc/react-query": "11.18.0",
