@@ -213,6 +213,36 @@ export default function ProjectWorkspace() {
   const [activeSubMenu, setActiveSubMenu] = useState<'root' | 'models' | 'effort'>('root');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [attachedFiles, setAttachedFiles] = useState<Array<{ name: string; file?: File }>>([]);
+  const [leftPanelWidth, setLeftPanelWidth] = useState<number>(38);
+  const [isResizing, setIsResizing] = useState<boolean>(false);
+
+  const startResizing = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isResizing) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const totalWidth = window.innerWidth;
+      if (totalWidth <= 0) return;
+      const newWidthPercent = (e.clientX / totalWidth) * 100;
+      const clamped = Math.min(Math.max(newWidthPercent, 20), 75);
+      setLeftPanelWidth(clamped);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing]);
   const availableModels = useMemo(
     () =>
       (modelsQuery.data ?? [])
@@ -714,9 +744,20 @@ export default function ProjectWorkspace() {
       </div>
 
       {/* ── Main workspace ──────────────── */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="relative flex flex-1 overflow-hidden">
+        {/* Transparent overlay during drag to prevent iframe pointer swallow */}
+        {isResizing && (
+          <div
+            className="fixed inset-0 z-50 cursor-col-resize select-none"
+            onMouseUp={() => setIsResizing(false)}
+          />
+        )}
+
         {/* ── Left: Chat Panel ───────────── */}
-        <div className="flex w-full flex-col border-r border-border bg-background md:w-[42%] lg:w-[38%]">
+        <div
+          className="flex w-full flex-col border-r border-border bg-background transition-[width] duration-75"
+          style={{ width: `${leftPanelWidth}%` }}
+        >
           {/* Messages */}
           <div className="flex-1 overflow-y-auto">
             {/* Loading state */}
@@ -1187,6 +1228,24 @@ export default function ProjectWorkspace() {
           </div>
         </div>
 
+        {/* ── Resizable Drag Handle ────────── */}
+        <div
+          onMouseDown={startResizing}
+          onDoubleClick={() => setLeftPanelWidth(38)}
+          className={cn(
+            'group relative hidden w-1.5 shrink-0 cursor-col-resize select-none bg-border transition-colors hover:bg-primary/50 md:block',
+            isResizing && 'bg-primary',
+          )}
+          title="Drag to resize panels • Double-click to reset"
+        >
+          <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col gap-1 rounded bg-[#242424] p-1 opacity-0 transition-opacity group-hover:opacity-100">
+            <div className="h-1.5 w-1.5 rounded-full bg-foreground-muted" />
+            <div className="h-1.5 w-1.5 rounded-full bg-foreground-muted" />
+            <div className="h-1.5 w-1.5 rounded-full bg-foreground-muted" />
+          </div>
+        </div>
+
+        {/* ── Right: Preview/Code Panel ──── */}
         <div className="relative hidden min-w-0 flex-1 flex-col bg-background md:flex">
           <div className="flex items-center gap-3 border-b border-border bg-background-subtle px-4 py-2.5">
             <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1">
