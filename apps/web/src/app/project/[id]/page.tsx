@@ -655,18 +655,18 @@ export default function ProjectWorkspace() {
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       {/* ── Top Bar ─────────────────────── */}
-      <header className="flex h-16 shrink-0 items-center gap-3.5 border-b border-border bg-background px-5 sm:px-6">
+      <header className="flex h-20 shrink-0 items-center gap-4 border-b border-border bg-background px-6 sm:px-8">
         <Button
           variant="ghost"
           size="icon"
-          className="h-9 w-9 rounded-lg hover:bg-white/10"
+          className="h-10 w-10 rounded-xl hover:bg-white/10"
           onClick={() => router.push('/dashboard')}
           aria-label="Back to dashboard"
         >
-          <ArrowLeft className="h-4 w-4" />
+          <ArrowLeft className="h-4.5 w-4.5" />
         </Button>
 
-        <Separator orientation="vertical" className="h-5 bg-border" />
+        <Separator orientation="vertical" className="h-6 bg-border" />
 
         {/* Editable project name */}
         <input
@@ -678,13 +678,13 @@ export default function ProjectWorkspace() {
               updateProjectMutation.mutate({ id: projectId, name: nextName });
             }
           }}
-          className="max-w-[160px] border-none bg-transparent text-base font-semibold tracking-[-0.02em] text-white outline-none focus:ring-0 sm:max-w-[280px]"
+          className="max-w-[180px] border-none bg-transparent text-lg font-bold tracking-tight text-white outline-none focus:ring-0 sm:max-w-[340px]"
           aria-label="Project name"
         />
 
-        <div className="ml-auto flex items-center gap-3">
+        <div className="ml-auto flex items-center gap-3.5">
           {/* Deploy button */}
-          <Button size="default" className="h-9 gap-2 px-4 text-xs font-semibold sm:text-sm shadow-sm">
+          <Button size="default" className="h-10 gap-2.5 rounded-xl px-5 text-sm font-semibold shadow-md">
             <Rocket className="h-4 w-4" />
             <span className="hidden sm:inline">Deploy</span>
           </Button>
@@ -693,11 +693,11 @@ export default function ProjectWorkspace() {
           <Button
             variant="ghost"
             size="icon"
-            className="h-9 w-9 rounded-lg hover:bg-white/10"
+            className="h-10 w-10 rounded-xl hover:bg-white/10"
             onClick={() => router.push('/settings')}
             aria-label="Settings"
           >
-            <Settings className="h-4 w-4" />
+            <Settings className="h-4.5 w-4.5" />
           </Button>
         </div>
       </header>
