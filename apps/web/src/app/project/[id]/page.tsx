@@ -655,17 +655,18 @@ export default function ProjectWorkspace() {
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       {/* ── Top Bar ─────────────────────── */}
-      <header className="flex h-16 shrink-0 items-center gap-3 border-b border-border bg-background px-4 sm:px-5">
+      <header className="flex h-16 shrink-0 items-center gap-3.5 border-b border-border bg-background px-5 sm:px-6">
         <Button
           variant="ghost"
           size="icon"
+          className="h-9 w-9 rounded-lg hover:bg-white/10"
           onClick={() => router.push('/dashboard')}
           aria-label="Back to dashboard"
         >
           <ArrowLeft className="h-4 w-4" />
         </Button>
 
-        <Separator orientation="vertical" className="h-5" />
+        <Separator orientation="vertical" className="h-5 bg-border" />
 
         {/* Editable project name */}
         <input
@@ -677,14 +678,14 @@ export default function ProjectWorkspace() {
               updateProjectMutation.mutate({ id: projectId, name: nextName });
             }
           }}
-          className="max-w-[140px] border-none bg-transparent text-sm font-semibold tracking-[-0.02em] text-foreground outline-none focus:ring-0 sm:max-w-[240px]"
+          className="max-w-[160px] border-none bg-transparent text-base font-semibold tracking-[-0.02em] text-white outline-none focus:ring-0 sm:max-w-[280px]"
           aria-label="Project name"
         />
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-3">
           {/* Deploy button */}
-          <Button size="sm" className="gap-1.5">
-            <Rocket className="h-3.5 w-3.5" />
+          <Button size="default" className="h-9 gap-2 px-4 text-xs font-semibold sm:text-sm shadow-sm">
+            <Rocket className="h-4 w-4" />
             <span className="hidden sm:inline">Deploy</span>
           </Button>
 
@@ -692,6 +693,7 @@ export default function ProjectWorkspace() {
           <Button
             variant="ghost"
             size="icon"
+            className="h-9 w-9 rounded-lg hover:bg-white/10"
             onClick={() => router.push('/settings')}
             aria-label="Settings"
           >
