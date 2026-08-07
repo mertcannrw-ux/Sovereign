@@ -1,0 +1,18 @@
+{
+  "name": "@app-builder/visual-editor",
+  "version": "0.0.1",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@app-builder/shared": "*"
+  },
+  "devDependencies": {
+    "@app-builder/tsconfig": "*",
+    "typescript": "5.9.3"
+  }
+}

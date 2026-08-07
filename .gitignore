@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Next.js & Build outputs
+.next/
+dist/
+.turbo/
+trace_output/
+*.tsbuildinfo
+.sst/
+
+# Environment & Credentials
+.env
+.env*
+!.env.example
+
+# Local databases & runtime data
+.pglite/
+.pglite_data/
+
+# Logs & OS files
+*.log
+.DS_Store
+Thumbs.db
+
+# Backups and temp files
+*.bak
+*.orig
+*.patched
+*.tmp

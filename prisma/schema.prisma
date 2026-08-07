@@ -1,0 +1,790 @@
+// ─── Generator & Datasource ────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ─────────────────────────────────────────────────
+
+enum ProjectStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+
+  @@map("project_status")
+}
+
+enum ProjectRole {
+  OWNER
+  EDITOR
+  VIEWER
+
+  @@map("project_role")
+}
+
+enum OrganizationRole {
+  OWNER
+  ADMIN
+  MEMBER
+
+  @@map("organization_role")
+}
+
+enum DeploymentStatus {
+  QUEUED
+  BUILDING
+  DEPLOYING
+  LIVE
+  FAILED
+  CANCELED
+
+  @@map("deployment_status")
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELED
+
+  @@map("job_status")
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  INCOMPLETE
+
+  @@map("subscription_status")
+}
+
+enum FileOperation {
+  CREATE
+  UPDATE
+  DELETE
+
+  @@map("file_operation")
+}
+
+// ─── Users & Authentication ────────────────────────────────
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  name          String?
+  avatarUrl     String?   @map("avatar_url")
+  passwordHash  String?   @map("password_hash")
+  emailVerified Boolean?  @default(false) @map("email_verified")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  accounts              Account[]
+  apiKeys               ApiKey[]
+  projects              Project[]
+  projectCollaborations ProjectCollaborator[]
+  sessions              Session[]
+  organizations         OrganizationMember[]
+  ownedOrganizations    Organization[]          @relation("OrganizationOwner")
+  createdSnapshots      ProjectSnapshot[]
+  auditEvents           AuditEvent[]
+  backgroundJobs        BackgroundJob[]
+  passwordResets        PasswordResetToken[]
+  emailVerifications    EmailVerificationToken[]
+  issuedInvites         OrganizationInvite[]   @relation("InviteIssuer")
+  webAuthnCredentials   WebAuthnCredential[]
+  platformApiKeys       PlatformApiKey[]
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(uuid())
+  userId            String  @map("user_id")
+  provider          String
+  providerAccountId String  @map("provider_account_id")
+
+  // Encrypted OAuth tokens (AES-256-GCM)
+  encryptedToken    String? @map("encrypted_token")
+  tokenIv           String? @map("token_iv")
+  tokenAuthTag      String? @map("token_auth_tag")
+  tokenVersion      Int?    @default(1) @map("token_version")
+  expiresAt         BigInt? @map("expires_at")
+  tokenType         String? @map("token_type")
+  scope             String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  userId       String   @map("user_id")
+  expiresAt    DateTime @map("expires_at")
+  sessionToken String   @unique @map("session_token")
+  ipAddress    String?  @map("ip_address")
+  userAgent    String?  @map("user_agent")
+  revokedAt    DateTime? @map("revoked_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model EmailVerificationToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  token     String   @unique
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("email_verification_tokens")
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  token     String   @unique
+  expiresAt DateTime @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+model WebAuthnCredential {
+  id              String  @id @default(uuid())
+  userId          String  @map("user_id")
+  credentialId    String  @unique @map("credential_id")
+  publicKey       String  @map("public_key")
+  counter         BigInt  @default(0)
+  transports      String?
+  authenticatorType String? @map("authenticator_type")
+  nickname        String?
+  createdAt       DateTime @default(now()) @map("created_at")
+  lastUsedAt      DateTime? @map("last_used_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("webauthn_credentials")
+}
+
+model LoginAttempt {
+  id        String   @id @default(uuid())
+  email     String
+  ipAddress String   @map("ip_address")
+  success   Boolean
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([email, createdAt])
+  @@index([ipAddress, createdAt])
+  @@map("login_attempts")
+}
+
+// ─── API Keys ──────────────────────────────────────────────
+
+model ApiKey {
+  id           String    @id @default(uuid())
+  userId       String    @map("user_id")
+  provider     String
+  encryptedKey String    @map("encrypted_key")
+  label        String?
+  baseUrl      String?   @map("base_url")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  lastUsedAt   DateTime? @map("last_used_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider, label])
+  @@map("api_keys")
+}
+
+model PlatformApiKey {
+  id             String    @id @default(uuid())
+  organizationId String    @map("organization_id")
+  userId         String    @map("user_id")
+  name           String
+  keyHash        String    @unique @map("key_hash")
+  keyPrefix      String    @map("key_prefix")
+  scopes         Json      @default("[]")
+  expiresAt      DateTime? @map("expires_at")
+  lastUsedAt     DateTime? @map("last_used_at")
+  revokedAt      DateTime? @map("revoked_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@map("platform_api_keys")
+}
+
+// ─── Organizations ─────────────────────────────────────────
+
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  ownerId   String   @map("owner_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  owner             User                  @relation("OrganizationOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  members           OrganizationMember[]
+  projects          Project[]
+  invitations       OrganizationInvite[]
+  subscriptions     Subscription[]
+  entitlements      Entitlement[]
+  backgroundJobs    BackgroundJob[]
+  auditEvents       AuditEvent[]
+  usageLedgers      UsageLedger[]
+  githubInstallations GitHubInstallation[]
+  platformApiKeys   PlatformApiKey[]
+
+  @@index([ownerId])
+  @@map("organizations")
+}
+
+model OrganizationMember {
+  organizationId String           @map("organization_id")
+  userId         String           @map("user_id")
+  role           OrganizationRole @default(MEMBER)
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([organizationId, userId])
+  @@index([userId])
+  @@map("organization_members")
+}
+
+model OrganizationInvite {
+  id             String           @id @default(uuid())
+  organizationId String           @map("organization_id")
+  email          String
+  role           OrganizationRole @default(MEMBER)
+  tokenHash      String           @unique @map("token_hash")
+  expiresAt      DateTime         @map("expires_at")
+  acceptedAt     DateTime?        @map("accepted_at")
+  revokedAt      DateTime?        @map("revoked_at")
+  invitedById    String           @map("invited_by_id")
+  createdAt      DateTime         @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedBy    User         @relation("InviteIssuer", fields: [invitedById], references: [id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([tokenHash])
+  @@map("organization_invites")
+}
+
+// ─── Projects ──────────────────────────────────────────────
+
+model Project {
+  id            String        @id @default(uuid())
+  ownerId       String        @map("owner_id")
+  organizationId String       @map("organization_id")
+  name          String        @default("Untitled Project")
+  description   String?
+  slug          String        @unique
+  status        ProjectStatus @default(DRAFT)
+  thumbnailUrl  String?       @map("thumbnail_url")
+  modelProvider String        @default("openai") @map("model_provider")
+  modelName     String        @default("") @map("model_name")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+  publishedAt   DateTime?     @map("published_at")
+
+  owner         User                  @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  organization  Organization          @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  collaborators ProjectCollaborator[]
+  messages      ChatMessage[]
+  snapshots     ProjectSnapshot[]
+  files         ProjectFile[]
+  functions     BackendFunction[]
+  deployments   Deployment[]
+  databases     AppDatabase[]
+  appAuthConfig AppAuthConfig?
+  appUsers      AppUser[]
+  agents        Agent[]
+  domains       Domain[]
+  gitRepository GitRepository?
+  metrics       ProjectMetric[]
+
+  @@index([ownerId])
+  @@index([organizationId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("projects")
+}
+
+model ProjectCollaborator {
+  projectId String      @map("project_id")
+  userId    String      @map("user_id")
+  role      ProjectRole @default(EDITOR)
+  createdAt DateTime    @default(now()) @map("created_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, userId])
+  @@index([userId])
+  @@map("project_collaborators")
+}
+
+// ─── Source Control (Snapshots & Files) ────────────────────
+
+model ProjectFile {
+  id          String   @id @default(uuid())
+  projectId   String   @map("project_id")
+  path        String
+  content     String
+  contentHash String   @map("content_hash")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, path])
+  @@index([projectId])
+  @@map("project_files")
+}
+
+model ProjectSnapshot {
+  id              String   @id @default(uuid())
+  projectId       String   @map("project_id")
+  versionNumber   Int      @map("version_number")
+  manifest        Json
+  sourceMessageId String?  @map("source_message_id")
+  createdById     String?  @map("created_by_id")
+  message         String?
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  project      Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  chatMessage  ChatMessage?        @relation(fields: [sourceMessageId], references: [id])
+  createdBy    User?               @relation(fields: [createdById], references: [id])
+  fileChanges  ProjectFileChange[]
+  deployments  Deployment[]
+
+  @@unique([projectId, versionNumber])
+  @@index([projectId])
+  @@index([projectId, createdAt])
+  @@map("project_snapshots")
+}
+
+model ProjectFileChange {
+  id         String        @id @default(uuid())
+  snapshotId String        @map("snapshot_id")
+  path       String
+  operation  FileOperation
+  beforeHash String?       @map("before_hash")
+  afterHash  String?       @map("after_hash")
+
+  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@index([snapshotId])
+  @@map("project_file_changes")
+}
+
+// ─── Chat Messages (kept for conversation history) ─────────
+
+model ChatMessage {
+  id            String       @id @default(uuid())
+  projectId     String       @map("project_id")
+  role          String
+  content       String
+  timestamp     DateTime     @default(now())
+  toolCalls     Json?        @map("tool_calls")
+  filesModified Json?        @map("files_modified")
+  thinking      String?      @map("thinking")
+  model         String
+  tokenUsage    Json?        @map("token_usage")
+
+  project  Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  versions ProjectSnapshot[]
+
+  @@index([projectId, timestamp])
+  @@map("chat_messages")
+}
+
+// ─── Backend Functions ─────────────────────────────────────
+
+model BackendFunction {
+  id        String   @id @default(uuid())
+  projectId String   @map("project_id")
+  path      String
+  method    String   @default("GET")
+  code      String
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, path, method])
+  @@index([projectId])
+  @@map("backend_functions")
+}
+
+// ─── App Database ──────────────────────────────────────────
+
+model AppDatabase {
+  id                        String   @id @default(uuid())
+  projectId                 String   @map("project_id")
+  schemaName                String   @map("schema_name")
+  connectionStringEncrypted String?  @map("connection_string_encrypted")
+  createdAt                 DateTime @default(now()) @map("created_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("app_databases")
+}
+
+// ─── App Auth (Generated Apps) ─────────────────────────────
+
+model AppAuthConfig {
+  id              String   @id @default(uuid())
+  projectId       String   @unique @map("project_id")
+  emailAuth       Boolean  @default(true) @map("email_auth")
+  googleAuth      Boolean  @default(false) @map("google_auth")
+  githubAuth      Boolean  @default(false) @map("github_auth")
+  magicLinkAuth   Boolean  @default(false) @map("magic_link_auth")
+  sessionDuration Int      @default(604800) @map("session_duration")
+  roles           Json     @default("[]")
+  permissions     Json     @default("[]")
+  branding        Json?    @default("{}")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("app_auth_configs")
+}
+
+model AppUser {
+  id           String    @id @default(uuid())
+  projectId    String    @map("project_id")
+  email        String    @map("email")
+  name         String?
+  passwordHash String?   @map("password_hash")
+  role         String    @default("user")
+  avatarUrl    String?   @map("avatar_url")
+  isActive     Boolean   @default(true) @map("is_active")
+  lastLoginAt  DateTime? @map("last_login_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, email])
+  @@index([projectId])
+  @@map("app_users")
+}
+
+// ─── Deployments ───────────────────────────────────────────
+
+model Deployment {
+  id                String           @id @default(uuid())
+  projectId         String           @map("project_id")
+  snapshotId        String?          @map("snapshot_id")
+  version           Int
+  status            DeploymentStatus @default(BUILDING)
+  url               String?
+  customDomain      String?          @map("custom_domain")
+  buildLogs         String?          @map("build_logs")
+  e2bBuildId        String?          @map("e2b_build_id")
+  vercelProjectId   String?          @map("vercel_project_id")
+  vercelDeploymentId String?         @map("vercel_deployment_id")
+  commitSha         String?          @map("commit_sha")
+  errorCode         String?          @map("error_code")
+  artifactR2Key     String?          @map("artifact_r2_key")
+  logR2Key          String?          @map("log_r2_key")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  deployedAt        DateTime?        @map("deployed_at")
+
+  project  Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  snapshot ProjectSnapshot? @relation(fields: [snapshotId], references: [id])
+
+  @@unique([projectId, version])
+  @@index([projectId, createdAt])
+  @@index([status])
+  @@map("deployments")
+}
+
+model Domain {
+  id              String   @id @default(uuid())
+  projectId       String   @map("project_id")
+  hostname        String   @unique
+  status          String   @default("pending")
+  verification    Json?
+  vercelDomainId  String?  @map("vercel_domain_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@map("domains")
+}
+
+// ─── Templates ─────────────────────────────────────────────
+
+model Template {
+  id            String   @id @default(uuid())
+  name          String
+  description   String?
+  category      String
+  thumbnailUrl  String?  @map("thumbnail_url")
+  previewUrl    String?  @map("preview_url")
+  repoUrl       String?  @map("repo_url")
+  cloneCount    Int      @default(0) @map("clone_count")
+  featured      Boolean  @default(false)
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@map("templates")
+}
+
+// ─── Agents ────────────────────────────────────────────────
+
+model Agent {
+  id           String   @id @default(uuid())
+  projectId    String   @map("project_id")
+  name         String
+  description  String?
+  systemPrompt String?  @map("system_prompt")
+  modelProvider String  @map("model_provider")
+  modelName    String   @map("model_name")
+  schedule     String?
+  status       String   @default("stopped")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  project     Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  toolConfigs AgentToolConfig[]
+  runs        AgentRun[]
+  schedules   AgentSchedule[]
+
+  @@index([projectId])
+  @@map("agents")
+}
+
+model AgentToolConfig {
+  id       String @id @default(uuid())
+  agentId  String @map("agent_id")
+  toolType String @map("tool_type")
+  config   Json
+  enabled  Boolean @default(true)
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@map("agent_tool_configs")
+}
+
+model AgentRun {
+  id           String   @id @default(uuid())
+  agentId      String   @map("agent_id")
+  snapshotId   String?  @map("snapshot_id")
+  status       String   @default("queued")
+  input        Json?
+  output       Json?
+  toolCalls    Json?    @map("tool_calls")
+  errorCode    String?  @map("error_code")
+  startedAt    DateTime? @map("started_at")
+  completedAt  DateTime? @map("completed_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  agent    Agent            @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId, createdAt])
+  @@index([status])
+  @@map("agent_runs")
+}
+
+model AgentSchedule {
+  id        String   @id @default(uuid())
+  agentId   String   @map("agent_id")
+  cron      String
+  timezone  String   @default("UTC")
+  enabled   Boolean  @default(true)
+  lastRunAt DateTime? @map("last_run_at")
+  nextRunAt DateTime? @map("next_run_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId])
+  @@index([nextRunAt])
+  @@map("agent_schedules")
+}
+
+// ─── GitHub Integration ────────────────────────────────────
+
+model GitHubInstallation {
+  id              String   @id @default(uuid())
+  organizationId  String   @map("organization_id")
+  installationId  String   @unique @map("installation_id")
+  accountLogin    String   @map("account_login")
+  encryptedToken  String?  @map("encrypted_token")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@map("github_installations")
+}
+
+model GitRepository {
+  id             String   @id @default(uuid())
+  projectId      String   @unique @map("project_id")
+  repositoryId   String   @map("repository_id")
+  owner          String
+  name           String
+  defaultBranch  String   @map("default_branch")
+  lastSyncedSha  String?  @map("last_synced_sha")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("git_repositories")
+}
+
+// ─── Analytics ─────────────────────────────────────────────
+
+model ProjectMetric {
+  id        String   @id @default(uuid())
+  projectId String   @map("project_id")
+  date      DateTime @db.Date
+  views     Int      @default(0)
+  sessions  Int      @default(0)
+  referrers Json?
+  errors    Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, date])
+  @@index([projectId, date])
+  @@map("project_metrics")
+}
+
+// ─── Infrastructure: Jobs, Audit, Usage ────────────────────
+
+model BackgroundJob {
+  id              String    @id @default(uuid())
+  type            String
+  status          JobStatus @default(QUEUED)
+  organizationId  String?   @map("organization_id")
+  projectId       String?   @map("project_id")
+  actorId         String?   @map("actor_id")
+  idempotencyKey  String?   @unique @map("idempotency_key")
+  payload         Json
+  result          Json?
+  attempts        Int       @default(0)
+  maxAttempts     Int       @default(3)
+  runAfter        DateTime  @default(now()) @map("run_after")
+  lockedAt        DateTime? @map("locked_at")
+  lastErrorCode   String?   @map("last_error_code")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  actor        User?          @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([status, runAfter])
+  @@index([organizationId])
+  @@index([projectId])
+  @@index([type])
+  @@map("background_jobs")
+}
+
+model AuditEvent {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  actorId        String?  @map("actor_id")
+  action         String
+  targetType     String   @map("target_type")
+  targetId       String?  @map("target_id")
+  metadata       Json?
+  ipHash         String?  @map("ip_hash")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  actor        User?        @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, createdAt])
+  @@index([actorId])
+  @@index([targetType, targetId])
+  @@map("audit_events")
+}
+
+model UsageLedger {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  projectId      String?  @map("project_id")
+  category       String
+  quantity       Int
+  idempotencyKey String   @unique @map("idempotency_key")
+  occurredAt     DateTime @default(now()) @map("occurred_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, occurredAt])
+  @@index([category])
+  @@map("usage_ledgers")
+}
+
+// ─── Billing & Entitlements ────────────────────────────────
+
+model Subscription {
+  id                    String             @id @default(uuid())
+  organizationId        String             @unique @map("organization_id")
+  stripeCustomerId      String             @unique @map("stripe_customer_id")
+  stripeSubscriptionId  String?            @unique @map("stripe_subscription_id")
+  priceId               String?            @map("price_id")
+  status                SubscriptionStatus @default(TRIALING)
+  currentPeriodEnd      DateTime?          @map("current_period_end")
+  cancelAtPeriodEnd     Boolean            @default(false) @map("cancel_at_period_end")
+  createdAt             DateTime           @default(now()) @map("created_at")
+  updatedAt             DateTime           @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@map("subscriptions")
+}
+
+model Entitlement {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  key            String
+  limit          Int?
+  enabled        Boolean  @default(true)
+  source         String   @default("plan")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, key])
+  @@index([organizationId])
+  @@map("entitlements")
+}
