@@ -15,6 +15,7 @@
     "check": "turbo typecheck lint build",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "db:start": "pglite-server -d .pglite_data -p 5433 -m 100",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
