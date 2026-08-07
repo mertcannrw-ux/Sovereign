@@ -380,8 +380,8 @@ export default function PromptBarPreviewPage() {
                           isSending
                             ? 'bg-red-500 text-white shadow-md'
                             : sampleText.trim()
-                              ? 'bg-white text-black hover:bg-white/90 shadow-md'
-                              : 'bg-white/20 text-white/40 cursor-not-allowed',
+                              ? 'bg-primary text-primary-foreground hover:bg-primary/90 shadow-md shadow-primary/20'
+                              : 'bg-white/10 text-white/30 cursor-not-allowed',
                         )}
                         aria-label={isSending ? "Stop agent" : "Send message"}
                       >
