@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import Link from 'next/link';
 import {
   ArrowLeft,
@@ -17,6 +17,8 @@ import {
   X,
   Zap,
   Check,
+  Plus,
+  Paperclip,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -50,6 +52,10 @@ export default function PromptBarPreviewPage() {
   const [showModelPopover, setShowModelPopover] = useState<boolean>(true);
   const [activeSubMenu, setActiveSubMenu] = useState<'root' | 'models' | 'effort'>('root');
   const [modelSearch, setModelSearch] = useState<string>('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [attachedFiles, setAttachedFiles] = useState<Array<{ name: string }>>([
+    { name: 'mockup-ui.png' },
+  ]);
 
   const selectedElement = hasTarget
     ? { tagName: 'button', selector: 'button.hero-cta' }
@@ -296,7 +302,57 @@ export default function PromptBarPreviewPage() {
                   />
 
                   {/* FOOTER BAR: RIGHT ALIGNED CONFIG TRIGGER & CIRCULAR SEND */}
-                  <div className="mt-3 flex items-center justify-end gap-3 pt-2">
+                  {/* FOOTER BAR: LEFT ATTACH PLUS & RIGHT ALIGNED CONFIG TRIGGER & CIRCULAR SEND */}
+                  <div className="mt-3 flex items-center justify-between pt-2">
+                    {/* Left: Plus button to append images & files */}
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        className="hidden"
+                        multiple
+                        onChange={(e) => {
+                          const files = Array.from(e.target.files ?? []);
+                          if (files.length > 0) {
+                            setAttachedFiles((prev) => [
+                              ...prev,
+                              ...files.map((f) => ({ name: f.name })),
+                            ]);
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-muted transition-colors hover:bg-white/10 hover:text-white"
+                        title="Append images or files"
+                        aria-label="Append images or files"
+                      >
+                        <Plus className="h-4.5 w-4.5" />
+                      </button>
+
+                      {/* Attached File Preview Chips */}
+                      {attachedFiles.map((file, idx) => (
+                        <div
+                          key={idx}
+                          className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white"
+                        >
+                          <Paperclip className="h-3 w-3 text-primary" />
+                          <span className="max-w-[120px] truncate">{file.name}</span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setAttachedFiles((prev) => prev.filter((_, i) => i !== idx))
+                            }
+                            className="text-foreground-muted hover:text-white"
+                            aria-label="Remove attachment"
+                          >
+                            <X className="h-3 3-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
                     <div className="flex items-center gap-3">
                       <button
                         type="button"
