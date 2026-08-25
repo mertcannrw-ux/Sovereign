@@ -10,6 +10,8 @@ export interface ProviderCompleteOptions {
   maxTokens?: number;
   temperature?: number;
   reasoningEffort?: string;
+  /** Optional abort signal — cancels the upstream request when aborted. */
+  signal?: AbortSignal;
   tools?: {
     type: 'function';
     function: {

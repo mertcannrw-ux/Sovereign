@@ -296,7 +296,11 @@ startServer(4173);`,
       const server = await container.spawn('node', ['.sovereign-preview.mjs']);
       previousBootServer = server;
       serverRef.current = server;
-      server.output.pipeTo(new WritableStream({ write: appendLog }));
+      // Swallow the pipe rejection: when this server process is killed (on the
+      // next mount's previousBootServer.kill() or on unmount's serverRef.kill()),
+      // its output stream is aborted and pipeTo rejects with "Process aborted".
+      // Leaving it uncaught surfaces as an intermittent unhandledRejection.
+      server.output.pipeTo(new WritableStream({ write: appendLog })).catch(() => {});
     } catch (error) {
       setState((current) => ({
         ...current,

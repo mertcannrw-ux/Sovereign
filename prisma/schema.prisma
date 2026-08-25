@@ -2,6 +2,7 @@
 
 generator client {
   provider = "prisma-client-js"
+  output   = "./generated/prisma"
 }
 
 datasource db {
@@ -100,6 +101,8 @@ model User {
   issuedInvites         OrganizationInvite[]   @relation("InviteIssuer")
   webAuthnCredentials   WebAuthnCredential[]
   platformApiKeys       PlatformApiKey[]
+  imageProviderConfigs  ImageProviderConfig[]
+  createdAssets         ProjectAsset[]
 
   @@map("users")
 }
@@ -122,6 +125,8 @@ model Account {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
+  @@unique([userId, provider])
+  @@index([userId])
   @@map("accounts")
 }
 
@@ -329,6 +334,8 @@ model Project {
   domains       Domain[]
   gitRepository GitRepository?
   metrics       ProjectMetric[]
+  assets              ProjectAsset[]
+  designDirectionSets DesignDirectionSet[]
 
   @@index([ownerId])
   @@index([organizationId])
@@ -456,6 +463,8 @@ model AppDatabase {
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
+  @@unique([projectId])
+  @@index([projectId])
   @@map("app_databases")
 }
 
@@ -787,4 +796,90 @@ model Entitlement {
   @@unique([organizationId, key])
   @@index([organizationId])
   @@map("entitlements")
+}
+// ─── Image Generation & Design Directions ──────────────────
+
+model ImageProviderConfig {
+  id           String    @id @default(uuid())
+  userId       String    @map("user_id")
+  encryptedKey String    @map("encrypted_key")
+  baseUrl      String    @map("base_url")
+  model        String
+  label        String?
+  enabled      Boolean   @default(true)
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  lastUsedAt   DateTime? @map("last_used_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, label])
+  @@index([userId])
+  @@map("image_provider_configs")
+}
+
+model ProjectAsset {
+  id          String   @id @default(uuid())
+  projectId   String   @map("project_id")
+  createdById String?  @map("created_by_id")
+  objectKey   String   @unique @map("object_key")
+  publicUrl   String   @map("public_url")
+  mediaType   String   @map("media_type")
+  byteSize    Int      @map("byte_size")
+  width       Int?
+  height      Int?
+  source      String   @default("generated")
+  prompt      String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  project           Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy         User?             @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  directionPreviews DesignDirection[]
+
+  @@index([projectId, createdAt])
+  @@index([createdById])
+  @@map("project_assets")
+}
+
+model DesignDirectionSet {
+  id                  String   @id @default(uuid())
+  projectId           String   @map("project_id")
+  originalRequest     String   @map("original_request")
+  status              String   @default("pending")
+  selectedDirectionId String?  @unique @map("selected_direction_id")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  project           Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  directions        DesignDirection[] @relation("SetDirections")
+  selectedDirection DesignDirection?  @relation("SelectedDirection", fields: [selectedDirectionId], references: [id], onDelete: SetNull)
+
+  @@index([projectId, createdAt])
+  @@map("design_direction_sets")
+}
+
+model DesignDirection {
+  id             String   @id @default(uuid())
+  setId          String   @map("set_id")
+  orderNumber    Int      @map("order_number")
+  title          String
+  visualBrief    String   @map("visual_brief")
+  imagePrompt    String   @map("image_prompt")
+  palette        Json
+  typography     Json
+  layoutNotes    String   @map("layout_notes")
+  status         String   @default("generating")
+  previewAssetId String?  @map("preview_asset_id")
+  errorMessage   String?  @map("error_message")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  set            DesignDirectionSet  @relation("SetDirections", fields: [setId], references: [id], onDelete: Cascade)
+  previewAsset   ProjectAsset?       @relation(fields: [previewAssetId], references: [id], onDelete: SetNull)
+  selectedInSet  DesignDirectionSet? @relation("SelectedDirection")
+
+  @@unique([setId, orderNumber])
+  @@index([setId])
+  @@map("design_directions")
 }

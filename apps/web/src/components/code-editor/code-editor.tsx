@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useCallback, useMemo } from 'react';
+import { useRef, useCallback, useMemo, useDeferredValue } from 'react';
 import { cn } from '@app-builder/ui/utils';
 import { X } from 'lucide-react';
 
@@ -94,46 +94,42 @@ const KEYWORDS: Record<string, true> = {
   debugger: true,
 };
 
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Single-pass tokenizer over the RAW source: markup inserted for one token is
+// never scanned again, so spans can't nest or mangle on subsequent edits.
+// Order matters: comments before strings, strings before numbers/keywords.
+const TOKEN_RE =
+  /(\/\/[^\n]*)|(\/\*[\s\S]*?\*\/)|(`(?:[^`\\]|\\.)*`)|("(?:[^"\\]|\\.)*")|('(?:[^'\\]|\\.)*')|\b(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|0[xX][0-9a-fA-F]+|0[bB][01]+)\b|(<\/?[a-zA-Z_$][\w$]*)|(\/?>)|(\b[a-zA-Z_$][\w$]*\b)/g;
+
 function highlightCode(code: string): string {
-  // Escape HTML entities first
-  let escaped = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  let html = '';
+  let lastIndex = 0;
+  for (const match of code.matchAll(TOKEN_RE)) {
+    html += escapeHtml(code.slice(lastIndex, match.index));
+    const token = match[0];
+    // Groups: 1 comment, 2 block comment, 3 template, 4 double-quoted,
+    // 5 single-quoted, 6 number, 7 JSX tag, 8 closing tag, 9 identifier.
+    const [, comment, blockComment, template, doubleQuoted, singleQuoted, numberToken, jsxTag, closingTag, word] =
+      match;
+    let className: string | null = null;
+    if (comment || blockComment) className = 'hl-comment';
+    else if (template || doubleQuoted || singleQuoted) className = 'hl-string';
+    else if (numberToken) className = 'hl-number';
+    else if (jsxTag || closingTag) className = 'hl-tag';
+    else if (word && KEYWORDS[word]) className = 'hl-keyword';
 
-  // 1. Single-line comments
-  escaped = escaped.replace(/(\/\/[^\n]*)/g, '<span class="hl-comment">$1</span>');
-
-  // 2. Multi-line comments
-  escaped = escaped.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="hl-comment">$1</span>');
-
-  // 3. Template literals (backtick strings)
-  escaped = escaped.replace(/(`(?:[^`\\]|\\.)*`)/g, '<span class="hl-string">$1</span>');
-
-  // 4. Double-quoted strings
-  escaped = escaped.replace(/("(?:[^"\\]|\\.)*")/g, '<span class="hl-string">$1</span>');
-
-  // 5. Single-quoted strings
-  escaped = escaped.replace(/('(?:[^'\\]|\\.)*')/g, '<span class="hl-string">$1</span>');
-
-  // 6. Numbers (hex, float, integer)
-  escaped = escaped.replace(
-    /\b(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|0[xX][0-9a-fA-F]+|0[bB][01]+)\b/g,
-    '<span class="hl-number">$1</span>',
-  );
-
-  // 7. Keywords
-  escaped = escaped.replace(/\b([a-zA-Z_$][\w$]*)\b/g, (match) => {
-    if (KEYWORDS[match]) {
-      return `<span class="hl-keyword">${match}</span>`;
+    if (className) {
+      html += `<span class="${className}">${escapeHtml(token)}</span>`;
+    } else {
+      html += escapeHtml(token);
     }
-    return match;
-  });
-
-  // 8. JSX tags: <TagName, </TagName, <TagName .../>
-  escaped = escaped.replace(/(&lt;\/?)([a-zA-Z_$][\w$]*)/g, '$1<span class="hl-tag">$2</span>');
-
-  // 9. JSX tag closing with >
-  escaped = escaped.replace(/(\/?&gt;)/g, '<span class="hl-tag">$1</span>');
-
-  return escaped;
+    lastIndex = match.index + token.length;
+  }
+  html += escapeHtml(code.slice(lastIndex));
+  return html;
 }
 
 // ── Get file extension for display ─────────────────
@@ -170,11 +166,14 @@ export function CodeEditor({
     [lineCount],
   );
 
-  // Highlighted HTML
+  // Highlighted HTML - deferred so large files don't block typing.
+  const deferredContent = useDeferredValue(activeFileData?.content ?? '');
   const highlightedHtml = useMemo(() => {
     if (!activeFileData) return '';
-    return highlightCode(activeFileData.content);
-  }, [activeFileData]);
+    // Use deferred value for the heavy regex pass to keep keystrokes responsive.
+    const source = deferredContent !== '' || activeFileData.content === '' ? deferredContent : activeFileData.content;
+    return highlightCode(source);
+  }, [activeFileData, deferredContent]);
 
   // Sync scroll between textarea, highlight layer, and gutter
   const handleScroll = useCallback(() => {

@@ -49,7 +49,7 @@ export default function SignInPage() {
       <section className="relative hidden overflow-hidden border-r border-border p-12 lg:flex lg:flex-col">
         <div className="landing-grid absolute inset-0 opacity-40" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_80%,rgba(184,255,90,.13),transparent_35%)]" />
-        <Link href="/" className="relative z-10 flex items-center gap-3"><span className="grid h-9 w-9 place-items-center rounded-full bg-primary text-primary-foreground"><Command className="h-[18px] w-[18px]" /></span><span className="text-xs font-semibold uppercase tracking-[0.2em]">Sovereign</span></Link>
+        <Link href="/" className="relative z-10 flex items-center gap-3.5"><span className="grid h-10 w-10 place-items-center rounded-xl bg-primary text-primary-foreground shadow-md shadow-primary/20 ring-1 ring-primary/30"><Command className="h-5 w-5" strokeWidth={2.5} /></span><span className="text-base font-bold uppercase tracking-[0.22em] text-foreground">Sovereign</span></Link>
         <div className="relative z-10 my-auto max-w-xl">
           <p className="mb-5 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-primary"><Sparkles className="h-4 w-4" />Independent by design</p>
           <h1 className="text-balance text-5xl font-semibold leading-[1.02] tracking-[-0.055em] xl:text-6xl">Build with AI.<br /><span className="text-white/35">Own every line.</span></h1>

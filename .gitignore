@@ -18,6 +18,19 @@ trace_output/
 .pglite/
 .pglite_data/
 
+# Private local asset storage (served only via the authenticated /api/assets route)
+.private-assets/
+# Historical local asset writes that were accidentally placed under public/ —
+# must never be committed.
+apps/web/public/projects/
+
+# Local tooling / editor config
+.commandcode/
+
+# Mixed package-manager lockfile — repo is npm-based; bun.lock is generated on
+# machines that happen to run `bun install`.
+bun.lock
+
 # Logs & OS files
 *.log
 .DS_Store
@@ -28,3 +41,13 @@ Thumbs.db
 *.orig
 *.patched
 *.tmp
+
+# Agent tooling / collaboration scratch
+.agent-teams/
+.agents/
+
+# Scratch review output
+review/
+
+# Prisma generated client (regenerate with npm run db:generate)
+prisma/generated/

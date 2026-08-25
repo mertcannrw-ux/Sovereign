@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getDb } from '@/lib/db';
@@ -19,12 +20,24 @@ function generateRequestId(): string {
 }
 
 function getClientIp(req: Request): string {
-  const forwarded = req.headers.get('x-forwarded-for');
-  if (forwarded) {
-    return forwarded.split(',')[0]?.trim() ?? '127.0.0.1';
+  if (process.env.TRUSTED_PROXY === 'true') {
+    const realIp = req.headers.get('x-real-ip')?.trim();
+    if (realIp && isIP(realIp)) return realIp;
+
+    const forwarded = req.headers.get('x-forwarded-for');
+    if (forwarded) {
+      const entries = forwarded
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+      // Proxies APPEND the caller's address, so the right-most entry is the one
+      // added by our trusted proxy. Earlier entries are client-supplied and
+      // spoofable — never trust them for a rate-limit key.
+      const last = entries[entries.length - 1];
+      if (last && isIP(last)) return last;
+    }
   }
-  const realIp = req.headers.get('x-real-ip');
-  if (realIp) return realIp;
+
   return '127.0.0.1';
 }
 

@@ -1,9 +1,9 @@
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { getProvider } from '@app-builder/ai-gateway';
-import type { AIProvider } from '@app-builder/shared';
 import { protectedProcedure, router } from '../trpc';
 import { encryptApiKey, decryptApiKey, maskApiKey } from '@/lib/crypto';
+import { checkRateLimit } from '@/server/rate-limit';
 
 const providerSchema = z.enum([
   'openai',
@@ -38,12 +38,14 @@ function parseProvider(provider: string): ProviderId {
   return result.data;
 }
 
-async function fetchModels(key: StoredKeyRecord): Promise<string[]> {
+async function fetchModels(
+  key: StoredKeyRecord,
+  signal?: AbortSignal,
+): Promise<string[]> {
   const provider = parseProvider(key.provider);
   const plaintext = decryptApiKey(key.encryptedKey);
-  return getProvider(provider as AIProvider).listModels(plaintext, key.baseUrl ?? undefined);
+  return getProvider(provider).listModels(plaintext, key.baseUrl ?? undefined, signal);
 }
-
 export const apiKeysRouter = router({
   list: protectedProcedure.query(async ({ ctx }) => {
     const keys: StoredKeyRecord[] = await ctx.db.apiKey.findMany({
@@ -126,6 +128,15 @@ export const apiKeysRouter = router({
       throw new TRPCError({ code: 'NOT_FOUND', message: 'API key not found' });
     }
 
+    const rate = await checkRateLimit('apiKeyTest', ctx.user.id);
+    if (!rate.allowed) {
+      const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
+      throw new TRPCError({
+        code: 'TOO_MANY_REQUESTS',
+        message: `Too many connection tests. Try again in ${retryIn}s.`,
+      });
+    }
+
     try {
       const models = await fetchModels(key);
       await ctx.db.apiKey.update({
@@ -133,9 +144,11 @@ export const apiKeysRouter = router({
         data: { lastUsedAt: new Date() },
       });
       return { models };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Connection failed';
-      throw new TRPCError({ code: 'BAD_REQUEST', message });
+    } catch {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'Connection failed. Check the API key and base URL, then try again.',
+      });
     }
   }),
 
@@ -145,22 +158,39 @@ export const apiKeysRouter = router({
       orderBy: { createdAt: 'asc' },
     });
 
+    const withTimeout = <T,>(promise: Promise<T>, _ms: number, signal: AbortSignal): Promise<T> =>
+      Promise.race([
+        promise,
+        new Promise<T>((_, reject) => {
+          const onAbort = () => reject(new Error('Timed out'));
+          if (signal.aborted) {
+            onAbort();
+            return;
+          }
+          signal.addEventListener('abort', onAbort, { once: true });
+        }),
+      ]);
+
     const groups = await Promise.all(
       keys.map(async (key) => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10_000);
         const provider = parseProvider(key.provider);
         try {
-          const models = await fetchModels(key);
+          const models = await withTimeout(fetchModels(key, controller.signal), 10_000, controller.signal);
           return {
             provider,
             models,
             error: null,
           };
-        } catch (error) {
+        } catch {
           return {
             provider,
             models: [] as string[],
-            error: error instanceof Error ? error.message : 'Failed to fetch models',
+            error: 'Failed to fetch models',
           };
+        } finally {
+          clearTimeout(timeout);
         }
       }),
     );

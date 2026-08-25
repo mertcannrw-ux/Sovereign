@@ -8,23 +8,20 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { ChatMessage } from '@app-builder/shared';
 import { VersionTimeline } from '@/components/version-timeline';
 import type { VersionTimelineEntry } from '@/components/version-timeline';
 import { trpc } from '@/lib/trpc/client';
 import { consumeGenerationStream } from '@/lib/generation-stream';
-import type { FileProgressEvent, GenerationPhaseEvent } from '@/lib/generation-stream';
+import type {
+  DesignDirectionsEventData,
+  FileProgressEvent,
+  GenerationPhaseEvent,
+} from '@/lib/generation-stream';
 import type { ClarifyingQuestion } from '@/lib/generation-protocol';
+import { DesignDirectionCards } from '@/components/design-direction-cards';
+import type { AgentStep } from '@/lib/agent-protocol';
 import { useWebContainer } from '@/lib/use-webcontainer';
 import type { PreviewFile } from '@/lib/use-webcontainer';
 import { getPreviewCursorTarget, useSmoothCursor } from '@/lib/use-smooth-cursor';
@@ -32,7 +29,6 @@ import {
   ArrowLeft,
   Settings,
   Rocket,
-  Send,
   Bot,
   User,
   Clock,
@@ -43,7 +39,6 @@ import {
   FileCode2,
   MousePointer2,
   RefreshCw,
-  Search,
   X,
   Crosshair,
   Square,
@@ -53,6 +48,8 @@ import {
   Plus,
   Paperclip,
   Check,
+  Image as ImageIcon,
+  Trash2,
 } from 'lucide-react';
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -92,11 +89,11 @@ function isTokenUsage(value: unknown): value is ChatMessage['tokenUsage'] {
   );
 }
 
-
 // ── Code block parser ───────────────────────────────────────────────────
 
 function MessageContent({ content, thinking }: { content: string; thinking?: string | null }) {
   const [showThinking, setShowThinking] = useState(false);
+  const parts = useMemo(() => content.split(/(```\w*\n[\s\S]*?```)/g), [content]);
 
   return (
     <div className="space-y-2">
@@ -105,7 +102,7 @@ function MessageContent({ content, thinking }: { content: string; thinking?: str
           <button
             type="button"
             onClick={() => setShowThinking((v) => !v)}
-            className="flex w-full items-center gap-2 px-3 py-2 text-xs font-medium text-foreground-muted hover:text-foreground-secondary transition-colors"
+            className="flex w-full items-center gap-2 px-3 py-2 text-xs font-medium text-foreground-muted transition-colors hover:text-foreground-secondary"
           >
             <span
               className={cn(
@@ -126,7 +123,7 @@ function MessageContent({ content, thinking }: { content: string; thinking?: str
           )}
         </div>
       )}
-      {content.split(/(```\w*\n[\s\S]*?```)/g).map((part, i) => {
+      {parts.map((part, i) => {
         if (part.startsWith('```')) {
           const firstLine = part.indexOf('\n');
           const lang = part.slice(3, firstLine).trim() || 'code';
@@ -155,7 +152,6 @@ function MessageContent({ content, thinking }: { content: string; thinking?: str
   );
 }
 
-
 interface SelectedPreviewElement {
   tagName: string;
   id: string | null;
@@ -168,6 +164,104 @@ interface SelectedPreviewElement {
 
 const VISUAL_EDITOR_SOURCE = 'sovereign-visual-editor';
 
+function isAgentStep(item: unknown): item is AgentStep {
+  return (
+    typeof item === 'object' &&
+    item !== null &&
+    'kind' in item &&
+    'title' in item &&
+    typeof (item as Record<string, unknown>).title === 'string'
+  );
+}
+
+function ToolStepsDisplay({ toolCalls }: { toolCalls: unknown }) {
+  const [isOpen, setIsOpen] = useState(true);
+
+  if (!Array.isArray(toolCalls)) return null;
+  const steps = toolCalls.filter(isAgentStep);
+  if (steps.length === 0) return null;
+
+  const fileWrites = steps.filter((s) => s.kind === 'write' || s.kind === 'edit').length;
+  const fileReads = steps.filter((s) => s.kind === 'read').length;
+  const fileDeletes = steps.filter((s) => s.kind === 'delete').length;
+
+  const summaryParts: string[] = [];
+  if (fileWrites > 0)
+    summaryParts.push(`${fileWrites} file ${fileWrites === 1 ? 'change' : 'changes'}`);
+  if (fileReads > 0) summaryParts.push(`${fileReads} file ${fileReads === 1 ? 'read' : 'reads'}`);
+  if (fileDeletes > 0)
+    summaryParts.push(`${fileDeletes} file ${fileDeletes === 1 ? 'deleted' : 'deletes'}`);
+
+  const summaryText =
+    summaryParts.length > 0 ? summaryParts.join(', ') : `${steps.length} execution steps`;
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-border/50 bg-background-muted/30">
+      <button
+        type="button"
+        onClick={() => setIsOpen((prev) => !prev)}
+        className="flex w-full items-center justify-between px-3 py-2 text-xs font-medium text-foreground-muted transition-colors hover:text-foreground-secondary"
+      >
+        <div className="flex items-center gap-2">
+          <span className={cn('h-3 w-3 transition-transform duration-200', isOpen && 'rotate-90')}>
+            <ChevronRight className="h-3 w-3" />
+          </span>
+          <span>{summaryText}</span>
+        </div>
+        <span className="text-[10px] text-foreground-muted/60">
+          {steps.length} {steps.length === 1 ? 'step' : 'steps'}
+        </span>
+      </button>
+
+      {isOpen && (
+        <div className="space-y-1.5 border-t border-border/50 p-2.5">
+          {steps.map((step) => {
+            const Icon =
+              step.kind === 'write' || step.kind === 'edit'
+                ? FileCode2
+                : step.kind === 'read'
+                  ? Eye
+                  : step.kind === 'delete'
+                    ? Trash2
+                    : step.kind === 'image'
+                      ? ImageIcon
+                      : Bot;
+
+            return (
+              <div
+                key={step.id}
+                className="flex items-center justify-between rounded-md bg-background/50 px-2.5 py-1.5 text-xs"
+              >
+                <div className="flex items-center gap-2 overflow-hidden">
+                  <Icon className="h-3.5 w-3.5 shrink-0 text-foreground-muted" />
+                  <span className="truncate font-mono text-[11px] text-foreground-secondary">
+                    {step.title}
+                  </span>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  {step.detail && (
+                    <span
+                      className="line-clamp-1 max-w-[180px] text-[10px] text-foreground-muted"
+                      title={step.detail}
+                    >
+                      {step.detail}
+                    </span>
+                  )}
+                  {step.durationMs !== undefined && (
+                    <span className="text-[10px] text-foreground-muted/60">
+                      {step.durationMs}ms
+                    </span>
+                  )}
+                  <span className="h-1.5 w-1.5 rounded-full bg-success" />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 // ── Main Workspace Page ─────────────────────────────────────────────────
 
 export default function ProjectWorkspace() {
@@ -199,16 +293,22 @@ export default function ProjectWorkspace() {
   const [liveThinking, setLiveThinking] = useState<string | null>(null);
   const [previewKey, setPreviewKey] = useState(0);
   const [visiblePreviewSlot, setVisiblePreviewSlot] = useState<0 | 1>(0);
-  const [previewSlotRevisions, setPreviewSlotRevisions] = useState<[number | null, number | null]>([0, null]);
-  const [showLiveThinking, setShowLiveThinking] = useState(false);
+  const [previewSlotRevisions, setPreviewSlotRevisions] = useState<[number | null, number | null]>([
+    0,
+    null,
+  ]);
+  const [showLiveThinking, setShowLiveThinking] = useState(true);
   const [clarifyingQuestions, setClarifyingQuestions] = useState<ClarifyingQuestion[]>([]);
   const [clarificationAnswers, setClarificationAnswers] = useState<string[]>([]);
   const [clarificationStep, setClarificationStep] = useState(0);
   const [customClarificationAnswer, setCustomClarificationAnswer] = useState('');
   const [isCustomClarification, setIsCustomClarification] = useState(false);
   const [isReviewingClarifications, setIsReviewingClarifications] = useState(false);
+  const [activeDesignDirections, setActiveDesignDirections] =
+    useState<DesignDirectionsEventData | null>(null);
   const [isEditMode, setIsEditMode] = useState(false);
-  const [selectedPreviewElement, setSelectedPreviewElement] = useState<SelectedPreviewElement | null>(null);
+  const [selectedPreviewElement, setSelectedPreviewElement] =
+    useState<SelectedPreviewElement | null>(null);
   const [showModelPopover, setShowModelPopover] = useState(false);
   const [activeSubMenu, setActiveSubMenu] = useState<'root' | 'models' | 'effort'>('root');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -286,8 +386,20 @@ export default function ProjectWorkspace() {
     setLiveThinking(null);
   }, []);
 
+  // F-01: Abort active generation stream on unmount
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+      abortControllerRef.current = null;
+    };
+  }, []);
 
-  const sandbox = useWebContainer(filesQuery.data ?? [], status === 'authenticated' && filesQuery.isSuccess);
+  // F-06: memoize initialFiles to avoid boot loop from inline `?? []` creating new array each render
+  const initialFilesMemo = useMemo(() => filesQuery.data ?? [], [filesQuery.data]);
+  const sandbox = useWebContainer(
+    initialFilesMemo,
+    status === 'authenticated' && filesQuery.isSuccess,
+  );
 
   useEffect(() => {
     if (!sandbox.url || previewKey === 0) return;
@@ -298,14 +410,24 @@ export default function ProjectWorkspace() {
       return next;
     });
   }, [previewKey, sandbox.url]);
-  const setPreviewEditMode = useCallback((enabled: boolean) => {
-    for (const frame of previewFramesRef.current) {
-      frame?.contentWindow?.postMessage(
-        { source: VISUAL_EDITOR_SOURCE, type: 'set-edit-mode', enabled },
-        '*',
-      );
-    }
-  }, []);
+  const setPreviewEditMode = useCallback(
+    (enabled: boolean) => {
+      const targetOrigin = (() => {
+        try {
+          return sandbox.url ? new URL(sandbox.url).origin : window.location.origin;
+        } catch {
+          return window.location.origin;
+        }
+      })();
+      for (const frame of previewFramesRef.current) {
+        frame?.contentWindow?.postMessage(
+          { source: VISUAL_EDITOR_SOURCE, type: 'set-edit-mode', enabled },
+          targetOrigin,
+        );
+      }
+    },
+    [sandbox.url],
+  );
 
   useEffect(() => {
     setPreviewEditMode(isEditMode);
@@ -321,9 +443,19 @@ export default function ProjectWorkspace() {
       if (!fromPreview) return;
 
       if (event.data.type === 'ready') {
-        event.source?.postMessage(
+        const replyOrigin =
+          event.origin && event.origin !== 'null'
+            ? event.origin
+            : (() => {
+                try {
+                  return sandbox.url ? new URL(sandbox.url).origin : window.location.origin;
+                } catch {
+                  return window.location.origin;
+                }
+              })();
+        (event.source as Window)?.postMessage(
           { source: VISUAL_EDITOR_SOURCE, type: 'set-edit-mode', enabled: isEditMode },
-          { targetOrigin: '*' },
+          { targetOrigin: replyOrigin },
         );
         return;
       }
@@ -364,9 +496,10 @@ export default function ProjectWorkspace() {
     activeFile ? { line: activeFile.line, column: activeFile.column } : null,
   );
   const previewCursorTarget = useMemo(
-    () => activeFile?.path.toLowerCase().endsWith('.html')
-      ? getPreviewCursorTarget(activeFile.content)
-      : null,
+    () =>
+      activeFile?.path.toLowerCase().endsWith('.html')
+        ? getPreviewCursorTarget(activeFile.content)
+        : null,
     [activeFile],
   );
 
@@ -412,62 +545,191 @@ export default function ProjectWorkspace() {
     });
   }, [modelsQuery.data, projectQuery.data?.modelName, projectQuery.data?.modelProvider]);
 
-  const handleSend = useCallback(async (messageOverride?: string) => {
-    const text = messageOverride?.trim() || input.trim();
-    if (!text || isSending || !selectedModel || !selectedProvider) return;
-    const abortController = new AbortController();
-    abortControllerRef.current = abortController;
-    const editTarget = selectedPreviewElement;
+  const handleSend = useCallback(
+    async (
+      messageOverride?: string,
+      directionResponseOverride?: {
+        action: 'select' | 'skip' | 'regenerate';
+        setId: string;
+        directionId?: string;
+      },
+    ) => {
+      const text = messageOverride?.trim() || input.trim();
+      if ((!text && !directionResponseOverride) || isSending || !selectedModel || !selectedProvider)
+        return;
+      const abortController = new AbortController();
+      abortControllerRef.current = abortController;
+      const editTarget = selectedPreviewElement;
 
-    const optimisticId = crypto.randomUUID();
-    const userMessage: ChatMessage = {
-      id: optimisticId,
-      role: 'user',
-      content: text,
-      timestamp: new Date(),
-      model: `${selectedProvider}:${selectedModel}`,
-    };
+      const optimisticId = crypto.randomUUID();
+      const userMessage: ChatMessage = {
+        id: optimisticId,
+        role: 'user',
+        content: text,
+        timestamp: new Date(),
+        model: `${selectedProvider}:${selectedModel}`,
+      };
 
-    setLocalMessages((previous) => [...previous, userMessage]);
-    setInput('');
-    setSelectedPreviewElement(null);
-    setIsSending(true);
-    setGenerationPhase({ phase: 'planning', label: 'Planning your app' });
-    setActiveFile(null);
-    setLiveThinking(null);
-    setClarifyingQuestions([]);
+      setLocalMessages((previous) => [...previous, userMessage]);
+      setInput('');
+      setSelectedPreviewElement(null);
+      setIsSending(true);
+      setGenerationPhase({ phase: 'planning', label: 'Planning your app' });
+      setActiveFile(null);
+      setLiveThinking(null);
+      setClarifyingQuestions([]);
+      setActiveDesignDirections(null);
+      try {
+        const response = await fetch('/api/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: abortController.signal,
+          body: JSON.stringify({
+            projectId,
+            message: text,
+            modelName: selectedModel,
+            modelProvider: selectedProvider,
+            reasoningEffort: reasoningEffort === 'auto' ? undefined : reasoningEffort,
+            ...(editTarget ? { editTarget } : {}),
+            ...(directionResponseOverride ? { directionResponse: directionResponseOverride } : {}),
+          }),
+        });
 
-    try {
-      const response = await fetch('/api/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: abortController.signal,
-        body: JSON.stringify({
-          projectId,
-          message: text,
-          modelName: selectedModel,
-          modelProvider: selectedProvider,
-          reasoningEffort: reasoningEffort === 'auto' ? undefined : reasoningEffort,
-          ...(editTarget ? { editTarget } : {}),
-        }),
-      });
+        await consumeGenerationStream(response, async (event) => {
+          if (event.type === 'phase') {
+            setGenerationPhase(event.data);
+            return;
+          }
+          if (event.type === 'step') {
+            if (event.data.kind === 'thinking' && event.data.detail) {
+              setLiveThinking(event.data.detail);
+            }
+            if (event.data.title) {
+              setGenerationPhase({ phase: 'building', label: event.data.title });
+            }
+            return;
+          }
+          if (event.type === 'file-operation') {
+            const label =
+              event.data.operation === 'delete'
+                ? `Deleting ${event.data.path}`
+                : `Writing ${event.data.path}`;
+            setGenerationPhase({ phase: 'building', label });
+            return;
+          }
+          if (event.type === 'image-job') {
+            if (event.data.status === 'running') {
+              setGenerationPhase({
+                phase: 'building',
+                label: `Generating image for ${event.data.semanticUse}`,
+              });
+            }
+            return;
+          }
+          if (event.type === 'file-preview') {
+            if (event.data.operation !== 'delete' && event.data.content !== undefined) {
+              setActiveFile({
+                path: event.data.path,
+                content: event.data.content,
+                line: 1,
+                column: 0,
+              });
+              setLiveFiles((current) => [
+                ...current.filter((file) => file.path !== event.data.path),
+                { path: event.data.path, content: event.data.content! },
+              ]);
+              const now = performance.now();
+              if (now - lastSandboxWriteRef.current >= 120) {
+                lastSandboxWriteRef.current = now;
+                await sandbox.writeFiles([{ path: event.data.path, content: event.data.content! }]);
+                if (now - lastPreviewRefreshRef.current >= 500) {
+                  lastPreviewRefreshRef.current = now;
+                  setPreviewKey((key) => key + 1);
+                }
+              }
+            }
+            return;
+          }
+          if (event.type === 'design-directions') {
+            setActiveDesignDirections(event.data);
+            return;
+          }
+          if (event.type === 'thinking') {
+            setLiveThinking(event.data.content);
+            return;
+          }
+          if (event.type === 'questions') {
+            setClarifyingQuestions(event.data.questions);
+            setClarificationAnswers([]);
+            setClarificationStep(0);
+            setCustomClarificationAnswer('');
+            setIsCustomClarification(false);
+            setIsReviewingClarifications(false);
+            setLocalMessages((previous) => [
+              ...previous.filter((message) => message.id !== optimisticId),
+              {
+                id: event.data.userMessage.id,
+                role: 'user',
+                content: event.data.userMessage.content,
+                timestamp: new Date(event.data.userMessage.timestamp),
+                model: event.data.userMessage.model ?? `${selectedProvider}:${selectedModel}`,
+              },
+              {
+                id: event.data.assistantMessage.id,
+                role: 'assistant',
+                content: event.data.assistantMessage.content,
+                timestamp: new Date(event.data.assistantMessage.timestamp),
+                model: event.data.assistantMessage.model ?? `${selectedProvider}:${selectedModel}`,
+              },
+            ]);
+            await historyQuery.refetch();
+            return;
+          }
+          if (event.type === 'file-start') {
+            setActiveFile({ path: event.data.path, content: '', line: 1, column: 0 });
+            return;
+          }
+          if (event.type === 'file-progress') {
+            setActiveFile(event.data);
+            setLiveFiles((current) => [
+              ...current.filter((file) => file.path !== event.data.path),
+              { path: event.data.path, content: event.data.content },
+            ]);
+            const now = performance.now();
+            if (now - lastSandboxWriteRef.current >= 120) {
+              lastSandboxWriteRef.current = now;
+              await sandbox.writeFiles([{ path: event.data.path, content: event.data.content }]);
+              if (now - lastPreviewRefreshRef.current >= 500) {
+                lastPreviewRefreshRef.current = now;
+                setPreviewKey((key) => key + 1);
+              }
+            }
+            return;
+          }
+          if (event.type === 'file-complete') {
+            await sandbox.writeFiles([event.data]);
+            setPreviewKey((key) => key + 1);
+            return;
+          }
+          if (event.type === 'failed') throw new Error(event.data.message);
 
-      await consumeGenerationStream(response, async (event) => {
-        if (event.type === 'phase') {
-          setGenerationPhase(event.data);
-          return;
-        }
-        if (event.type === 'thinking') {
-          setLiveThinking(event.data.content);
-          return;
-        }
-        if (event.type === 'questions') {
-          setClarifyingQuestions(event.data.questions);
-          setClarificationAnswers([]);
-          setClarificationStep(0);
-          setCustomClarificationAnswer('');
-          setIsCustomClarification(false);
-          setIsReviewingClarifications(false);
+          if (event.type !== 'ready') return;
+          await sandbox.writeFiles(event.data.files);
+          setPreviewKey((key) => key + 1);
+          // Select `index.html` so the code panel and preview show the entry point
+          const primaryFile =
+            event.data.files.find((file) => file.path === 'index.html') ??
+            event.data.files.find((file) => file.path.endsWith('.html')) ??
+            event.data.files[0];
+          if (primaryFile) {
+            setActiveFile({
+              path: primaryFile.path,
+              content: primaryFile.content,
+              line: 1,
+              column: 0,
+            });
+          }
+          setLiveFiles(event.data.files);
           setLocalMessages((previous) => [
             ...previous.filter((message) => message.id !== optimisticId),
             {
@@ -483,118 +745,72 @@ export default function ProjectWorkspace() {
               content: event.data.assistantMessage.content,
               timestamp: new Date(event.data.assistantMessage.timestamp),
               model: event.data.assistantMessage.model ?? `${selectedProvider}:${selectedModel}`,
+              tokenUsage: event.data.assistantMessage.tokenUsage,
+              ...(event.data.thinking ? { thinking: event.data.thinking } : {}),
             },
           ]);
-          await historyQuery.refetch();
-          return;
-        }
-        if (event.type === 'file-start') {
-          setActiveFile({ path: event.data.path, content: '', line: 1, column: 0 });
-          return;
-        }
-        if (event.type === 'file-progress') {
-          setActiveFile(event.data);
-          setLiveFiles((current) => [
-            ...current.filter((file) => file.path !== event.data.path),
-            { path: event.data.path, content: event.data.content },
+          setCurrentVersion(event.data.versionNumber);
+          await Promise.all([
+            versionsQuery.refetch(),
+            historyQuery.refetch(),
+            filesQuery.refetch(),
           ]);
-          const now = performance.now();
-          if (now - lastSandboxWriteRef.current >= 120) {
-            lastSandboxWriteRef.current = now;
-            await sandbox.writeFiles([{ path: event.data.path, content: event.data.content }]);
-            if (now - lastPreviewRefreshRef.current >= 500) {
-              lastPreviewRefreshRef.current = now;
-              setPreviewKey((key) => key + 1);
-            }
-          }
+        });
+      } catch (error) {
+        setLocalMessages((previous) => previous.filter((message) => message.id !== optimisticId));
+        if (
+          error instanceof Error &&
+          (error.name === 'AbortError' || abortController.signal.aborted)
+        ) {
           return;
         }
-        if (event.type === 'file-complete') {
-          await sandbox.writeFiles([event.data]);
-          setPreviewKey((key) => key + 1);
-          return;
-        }
-        if (event.type === 'failed') throw new Error(event.data.message);
-
-        await sandbox.writeFiles(event.data.files);
-        setPreviewKey((key) => key + 1);
-        // Select `index.html` so the code panel and preview show the entry point
-        const primaryFile = event.data.files.find(file => file.path === 'index.html')
-          ?? event.data.files.find(file => file.path.endsWith('.html'))
-          ?? event.data.files[0];
-        if (primaryFile) {
-          setActiveFile({ path: primaryFile.path, content: primaryFile.content, line: 1, column: 0 });
-        }
-        setLiveFiles(event.data.files);
+        setInput(text);
+        const message = error instanceof Error ? error.message : 'Failed to generate the app.';
         setLocalMessages((previous) => [
-          ...previous.filter((message) => message.id !== optimisticId),
+          ...previous,
           {
-            id: event.data.userMessage.id,
-            role: 'user',
-            content: event.data.userMessage.content,
-            timestamp: new Date(event.data.userMessage.timestamp),
-            model: event.data.userMessage.model ?? `${selectedProvider}:${selectedModel}`,
-          },
-          {
-            id: event.data.assistantMessage.id,
-            role: 'assistant',
-            content: event.data.assistantMessage.content,
-            timestamp: new Date(event.data.assistantMessage.timestamp),
-            model: event.data.assistantMessage.model ?? `${selectedProvider}:${selectedModel}`,
-            tokenUsage: event.data.assistantMessage.tokenUsage,
-            ...(event.data.thinking ? { thinking: event.data.thinking } : {}),
+            id: crypto.randomUUID(),
+            role: 'system',
+            content: `**Error:** ${message}`,
+            timestamp: new Date(),
+            model: `${selectedProvider}:${selectedModel}`,
           },
         ]);
-        setCurrentVersion(event.data.versionNumber);
-        await Promise.all([versionsQuery.refetch(), historyQuery.refetch(), filesQuery.refetch()]);
-      });
-    } catch (error) {
-      setLocalMessages((previous) => previous.filter((message) => message.id !== optimisticId));
-      if (error instanceof Error && (error.name === 'AbortError' || abortController.signal.aborted)) {
-        return;
+      } finally {
+        setIsSending(false);
+        setGenerationPhase(null);
+        setLiveThinking(null);
+        abortControllerRef.current = null;
       }
-      setInput(text);
-      const message = error instanceof Error ? error.message : 'Failed to generate the app.';
-      setLocalMessages((previous) => [
-        ...previous,
-        {
-          id: crypto.randomUUID(),
-          role: 'system',
-          content: `**Error:** ${message}`,
-          timestamp: new Date(),
-          model: `${selectedProvider}:${selectedModel}`,
-        },
-      ]);
-    } finally {
-      setIsSending(false);
-      setGenerationPhase(null);
-      setLiveThinking(null);
-      abortControllerRef.current = null;
-    }
-  }, [
-    input,
-    isSending,
-    selectedModel,
-    selectedProvider,
-    projectId,
-    sandbox,
-    reasoningEffort,
-    versionsQuery,
-    selectedPreviewElement,
-  ]);
+    },
+    [
+      input,
+      isSending,
+      selectedModel,
+      selectedProvider,
+      projectId,
+      sandbox,
+      reasoningEffort,
+      versionsQuery,
+      selectedPreviewElement,
+    ],
+  );
 
-  const answerClarification = useCallback((answer: string) => {
-    const nextAnswers = [...clarificationAnswers];
-    nextAnswers[clarificationStep] = answer.trim();
-    setClarificationAnswers(nextAnswers);
-    setCustomClarificationAnswer('');
-    setIsCustomClarification(false);
-    if (clarificationStep >= clarifyingQuestions.length - 1) {
-      setIsReviewingClarifications(true);
-    } else {
-      setClarificationStep((step) => step + 1);
-    }
-  }, [clarificationAnswers, clarificationStep, clarifyingQuestions.length]);
+  const answerClarification = useCallback(
+    (answer: string) => {
+      const nextAnswers = [...clarificationAnswers];
+      nextAnswers[clarificationStep] = answer.trim();
+      setClarificationAnswers(nextAnswers);
+      setCustomClarificationAnswer('');
+      setIsCustomClarification(false);
+      if (clarificationStep >= clarifyingQuestions.length - 1) {
+        setIsReviewingClarifications(true);
+      } else {
+        setClarificationStep((step) => step + 1);
+      }
+    },
+    [clarificationAnswers, clarificationStep, clarifyingQuestions.length],
+  );
 
   const cancelClarifications = useCallback(() => {
     setClarifyingQuestions([]);
@@ -607,7 +823,9 @@ export default function ProjectWorkspace() {
 
   const submitClarifications = useCallback(() => {
     const response = clarifyingQuestions
-      .map((item, index) => `${index + 1}. ${item.question}\nAnswer: ${clarificationAnswers[index]}`)
+      .map(
+        (item, index) => `${index + 1}. ${item.question}\nAnswer: ${clarificationAnswers[index]}`,
+      )
       .join('\n\n');
     cancelClarifications();
     void handleSend(`Here are my answers to your clarifying questions:\n\n${response}`);
@@ -621,11 +839,17 @@ export default function ProjectWorkspace() {
         await sandbox.replaceFiles(displayedFiles, restored.files);
         setPreviewKey((k) => k + 1);
         setLiveFiles(restored.files);
-        const primaryRestored = restored.files.find(f => f.path === 'index.html')
-          ?? restored.files.find(f => f.path.endsWith('.html'))
-          ?? restored.files[0];
+        const primaryRestored =
+          restored.files.find((f) => f.path === 'index.html') ??
+          restored.files.find((f) => f.path.endsWith('.html')) ??
+          restored.files[0];
         if (primaryRestored) {
-          setActiveFile({ path: primaryRestored.path, content: primaryRestored.content, line: 1, column: 0 });
+          setActiveFile({
+            path: primaryRestored.path,
+            content: primaryRestored.content,
+            line: 1,
+            column: 0,
+          });
         }
         setCurrentVersion(restored.versionNumber);
         await Promise.all([versionsQuery.refetch(), filesQuery.refetch()]);
@@ -648,6 +872,18 @@ export default function ProjectWorkspace() {
     }
   }, [projectQuery.error, router]);
 
+  const versionTimelineEntries = useMemo<VersionTimelineEntry[]>(
+    () =>
+      (versionsQuery.data ?? []).map((version) => ({
+        id: version.id,
+        versionNumber: version.versionNumber,
+        createdAt: new Date(version.createdAt),
+        fileCount: Object.keys(version.manifest as Record<string, string>).length,
+        isRestore: false,
+      })),
+    [versionsQuery.data],
+  );
+
   // Require auth
   if (status === 'loading') {
     return (
@@ -668,16 +904,6 @@ export default function ProjectWorkspace() {
       handleSend();
     }
   };
-
-  const versionTimelineEntries: VersionTimelineEntry[] = (versionsQuery.data ?? []).map(
-    (version) => ({
-      id: version.id,
-      versionNumber: version.versionNumber,
-      createdAt: new Date(version.createdAt),
-      fileCount: Object.keys(version.manifest as Record<string, string>).length,
-      isRestore: false,
-    }),
-  );
 
   const effectiveVersion = currentVersion;
   const historyErrorMessage = historyError?.message;
@@ -714,7 +940,10 @@ export default function ProjectWorkspace() {
 
         <div className="ml-auto flex items-center gap-3">
           {/* Deploy button */}
-          <Button size="default" className="h-9 gap-2 rounded-lg px-4 text-xs font-semibold sm:text-sm shadow-sm">
+          <Button
+            size="default"
+            className="h-9 gap-2 rounded-lg px-4 text-xs font-semibold shadow-sm sm:text-sm"
+          >
             <Rocket className="h-4 w-4" />
             <span className="hidden sm:inline">Deploy</span>
           </Button>
@@ -790,18 +1019,51 @@ export default function ProjectWorkspace() {
             )}
 
             {messages.map((msg) => (
-              <div key={msg.id} className={cn('chat-message', msg.role === 'user' ? 'chat-message--user' : 'chat-message--assistant')}>
+              <div
+                key={msg.id}
+                className={cn(
+                  'chat-message',
+                  msg.role === 'user' ? 'chat-message--user' : 'chat-message--assistant',
+                )}
+              >
                 <div className="mx-auto max-w-3xl space-y-2">
                   <div className="flex items-center gap-2">
-                    <div className={cn('flex h-6 w-6 items-center justify-center rounded-full', msg.role === 'user' ? 'bg-background-muted text-foreground-secondary' : 'bg-primary/10 text-primary')}>
-                      {msg.role === 'user' ? <User className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
+                    <div
+                      className={cn(
+                        'flex h-6 w-6 items-center justify-center rounded-full',
+                        msg.role === 'user'
+                          ? 'bg-background-muted text-foreground-secondary'
+                          : 'bg-primary/10 text-primary',
+                      )}
+                    >
+                      {msg.role === 'user' ? (
+                        <User className="h-3.5 w-3.5" />
+                      ) : (
+                        <Bot className="h-3.5 w-3.5" />
+                      )}
                     </div>
-                    <span className="text-xs font-medium text-foreground-secondary">{msg.role === 'user' ? 'You' : 'Assistant'}</span>
-                    <span className="flex items-center gap-1 text-xs text-foreground-muted"><Clock className="h-3 w-3" />{formatTime(new Date(msg.timestamp))}</span>
-                    <Badge variant="outline" className="ml-auto px-1.5 py-0 text-[10px]">{msg.model}</Badge>
+                    <span className="text-xs font-medium text-foreground-secondary">
+                      {msg.role === 'user' ? 'You' : 'Assistant'}
+                    </span>
+                    <span className="flex items-center gap-1 text-xs text-foreground-muted">
+                      <Clock className="h-3 w-3" />
+                      {formatTime(new Date(msg.timestamp))}
+                    </span>
+                    <Badge variant="outline" className="ml-auto px-1.5 py-0 text-[10px]">
+                      {msg.model}
+                    </Badge>
                   </div>
-                  <div className="pl-8"><MessageContent content={msg.content} thinking={msg.thinking} /></div>
-                  {msg.tokenUsage && <div className="pl-8 pt-1"><span className="text-[10px] text-foreground-muted/60">{msg.tokenUsage.totalTokens} tokens</span></div>}
+                  <div className="space-y-2 pl-8">
+                    {msg.toolCalls && <ToolStepsDisplay toolCalls={msg.toolCalls} />}
+                    <MessageContent content={msg.content} thinking={msg.thinking} />
+                  </div>
+                  {msg.tokenUsage && (
+                    <div className="pl-8 pt-1">
+                      <span className="text-[10px] text-foreground-muted/60">
+                        {msg.tokenUsage.totalTokens} tokens
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
@@ -810,61 +1072,167 @@ export default function ProjectWorkspace() {
               <div className="chat-message chat-message--assistant">
                 <div className="mx-auto max-w-3xl pl-8">
                   <div className="overflow-hidden rounded-xl border border-primary/30 bg-primary/5">
-                    {!isReviewingClarifications ? (() => {
-                      const item = clarifyingQuestions[clarificationStep];
-                      if (!item) return null;
-                      return (
-                        <div className="p-4">
-                          <div className="mb-4 flex items-center justify-between">
-                            <p className="text-xs font-semibold text-primary">Clarifying your request</p>
-                            <span className="text-[10px] text-foreground-muted">{clarificationStep + 1} of {clarifyingQuestions.length}</span>
-                          </div>
-                          <h3 className="mb-4 text-base font-semibold leading-6 text-foreground">{item.question}</h3>
-                          <div className="space-y-2">
-                            {item.options.map((option, optionIndex) => (
-                              <button key={option} type="button" onClick={() => answerClarification(option)} className="flex w-full items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-left text-sm text-foreground-secondary transition-colors hover:border-primary/60 hover:bg-background-muted">
-                                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border text-[11px] font-semibold text-foreground-muted">{optionIndex + 1}</span>{option}
-                              </button>
-                            ))}
-                            {!isCustomClarification ? (
-                              <button type="button" onClick={() => setIsCustomClarification(true)} className="flex w-full items-center gap-3 rounded-lg border border-dashed border-border bg-transparent px-3 py-3 text-left text-sm text-foreground-muted transition-colors hover:border-primary/60 hover:text-foreground-secondary">
-                                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border text-[11px] font-semibold">4</span>Write my own answer
-                              </button>
-                            ) : (
-                              <div className="space-y-2 rounded-lg border border-primary/40 bg-background p-3">
-                                <Textarea autoFocus value={customClarificationAnswer} onChange={(event) => setCustomClarificationAnswer(event.target.value)} placeholder="Enter your answer…" className="min-h-20 resize-none text-sm" />
-                                <div className="flex justify-end gap-2">
-                                  <Button variant="ghost" size="sm" onClick={() => { setIsCustomClarification(false); setCustomClarificationAnswer(''); }}>Back</Button>
-                                  <Button size="sm" disabled={!customClarificationAnswer.trim()} onClick={() => answerClarification(customClarificationAnswer)}>Use answer</Button>
+                    {!isReviewingClarifications ? (
+                      (() => {
+                        const item = clarifyingQuestions[clarificationStep];
+                        if (!item) return null;
+                        return (
+                          <div className="p-4">
+                            <div className="mb-4 flex items-center justify-between">
+                              <p className="text-xs font-semibold text-primary">
+                                Clarifying your request
+                              </p>
+                              <span className="text-[10px] text-foreground-muted">
+                                {clarificationStep + 1} of {clarifyingQuestions.length}
+                              </span>
+                            </div>
+                            <h3 className="mb-4 text-base font-semibold leading-6 text-foreground">
+                              {item.question}
+                            </h3>
+                            <div className="space-y-2">
+                              {item.options.map((option, optionIndex) => (
+                                <button
+                                  key={option}
+                                  type="button"
+                                  onClick={() => answerClarification(option)}
+                                  className="flex w-full items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-left text-sm text-foreground-secondary transition-colors hover:border-primary/60 hover:bg-background-muted"
+                                >
+                                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border text-[11px] font-semibold text-foreground-muted">
+                                    {optionIndex + 1}
+                                  </span>
+                                  {option}
+                                </button>
+                              ))}
+                              {!isCustomClarification ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setIsCustomClarification(true)}
+                                  className="flex w-full items-center gap-3 rounded-lg border border-dashed border-border bg-transparent px-3 py-3 text-left text-sm text-foreground-muted transition-colors hover:border-primary/60 hover:text-foreground-secondary"
+                                >
+                                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border text-[11px] font-semibold">
+                                    4
+                                  </span>
+                                  Write my own answer
+                                </button>
+                              ) : (
+                                <div className="space-y-2 rounded-lg border border-primary/40 bg-background p-3">
+                                  <Textarea
+                                    autoFocus
+                                    value={customClarificationAnswer}
+                                    onChange={(event) =>
+                                      setCustomClarificationAnswer(event.target.value)
+                                    }
+                                    placeholder="Enter your answer…"
+                                    className="min-h-20 resize-none text-sm"
+                                  />
+                                  <div className="flex justify-end gap-2">
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => {
+                                        setIsCustomClarification(false);
+                                        setCustomClarificationAnswer('');
+                                      }}
+                                    >
+                                      Back
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      disabled={!customClarificationAnswer.trim()}
+                                      onClick={() => answerClarification(customClarificationAnswer)}
+                                    >
+                                      Use answer
+                                    </Button>
+                                  </div>
                                 </div>
-                              </div>
-                            )}
+                              )}
+                            </div>
+                            <div className="mt-4 flex justify-between border-t border-border/50 pt-3">
+                              <Button variant="ghost" size="sm" onClick={cancelClarifications}>
+                                Cancel
+                              </Button>
+                              {clarificationStep > 0 && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setClarificationStep((step) => step - 1)}
+                                >
+                                  Previous
+                                </Button>
+                              )}
+                            </div>
                           </div>
-                          <div className="mt-4 flex justify-between border-t border-border/50 pt-3">
-                            <Button variant="ghost" size="sm" onClick={cancelClarifications}>Cancel</Button>
-                            {clarificationStep > 0 && <Button variant="ghost" size="sm" onClick={() => setClarificationStep((step) => step - 1)}>Previous</Button>}
-                          </div>
-                        </div>
-                      );
-                    })() : (
+                        );
+                      })()
+                    ) : (
                       <div className="p-4">
                         <p className="text-xs font-semibold text-primary">Review your answers</p>
-                        <h3 className="mt-1 text-base font-semibold text-foreground">Ready to continue?</h3>
+                        <h3 className="mt-1 text-base font-semibold text-foreground">
+                          Ready to continue?
+                        </h3>
                         <div className="mt-4 space-y-3">
                           {clarifyingQuestions.map((item, index) => (
-                            <button key={item.question} type="button" onClick={() => { setClarificationStep(index); setIsReviewingClarifications(false); }} className="block w-full rounded-lg border border-border bg-background p-3 text-left hover:border-primary/50">
-                              <span className="block text-xs font-medium text-foreground-secondary">{index + 1}. {item.question}</span>
-                              <span className="mt-1 block text-sm text-primary">{clarificationAnswers[index]}</span>
+                            <button
+                              key={item.question}
+                              type="button"
+                              onClick={() => {
+                                setClarificationStep(index);
+                                setIsReviewingClarifications(false);
+                              }}
+                              className="block w-full rounded-lg border border-border bg-background p-3 text-left hover:border-primary/50"
+                            >
+                              <span className="block text-xs font-medium text-foreground-secondary">
+                                {index + 1}. {item.question}
+                              </span>
+                              <span className="mt-1 block text-sm text-primary">
+                                {clarificationAnswers[index]}
+                              </span>
                             </button>
                           ))}
                         </div>
                         <div className="mt-4 flex justify-end gap-2 border-t border-border/50 pt-4">
-                          <Button variant="ghost" onClick={cancelClarifications}>Cancel</Button>
+                          <Button variant="ghost" onClick={cancelClarifications}>
+                            Cancel
+                          </Button>
                           <Button onClick={submitClarifications}>Submit answers</Button>
                         </div>
                       </div>
                     )}
                   </div>
+                </div>
+              </div>
+            )}
+            {activeDesignDirections && !isSending && (
+              <div className="chat-message chat-message--assistant">
+                <div className="mx-auto max-w-3xl pl-8">
+                  <DesignDirectionCards
+                    data={activeDesignDirections}
+                    onSelect={async (directionId) => {
+                      const setId = activeDesignDirections.id;
+                      setActiveDesignDirections(null);
+                      await handleSend(undefined, {
+                        action: 'select',
+                        setId,
+                        directionId,
+                      });
+                    }}
+                    onSkip={async () => {
+                      const setId = activeDesignDirections.id;
+                      setActiveDesignDirections(null);
+                      await handleSend(undefined, {
+                        action: 'skip',
+                        setId,
+                      });
+                    }}
+                    onRegenerate={async () => {
+                      const setId = activeDesignDirections.id;
+                      setActiveDesignDirections(null);
+                      await handleSend(undefined, {
+                        action: 'regenerate',
+                        setId,
+                      });
+                    }}
+                  />
                 </div>
               </div>
             )}
@@ -884,22 +1252,24 @@ export default function ProjectWorkspace() {
                   </div>
                   <div className="pl-8 pt-2">
                     <div className="overflow-hidden rounded-lg border border-border/40 bg-background-muted/20">
-                      <div className="flex items-center gap-2 text-sm text-foreground-muted px-3 py-2">
+                      <div className="flex items-center gap-2 px-3 py-2 text-sm text-foreground-muted">
                         <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                        <span className="flex-1">{generationPhase?.label ?? "Starting generation"}</span>
+                        <span className="flex-1">
+                          {generationPhase?.label ?? 'Starting generation'}
+                        </span>
                         {liveThinking && (
                           <button
                             type="button"
                             onClick={() => setShowLiveThinking((v) => !v)}
-                            className="flex items-center gap-1 text-xs font-medium text-foreground-muted hover:text-foreground-secondary transition-colors"
+                            className="flex items-center gap-1 text-xs font-medium text-foreground-muted transition-colors hover:text-foreground-secondary"
                           >
                             <ChevronRight
                               className={cn(
-                                "h-3.5 w-3.5 transition-transform duration-200",
-                                showLiveThinking && "rotate-90",
+                                'h-3.5 w-3.5 transition-transform duration-200',
+                                showLiveThinking && 'rotate-90',
                               )}
                             />
-                            {showLiveThinking ? "Hide reasoning" : "Show reasoning"}
+                            {showLiveThinking ? 'Hide reasoning' : 'Show reasoning'}
                           </button>
                         )}
                       </div>
@@ -914,8 +1284,12 @@ export default function ProjectWorkspace() {
                     {activeFile && (
                       <div className="mt-2 flex items-center gap-2 rounded-md border border-border bg-background-muted px-2.5 py-2 font-mono text-[11px]">
                         <FileCode2 className="h-3.5 w-3.5 text-primary" />
-                        <span className="min-w-0 flex-1 truncate text-foreground-secondary">{activeFile.path}</span>
-                        <span className="text-foreground-muted">Ln {activeFile.line}, Col {activeFile.column}</span>
+                        <span className="min-w-0 flex-1 truncate text-foreground-secondary">
+                          {activeFile.path}
+                        </span>
+                        <span className="text-foreground-muted">
+                          Ln {activeFile.line}, Col {activeFile.column}
+                        </span>
                       </div>
                     )}
                   </div>
@@ -929,12 +1303,14 @@ export default function ProjectWorkspace() {
           <div className="border-t border-border bg-background-subtle p-2.5 sm:p-3">
             <div className="relative mx-auto max-w-3xl">
               {clarifyingQuestions.length > 0 ? (
-                <p className="py-2 text-center text-xs text-foreground-muted">Complete or cancel the clarification above to continue chatting.</p>
+                <p className="py-2 text-center text-xs text-foreground-muted">
+                  Complete or cancel the clarification above to continue chatting.
+                </p>
               ) : (
                 <>
                   {/* FLOATING MODEL & REASONING POPOVER */}
                   {showModelPopover && (
-                    <div className="absolute bottom-full right-12 mb-3 z-30 w-80 overflow-hidden rounded-2xl border border-white/15 bg-[#1a1a1c] p-3 shadow-2xl backdrop-blur-xl">
+                    <div className="absolute bottom-full right-12 z-30 mb-3 w-80 overflow-hidden rounded-2xl border border-white/15 bg-[#1a1a1c] p-3 shadow-2xl backdrop-blur-xl">
                       {/* ROOT MENU (Model & Effort rows) */}
                       {activeSubMenu === 'root' && (
                         <div className="space-y-1">
@@ -958,7 +1334,8 @@ export default function ProjectWorkspace() {
                             <span className="text-foreground-secondary">Effort</span>
                             <div className="flex items-center gap-1 text-white">
                               <span className="capitalize">
-                                {REASONING_LEVELS.find((r) => r.value === reasoningEffort)?.label ?? 'Auto'}
+                                {REASONING_LEVELS.find((r) => r.value === reasoningEffort)?.label ??
+                                  'Auto'}
                               </span>
                               <ChevronRight className="h-3.5 w-3.5 opacity-60" />
                             </div>
@@ -1000,7 +1377,7 @@ export default function ProjectWorkspace() {
                             )}
                           </div>
 
-                          <div className="max-h-52 overflow-y-auto space-y-2 pr-1">
+                          <div className="max-h-52 space-y-2 overflow-y-auto pr-1">
                             {filteredModels.length > 0 ? (
                               filteredModels.map((group) => (
                                 <div key={group.provider} className="space-y-0.5">
@@ -1029,7 +1406,9 @@ export default function ProjectWorkspace() {
                                           <Zap className="h-3.5 w-3.5" />
                                           <span>{model}</span>
                                         </div>
-                                        {isSelected && <Check className="h-3.5 w-3.5 text-primary" />}
+                                        {isSelected && (
+                                          <Check className="h-3.5 w-3.5 text-primary" />
+                                        )}
                                       </button>
                                     );
                                   })}
@@ -1097,7 +1476,10 @@ export default function ProjectWorkspace() {
                       <div className="mb-2.5 flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs">
                         <Crosshair className="h-3.5 w-3.5 text-primary" />
                         <span className="text-foreground-secondary">
-                          Editing <span className="font-mono font-medium text-foreground">{selectedPreviewElement.selector}</span>
+                          Editing{' '}
+                          <span className="font-mono font-medium text-foreground">
+                            {selectedPreviewElement.selector}
+                          </span>
                         </span>
                         <button
                           type="button"
@@ -1116,9 +1498,13 @@ export default function ProjectWorkspace() {
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
                       onKeyDown={handleKeyDown}
-                      placeholder={selectedPreviewElement ? `Describe the change for this ${selectedPreviewElement.tagName}…` : 'Describe what you want to build or change…'}
+                      placeholder={
+                        selectedPreviewElement
+                          ? `Describe the change for this ${selectedPreviewElement.tagName}…`
+                          : 'Describe what you want to build or change…'
+                      }
                       rows={2}
-                      className="max-h-36 min-h-[44px] w-full resize-none border-none bg-transparent px-2 text-sm text-white shadow-none placeholder:text-foreground-muted outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0"
+                      className="max-h-36 min-h-[44px] w-full resize-none border-none bg-transparent px-2 text-sm text-white shadow-none outline-none ring-0 placeholder:text-foreground-muted focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0"
                     />
 
                     {/* Footer Controls Bar */}
@@ -1188,7 +1574,8 @@ export default function ProjectWorkspace() {
                             {selectedModel || 'Select Model'}
                           </span>
                           <span className="ml-2.5 font-normal text-[#9A9A9A]">
-                            {REASONING_LEVELS.find((r) => r.value === reasoningEffort)?.label ?? 'Auto'}
+                            {REASONING_LEVELS.find((r) => r.value === reasoningEffort)?.label ??
+                              'Auto'}
                           </span>
                         </button>
 
@@ -1201,16 +1588,18 @@ export default function ProjectWorkspace() {
                               void handleSend();
                             }
                           }}
-                          disabled={isSending ? false : (!input.trim() || !selectedModel || !selectedProvider)}
+                          disabled={
+                            isSending ? false : !input.trim() || !selectedModel || !selectedProvider
+                          }
                           className={cn(
                             'flex h-9 w-9 items-center justify-center rounded-full transition-all',
                             isSending
                               ? 'bg-red-500 text-white shadow-md'
                               : input.trim() && selectedModel && selectedProvider
-                                ? 'bg-primary text-primary-foreground hover:bg-primary/90 shadow-md shadow-primary/20'
-                                : 'bg-white/10 text-white/30 cursor-not-allowed',
+                                ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20 hover:bg-primary/90'
+                                : 'cursor-not-allowed bg-white/10 text-white/30',
                           )}
-                          aria-label={isSending ? "Stop agent" : "Send message"}
+                          aria-label={isSending ? 'Stop agent' : 'Send message'}
                         >
                           {isSending ? (
                             <Square className="h-3.5 w-3.5 fill-current" />
@@ -1221,7 +1610,6 @@ export default function ProjectWorkspace() {
                       </div>
                     </div>
                   </div>
-
                 </>
               )}
             </div>
@@ -1279,7 +1667,13 @@ export default function ProjectWorkspace() {
                 <span>Edit</span>
               </button>
             </div>
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setPreviewKey((key) => key + 1)} aria-label="Refresh preview">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => setPreviewKey((key) => key + 1)}
+              aria-label="Refresh preview"
+            >
               <RefreshCw className="h-3.5 w-3.5" />
             </Button>
           </div>
@@ -1288,35 +1682,48 @@ export default function ProjectWorkspace() {
             <div className="relative flex flex-1 overflow-hidden bg-[#0A0A0A]">
               {sandbox.url ? (
                 <>
-                  {previewSlotRevisions.map((revision, slot) => revision === null ? null : (
-                    <iframe
-                      ref={(frame) => {
-                        previewFramesRef.current[slot] = frame;
-                      }}
-                      key={`${slot}:${revision}`}
-                      src={`${sandbox.url!}${sandbox.url!.includes('?') ? '&' : '?'}revision=${revision}`}
-                      title={slot === visiblePreviewSlot ? 'Live app preview' : 'Loading app preview'}
-                      className={cn(
-                        'absolute inset-0 h-full w-full border-0 bg-[#0A0A0A]',
-                        slot === visiblePreviewSlot ? 'z-10 visible' : 'z-0 invisible',
-                      )}
-                      allow="cross-origin-isolated"
-                      onLoad={() => {
-                        if (revision !== previewKey || slot === visiblePreviewSlotRef.current) return;
-                        const nextSlot = slot as 0 | 1;
-                        visiblePreviewSlotRef.current = nextSlot;
-                        setVisiblePreviewSlot(nextSlot);
-                        requestAnimationFrame(() => setPreviewEditMode(isEditMode));
-                      }}
-                    />
-                  ))}
+                  {previewSlotRevisions.map((revision, slot) =>
+                    revision === null ? null : (
+                      <iframe
+                        ref={(frame) => {
+                          previewFramesRef.current[slot] = frame;
+                        }}
+                        key={`${slot}:${revision}`}
+                        src={`${sandbox.url!}${sandbox.url!.includes('?') ? '&' : '?'}revision=${revision}`}
+                        title={
+                          slot === visiblePreviewSlot ? 'Live app preview' : 'Loading app preview'
+                        }
+                        className={cn(
+                          'absolute inset-0 h-full w-full border-0 bg-[#0A0A0A]',
+                          slot === visiblePreviewSlot ? 'visible z-10' : 'invisible z-0',
+                        )}
+                        allow="cross-origin-isolated"
+                        onLoad={() => {
+                          if (revision !== previewKey || slot === visiblePreviewSlotRef.current)
+                            return;
+                          const nextSlot = slot as 0 | 1;
+                          visiblePreviewSlotRef.current = nextSlot;
+                          setVisiblePreviewSlot(nextSlot);
+                          requestAnimationFrame(() => setPreviewEditMode(isEditMode));
+                        }}
+                      />
+                    ),
+                  )}
                 </>
               ) : (
                 <div className="flex flex-1 items-center justify-center px-6 text-center">
                   <div>
-                    {sandbox.status === 'error' ? <AlertCircle className="mx-auto mb-3 h-7 w-7 text-error" /> : <Loader2 className="mx-auto mb-3 h-7 w-7 animate-spin text-primary" />}
-                    <p className="text-sm font-medium text-foreground-secondary">{sandbox.error ?? 'Starting secure preview sandbox'}</p>
-                    <p className="mt-1 text-xs text-foreground-muted">{sandbox.logs.at(-1) ?? 'Booting browser-based Node.js runtime…'}</p>
+                    {sandbox.status === 'error' ? (
+                      <AlertCircle className="mx-auto mb-3 h-7 w-7 text-error" />
+                    ) : (
+                      <Loader2 className="mx-auto mb-3 h-7 w-7 animate-spin text-primary" />
+                    )}
+                    <p className="text-sm font-medium text-foreground-secondary">
+                      {sandbox.error ?? 'Starting secure preview sandbox'}
+                    </p>
+                    <p className="mt-1 text-xs text-foreground-muted">
+                      {sandbox.logs.at(-1) ?? 'Booting browser-based Node.js runtime…'}
+                    </p>
                   </div>
                 </div>
               )}
@@ -1345,7 +1752,9 @@ export default function ProjectWorkspace() {
                   <button
                     key={file.path}
                     type="button"
-                    onClick={() => setActiveFile({ path: file.path, content: file.content, line: 1, column: 0 })}
+                    onClick={() =>
+                      setActiveFile({ path: file.path, content: file.content, line: 1, column: 0 })
+                    }
                     className={cn(
                       'flex w-full items-center gap-2 truncate px-3 py-1.5 text-left text-[11px] text-[#9ca3af] hover:bg-white/5 hover:text-white',
                       activeFile?.path === file.path && 'bg-white/10 text-white',
@@ -1367,7 +1776,30 @@ export default function ProjectWorkspace() {
                 <div className="sticky top-0 z-10 border-b border-white/10 bg-[#181818] px-4 py-2 font-mono text-[11px] text-[#9ca3af]">
                   {activeFile?.path ?? displayedFiles[0]?.path ?? 'No generated files'}
                 </div>
-                <pre className="min-h-full p-4 font-mono text-xs leading-5 text-[#d4d4d4]"><code>{activeFile?.content ?? displayedFiles[0]?.content ?? 'Describe the app you want to build.'}</code></pre>
+                {(() => {
+                  const rawContent =
+                    activeFile?.content ??
+                    displayedFiles[0]?.content ??
+                    'Describe the app you want to build.';
+                  const MAX_CODE_PREVIEW_CHARS = 50000;
+                  const isTruncated = rawContent.length > MAX_CODE_PREVIEW_CHARS;
+                  const displayContent = isTruncated
+                    ? rawContent.slice(0, MAX_CODE_PREVIEW_CHARS)
+                    : rawContent;
+                  return (
+                    <>
+                      <pre className="max-h-[600px] min-h-full overflow-auto p-4 font-mono text-xs leading-5 text-[#d4d4d4]">
+                        <code>{displayContent}</code>
+                      </pre>
+                      {isTruncated && (
+                        <div className="sticky bottom-0 border-t border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-300">
+                          File truncated for display ({rawContent.length.toLocaleString()} chars).
+                          Open in preview or download to see full content.
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
                 {isSending && smoothCursor.visible && (
                   <div
                     className="pointer-events-none absolute left-4 z-20 flex items-center"
@@ -1377,7 +1809,9 @@ export default function ProjectWorkspace() {
                     }}
                   >
                     <span className="h-4 w-0.5 animate-pulse bg-primary" />
-                    <span className="ml-2 rounded bg-primary px-1.5 py-0.5 text-[9px] font-semibold text-primary-foreground">AI</span>
+                    <span className="ml-2 rounded bg-primary px-1.5 py-0.5 text-[9px] font-semibold text-primary-foreground">
+                      AI
+                    </span>
                   </div>
                 )}
               </div>

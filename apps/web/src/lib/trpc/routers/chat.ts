@@ -3,8 +3,10 @@ import { TRPCError } from '@trpc/server';
 import { getProvider } from '@app-builder/ai-gateway';
 import { AIProvider } from '@app-builder/shared';
 import { protectedProcedure, router } from '../trpc';
+import { requireProjectRole } from '@/server/authz';
+import { checkRateLimit } from '@/server/rate-limit';
 import { decryptApiKey } from '@/lib/crypto';
-import { parseResponse, validateChanges } from '@app-builder/codegen';
+import { parseResponse, validateChanges, validatePath } from '@app-builder/codegen';
 import {
   createVersion,
   getVersions,
@@ -35,28 +37,26 @@ export const chatRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       // ── 1. Validate project access ──────────────────────────────
+      await requireProjectRole(ctx, input.projectId, 'EDITOR');
+
+      const rate = await checkRateLimit('prompt', ctx.user.id);
+      if (!rate.allowed) {
+        const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: `Generation rate limit exceeded. Try again in ${retryIn}s.`,
+        });
+      }
+
       const project = await ctx.db.project.findUnique({
         where: { id: input.projectId },
-        include: {
-          collaborators: {
-            where: { userId: ctx.user.id },
-          },
-        },
+        select: { id: true, modelProvider: true, modelName: true },
       });
 
       if (!project) {
         throw new TRPCError({
           code: 'NOT_FOUND',
           message: 'Project not found',
-        });
-      }
-
-      const isOwner = project.ownerId === ctx.user.id;
-      const isCollab = project.collaborators.length > 0;
-      if (!isOwner && !isCollab) {
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: 'You do not have access to this project',
         });
       }
 
@@ -103,11 +103,13 @@ export const chatRouter = router({
       });
 
       // ── 5. Load recent conversation history (last 20 messages) ──
-      const history = await ctx.db.chatMessage.findMany({
+      const recentHistory = await ctx.db.chatMessage.findMany({
         where: { projectId: project.id },
-        orderBy: { timestamp: 'asc' },
+        orderBy: { timestamp: 'desc' },
         take: 20,
       });
+
+      const history = recentHistory.reverse();
 
       const conversation = history.map((m: { role: string; content: string }) => ({
         role: m.role as 'user' | 'assistant' | 'system',
@@ -128,42 +130,31 @@ export const chatRouter = router({
         );
         responseContent = result.content;
         usage = result.usage;
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'AI provider call failed';
+      } catch {
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
-          message: `AI request failed: ${message}`,
+          message: 'AI provider request failed. Check your API key or try again.',
         });
       }
 
-      // ── 7. Persist the assistant's reply ────────────────────────
-      const assistantMessage = await ctx.db.chatMessage.create({
-        data: {
-          projectId: project.id,
-          role: 'assistant',
-          content: responseContent,
-          model: `${provider}:${model}`,
-          tokenUsage: usage,
-        },
+      // ── 7. Parse file diffs from the response ──
+      // Build a manifest from the current project files so validateChanges can
+      // correctly classify CREATE vs UPDATE (an empty manifest forces every
+      // file to appear as "create").
+      const existingFiles = await ctx.db.projectFile.findMany({
+        where: { projectId: project.id },
+        select: { path: true, contentHash: true },
       });
-      // ── 8. Parse file diffs from the response & create a version ────
+      const manifest: Record<string, string> = Object.fromEntries(
+        existingFiles.map((f) => [f.path, f.contentHash]),
+      );
       let fileDiffs: VersionDiffEntry[] = [];
       let parsingMethod: 'structured' | 'legacy' = 'structured';
       let parsingErrors: string[] = [];
-      let versionNumber: number | null = null;
 
-      // Try structured tool output parsing first (provider tool/schema output
-      // for write_file, delete_file, and ask_user).
       try {
         const toolOutput = parseResponse(responseContent);
-
-        // Build a manifest from existing project state.
-        // Phase 4+ will hydrate this from ProjectFile records; for now an
-        // empty manifest means every path in the changeset is treated as new.
-        const manifest: Record<string, string> = {};
-
-        // Default budget — production values come from entitlements (Phase 7).
-        const budget = { maxInputTokens: 0, maxOutputFiles: 50, maxOutputBytes: 5 * 1024 * 1024 };
+        const budget = { maxInputTokens: 128000, maxOutputFiles: 50, maxOutputBytes: 5 * 1024 * 1024 };
 
         const { valid, diagnostics: validationDiags } = validateChanges(
           toolOutput.changes,
@@ -171,7 +162,6 @@ export const chatRouter = router({
           budget,
         );
 
-        // Collect error-level diagnostics for the response
         parsingErrors = validationDiags.filter((d) => d.severity === 'error').map((d) => d.message);
 
         if (valid.length > 0) {
@@ -182,20 +172,50 @@ export const chatRouter = router({
           }));
         }
       } catch {
-        // Fall back to markdown-heuristic parsing for backward compatibility
-        // with responses that don't use the structured tool format.
         parsingMethod = 'legacy';
-        fileDiffs = parseFileDiffsFromResponse(responseContent);
+        const rawDiffs = parseFileDiffsFromResponse(responseContent);
+        fileDiffs = rawDiffs
+          .map((entry) => {
+            const validPath = validatePath(entry.file);
+            if (!validPath) return null;
+            if (entry.after && Buffer.byteLength(entry.after, 'utf8') > 1024 * 1024) return null;
+            return { ...entry, file: validPath };
+          })
+          .filter((entry): entry is VersionDiffEntry => entry !== null);
       }
+      const { assistantMessage, versionNumber } = await ctx.db.$transaction(async (tx) => {
+        const msg = await tx.chatMessage.create({
+          data: {
+            projectId: project.id,
+            role: 'assistant',
+            content: responseContent,
+            model: `${provider}:${model}`,
+            tokenUsage: usage,
+          },
+        });
 
-      if (fileDiffs.length > 0) {
-        const generatedFiles = fileDiffs
-          .filter((file) => file.operation !== 'delete' && file.after !== undefined)
-          .map((file) => ({ path: file.file, content: file.after ?? '' }));
-        await persistProjectFiles(ctx.db, project.id, generatedFiles);
-        const result = await createVersion(project.id, assistantMessage.id, fileDiffs);
-        versionNumber = result.versionNumber;
-      }
+        let vNum: number | null = null;
+        if (fileDiffs.length > 0) {
+          const generatedFiles = fileDiffs
+            .filter((file) => file.operation !== 'delete' && file.after !== undefined)
+            .map((file) => ({ path: file.file, content: file.after ?? '' }));
+          await persistProjectFiles(tx, project.id, generatedFiles);
+
+          const deletePaths = fileDiffs
+            .filter((file) => file.operation === 'delete')
+            .map((file) => file.file);
+          if (deletePaths.length > 0) {
+            await tx.projectFile.deleteMany({
+              where: { projectId: project.id, path: { in: deletePaths } },
+            });
+          }
+
+          const result = await createVersion(tx, project.id, msg.id, fileDiffs);
+          vNum = result.versionNumber;
+        }
+
+        return { assistantMessage: msg, versionNumber: vNum };
+      });
 
       // ── 9. Return the response ─────────────────────────────────────
       return {
@@ -231,34 +251,13 @@ export const chatRouter = router({
   getHistory: protectedProcedure
     .input(z.object({ projectId: z.string() }))
     .query(async ({ ctx, input }) => {
-      const project = await ctx.db.project.findUnique({
-        where: { id: input.projectId },
-        select: { id: true, ownerId: true },
-      });
-
-      if (!project) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: 'Project not found',
-        });
-      }
-
-      const isOwner = project.ownerId === ctx.user.id;
-      const isCollab = !!(await ctx.db.projectCollaborator.findFirst({
-        where: { projectId: project.id, userId: ctx.user.id },
-      }));
-
-      if (!isOwner && !isCollab) {
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: 'You do not have access to this project',
-        });
-      }
+      await requireProjectRole(ctx, input.projectId, 'VIEWER');
 
       const messages = await ctx.db.chatMessage.findMany({
-        where: { projectId: project.id },
+        where: { projectId: input.projectId },
         orderBy: { timestamp: 'asc' },
       });
+
       return messages.map(
         (m: {
           id: string;
@@ -290,31 +289,10 @@ export const chatRouter = router({
   getVersions: protectedProcedure
     .input(z.object({ projectId: z.string() }))
     .query(async ({ ctx, input }) => {
-      const project = await ctx.db.project.findUnique({
-        where: { id: input.projectId },
-        select: { id: true, ownerId: true },
-      });
+      await requireProjectRole(ctx, input.projectId, 'VIEWER');
 
-      if (!project) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: 'Project not found',
-        });
-      }
+      return getVersions(input.projectId);
 
-      const isOwner = project.ownerId === ctx.user.id;
-      const isCollab = !!(await ctx.db.projectCollaborator.findFirst({
-        where: { projectId: project.id, userId: ctx.user.id },
-      }));
-
-      if (!isOwner && !isCollab) {
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: 'You do not have access to this project',
-        });
-      }
-
-      return getVersions(project.id);
     }),
 
   /**
@@ -329,31 +307,10 @@ export const chatRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const project = await ctx.db.project.findUnique({
-        where: { id: input.projectId },
-        select: { id: true, ownerId: true },
-      });
+      await requireProjectRole(ctx, input.projectId, 'EDITOR');
 
-      if (!project) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: 'Project not found',
-        });
-      }
+      const result = await restoreVersion(input.projectId, input.versionNumber);
 
-      const isOwner = project.ownerId === ctx.user.id;
-      const isCollab = !!(await ctx.db.projectCollaborator.findFirst({
-        where: { projectId: project.id, userId: ctx.user.id },
-      }));
-
-      if (!isOwner && !isCollab) {
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: 'You do not have access to this project',
-        });
-      }
-
-      const result = await restoreVersion(project.id, input.versionNumber);
       return result;
     }),
 });
@@ -394,7 +351,7 @@ async function callAIProvider(
     apiKey,
     {
       baseUrl,
-      maxTokens: 4096,
+      maxTokens: 16_384,
     },
   );
 

@@ -333,8 +333,12 @@ export const organizationsRouter = router({
     .mutation(async ({ ctx, input }) => {
       await requireOrganizationRole(ctx, input.organizationId, 'ADMIN');
 
-      // Check if user already exists and is a member
-      const targetUser = await ctx.db.user.findUnique({ where: { email: input.email } });
+      const email = input.email.trim().toLowerCase();
+      // Use case-insensitive lookup so Alice@Example.com and alice@example.com
+      // are treated as the same user (matches auth.ts and the DB invite logic).
+      const targetUser = await ctx.db.user.findFirst({
+        where: { email: { equals: email, mode: 'insensitive' } },
+      });
       if (targetUser) {
         const existingMember = await ctx.db.organizationMember.findUnique({
           where: {
@@ -356,7 +360,7 @@ export const organizationsRouter = router({
       const existingInvite = await ctx.db.organizationInvite.findFirst({
         where: {
           organizationId: input.organizationId,
-          email: input.email,
+          email: { equals: email, mode: 'insensitive' },
           acceptedAt: null,
           revokedAt: null,
           expiresAt: { gt: new Date() },
@@ -374,7 +378,7 @@ export const organizationsRouter = router({
       const invite = await ctx.db.organizationInvite.create({
         data: {
           organizationId: input.organizationId,
-          email: input.email,
+          email,
           role: input.role,
           tokenHash,
           expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
@@ -390,9 +394,8 @@ export const organizationsRouter = router({
         'organization.invite_created',
         'organization_invite',
         invite.id,
-        { email: input.email, role: input.role },
+        { email, role: input.role },
       );
-
       // Return the raw token so the caller can include it in an invitation link
       return { ...invite, token };
     }),

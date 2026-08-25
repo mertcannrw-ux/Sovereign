@@ -53,7 +53,7 @@ export interface User {
 
 // ─── AI Providers (BYOK) ────────────────────────────────
 
-export const AIProvider = z.enum(['openai', 'anthropic', 'google', 'mistral', 'groq', 'custom']);
+export const AIProvider = z.enum(['openai', 'anthropic', 'google', 'mistral', 'groq', 'ollama', 'custom']);
 export type AIProvider = z.infer<typeof AIProvider>;
 
 export const AI_PROVIDER_LABELS: Record<AIProvider, string> = {
@@ -62,6 +62,7 @@ export const AI_PROVIDER_LABELS: Record<AIProvider, string> = {
   google: 'Google Gemini',
   mistral: 'Mistral',
   groq: 'Groq',
+  ollama: 'Ollama (Local)',
   custom: 'Custom (OpenAI Compatible)',
 };
 
@@ -344,10 +345,10 @@ export const UpdateProjectInput = z.object({
 export type UpdateProjectInput = z.infer<typeof UpdateProjectInput>;
 
 export const CreateApiKeyInput = z.object({
-  provider: z.string(),
+  provider: AIProvider,
   key: z.string().min(1),
   label: z.string().max(100).optional(),
-  baseUrl: z.string().url().optional(),
+  baseUrl: z.string().url().optional().or(z.literal('')).transform((v) => (v === '' ? undefined : v)),
 });
 export type CreateApiKeyInput = z.infer<typeof CreateApiKeyInput>;
 

@@ -1,6 +1,7 @@
 import type { AIProvider, AIStreamChunk, AICompletionResponse } from '@app-builder/shared';
 import { ProviderError, type ProviderCompleteOptions } from './types';
 import { SsrfError, validateOutboundUrl } from './ssrf';
+import type { Dispatcher } from 'undici';
 
 // ─── Helpers ──────────────────────────────────────────────
 // All type-guarded to comply with the no-inline-cast-access rule.
@@ -19,6 +20,36 @@ function safeString(value: unknown, fallback = ''): string {
 
 function safeNumber(value: unknown, fallback = 0): number {
   return typeof value === 'number' && !Number.isNaN(value) ? value : fallback;
+}
+
+/**
+ * Builds an undici dispatcher that connects to `pinnedIp` while keeping the
+ * requested hostname as the TLS SNI (servername). This pins the validated IP
+ * to defeat DNS-rebinding TOCTOU without rewriting the URL host — rewriting the
+ * host would change the SNI and break SNI-based virtual hosting (regression N-2).
+ */
+function createPinnedIpDispatcher(parsed: URL, pinnedIp: string): Dispatcher {
+  // Lazy-load undici so the module works in environments where it is unavailable.
+  // undici ships with Node 18+ and is present in this monorepo's root deps.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const undici = require('undici') as typeof import('undici');
+  const { Agent, buildConnector } = undici;
+  const https = parsed.protocol === 'https:';
+  const baseConnector = buildConnector({ timeout: 10_000 });
+  // Route the connection to the validated IP while preserving the original
+  // hostname as the TLS SNI (servername) — this is what defeats DNS-rebinding
+  // TOCTOU without breaking SNI-based virtual hosting (N-2).
+  const connect: typeof baseConnector = (opts, cb) =>
+    baseConnector(
+      {
+        ...opts,
+        host: pinnedIp,
+        hostname: pinnedIp,
+        servername: https ? parsed.hostname : undefined,
+      } as Parameters<typeof baseConnector>[0],
+      cb,
+    );
+  return new Agent({ connect }) as unknown as Dispatcher;
 }
 
 /**
@@ -54,6 +85,7 @@ async function* readSSEStream(body: ReadableStream<Uint8Array>): AsyncGenerator<
       }
     }
   } finally {
+    try { await reader.cancel(); } catch {}
     reader.releaseLock();
   }
 }
@@ -87,6 +119,7 @@ async function* readJSONLines(body: ReadableStream<Uint8Array>): AsyncGenerator<
       }
     }
   } finally {
+    try { await reader.cancel(); } catch {}
     reader.releaseLock();
   }
 }
@@ -129,6 +162,7 @@ async function* readAnthropicSSE(
       }
     }
   } finally {
+    try { await reader.cancel(); } catch {}
     reader.releaseLock();
   }
 }
@@ -159,14 +193,14 @@ export interface Provider {
   ): AsyncGenerator<AIStreamChunk, AICompletionResponse>;
 
   /** Fetch available models from the provider's API. */
-  listModels(apiKey: string, baseUrl?: string): Promise<string[]>;
+  listModels(apiKey: string, baseUrl?: string, signal?: AbortSignal): Promise<string[]>;
 }
 
 // ─── SSRF protection helpers ──────────────────────────────
 
 const MAX_BODY_BYTES = 10 * 1024 * 1024; // 10 MB
 const DEFAULT_TIMEOUT_MS = 60_000; // 60s for non-streaming requests
-const STREAM_TIMEOUT_MS = 30_000; // 30s connect/header timeout for streaming
+const STREAM_TIMEOUT_MS = 120_000; // 120s timeout for streaming connection/headers
 
 /**
  * SSRF-safe fetch wrapper with URL validation, timeouts, and redirect capping.
@@ -177,16 +211,28 @@ const STREAM_TIMEOUT_MS = 30_000; // 30s connect/header timeout for streaming
  * All responses are capped at 0 redirects (`redirect: 'error'`).
  * Timeout errors and SSRF rejections are converted to `ProviderError`.
  */
-async function ssrfFetch(
+export async function ssrfFetch(
   providerName: AIProvider,
   url: string,
   init?: RequestInit,
-  options?: { validateUrl?: boolean; timeout?: number },
+  options?: { validateUrl?: boolean; timeout?: number; signal?: AbortSignal },
 ): Promise<Response> {
-  // Full SSRF validation (DNS + IP checks) for user-supplied endpoints
+  // Full SSRF validation + IP pinning (F-11 TOCTOU): DNS is resolved in
+  // validateOutboundUrl and bound private IPs are rejected. To avoid a DNS
+  // rebinding TOCTOU between validation and fetch, the validated IP is pinned
+  // at the *connection* layer via an undici dispatcher. This keeps the original
+  // hostname in the URL so the TLS SNI (and thus virtual-host cert selection)
+  // is preserved (regression N-2). Local/loopback hosts skip pinning entirely
+  // (N-1) and use the normal resolver. Redirects are blocked (redirect: 'error').
+  let fetchUrl = url;
+  let dispatcher: unknown;
   if (options?.validateUrl) {
     try {
-      await validateOutboundUrl(url);
+      const { url: parsed, addresses } = await validateOutboundUrl(url);
+      fetchUrl = parsed.href;
+      if (addresses.length > 0) {
+        dispatcher = createPinnedIpDispatcher(parsed, addresses[0]!);
+      }
     } catch (e) {
       if (e instanceof SsrfError) {
         throw new ProviderError(providerName, 0, 'ssrf_blocked', e.message);
@@ -199,12 +245,23 @@ async function ssrfFetch(
   const timeoutMs = options?.timeout ?? DEFAULT_TIMEOUT_MS;
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
+  // Forward external cancellation (client disconnect, route abort) to the request.
+  const onExternalAbort = () => controller.abort();
+  options?.signal?.addEventListener('abort', onExternalAbort, { once: true });
   try {
-    const response = await fetch(url, {
+    // validateOutboundUrl ensures the domain resolves strictly to public IPs.
+    // We fetch the original URL (hostname intact for SNI) with redirect: 'error'
+    // to block all redirects. When an IP was pinned, a custom dispatcher routes
+    // the connection to that IP without altering the SNI.
+
+    const mergedHeaders: Record<string,string> = { ...(init?.headers as Record<string,string> | undefined ?? {}) };
+    const response = await fetch(fetchUrl, {
       ...init,
+      ...(Object.keys(mergedHeaders).length ? { headers: mergedHeaders } : {}),
+      ...(dispatcher !== undefined ? { dispatcher } : {}),
       signal: controller.signal,
       redirect: 'error', // Zero redirects — block all redirects
-    });
+    } as RequestInit & { dispatcher?: unknown });
     return response;
   } catch (e) {
     // Convert abort (timeout) into structured error
@@ -214,6 +271,7 @@ async function ssrfFetch(
     throw e;
   } finally {
     clearTimeout(timeout);
+    options?.signal?.removeEventListener('abort', onExternalAbort);
   }
 }
 
@@ -278,7 +336,7 @@ abstract class OpenAICompatibleProvider implements Provider {
         headers: this.authHeaders(apiKey),
         body: JSON.stringify(this.buildPayload(model, messages, options, false)),
       },
-      { validateUrl: hasCustomEndpoint },
+      { validateUrl: hasCustomEndpoint, signal: options?.signal },
     );
 
     if (!response.ok) {
@@ -319,7 +377,7 @@ abstract class OpenAICompatibleProvider implements Provider {
         headers: this.authHeaders(apiKey),
         body: JSON.stringify(this.buildPayload(model, messages, options, true)),
       },
-      { validateUrl: hasCustomEndpoint, timeout: STREAM_TIMEOUT_MS },
+      { validateUrl: hasCustomEndpoint, timeout: STREAM_TIMEOUT_MS, signal: options?.signal },
     );
 
     if (!response.ok) {
@@ -344,7 +402,8 @@ abstract class OpenAICompatibleProvider implements Provider {
     };
 
     for await (const raw of readSSEStream(body)) {
-      const parsed: unknown = JSON.parse(raw);
+      let parsed: unknown;
+      try { parsed = JSON.parse(raw); } catch { continue; }
       if (!isObject(parsed)) continue;
 
       // usage in final chunk (OpenAI with stream_options.include_usage)
@@ -368,7 +427,12 @@ abstract class OpenAICompatibleProvider implements Provider {
         // Some reasoning models (e.g. DeepSeek, Kimi) return content in
         // `reasoning_content` and leave `content` empty. Track it separately.
         const content = safeString(delta['content']) || '';
-        const reasoningContent = safeString(delta['reasoning_content']) || '';
+        const reasoningContent =
+          safeString(delta['reasoning_content']) ||
+          safeString(delta['reasoning']) ||
+          safeString(delta['reasoning_text']) ||
+          safeString(delta['thought']) ||
+          '';
 
         if (reasoningContent) {
           accumulatedReasoning += reasoningContent;
@@ -422,7 +486,10 @@ abstract class OpenAICompatibleProvider implements Provider {
       messages,
       stream: stream ?? false,
     };
-    if (options?.maxTokens !== undefined) body['max_tokens'] = options.maxTokens;
+    if (options?.maxTokens !== undefined) {
+      body['max_tokens'] = options.maxTokens;
+      body['max_completion_tokens'] = options.maxTokens;
+    }
     if (options?.temperature !== undefined) body['temperature'] = options.temperature;
     if (options?.reasoningEffort !== undefined) {
       body['reasoning_effort'] = options.reasoningEffort === 'off' ? 'none' : options.reasoningEffort;
@@ -496,7 +563,7 @@ abstract class OpenAICompatibleProvider implements Provider {
     return { content, finishReason, usage };
   }
 
-  async listModels(apiKey: string, baseUrl?: string): Promise<string[]> {
+  async listModels(apiKey: string, baseUrl?: string, signal?: AbortSignal): Promise<string[]> {
     const rawBase = baseUrl ?? this.getDefaultBaseUrl();
     const normalized = this.normalizeBaseUrl(rawBase);
     const url = `${normalized}/models`;
@@ -508,9 +575,8 @@ abstract class OpenAICompatibleProvider implements Provider {
       {
         headers: this.authHeaders(apiKey),
       },
-      { validateUrl: hasCustomEndpoint },
+      { validateUrl: hasCustomEndpoint, signal },
     );
-
     if (!response.ok) {
       throw await this.parseError(response);
     }
@@ -588,7 +654,7 @@ export class AnthropicProvider implements Provider {
         headers: this.headers(apiKey),
         body: JSON.stringify(this.buildPayload(model, messages, options, false)),
       },
-      { validateUrl: hasCustomEndpoint },
+      { validateUrl: hasCustomEndpoint, signal: options?.signal },
     );
 
     if (!response.ok) {
@@ -627,7 +693,7 @@ export class AnthropicProvider implements Provider {
         headers: this.headers(apiKey),
         body: JSON.stringify(this.buildPayload(model, messages, options, true)),
       },
-      { validateUrl: hasCustomEndpoint, timeout: STREAM_TIMEOUT_MS },
+      { validateUrl: hasCustomEndpoint, timeout: STREAM_TIMEOUT_MS, signal: options?.signal },
     );
 
     if (!response.ok) {
@@ -642,6 +708,7 @@ export class AnthropicProvider implements Provider {
     // Cap streaming body size for SSRF/memory protection
     const body = rawBody.pipeThrough(createBodySizeLimit(MAX_BODY_BYTES));
     let accumulatedContent = '';
+    let accumulatedReasoning = '';
     let finalUsage: AICompletionResponse['usage'] = {
       promptTokens: 0,
       completionTokens: 0,
@@ -650,7 +717,8 @@ export class AnthropicProvider implements Provider {
     let finishReason: AIStreamChunk['finishReason'];
 
     for await (const { event, data: raw } of readAnthropicSSE(body)) {
-      const parsed: unknown = JSON.parse(raw);
+      let parsed: unknown;
+      try { parsed = JSON.parse(raw); } catch { continue; }
       if (!isObject(parsed)) continue;
 
       switch (event) {
@@ -674,6 +742,11 @@ export class AnthropicProvider implements Provider {
           const delta = parsed['delta'];
           if (!isObject(delta)) break;
           const text = safeString(delta['text']);
+          const thinking = safeString(delta['thinking']);
+          if (thinking !== '') {
+            accumulatedReasoning += thinking;
+            yield { content: '', reasoning: thinking };
+          }
           if (text !== '') {
             accumulatedContent += text;
             yield { content: text };
@@ -721,6 +794,7 @@ export class AnthropicProvider implements Provider {
 
     return {
       content: accumulatedContent,
+      reasoning: accumulatedReasoning || undefined,
       finishReason: finishReason ?? 'stop',
       usage: finalUsage,
     };
@@ -742,7 +816,7 @@ export class AnthropicProvider implements Provider {
   ): Record<string, unknown> {
     const body: Record<string, unknown> = {
       model,
-      max_tokens: options?.maxTokens ?? 1024,
+      max_tokens: options?.maxTokens ?? 16384,
       messages,
       stream: stream ?? false,
     };
@@ -791,12 +865,16 @@ export class AnthropicProvider implements Provider {
     return { content, finishReason: 'stop', usage };
   }
 
-  async listModels(apiKey: string, _baseUrl?: string): Promise<string[]> {
+  async listModels(apiKey: string, _baseUrl?: string, signal?: AbortSignal): Promise<string[]> {
     const url = 'https://api.anthropic.com/v1/models';
-    const response = await ssrfFetch(this.name, url, {
-      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-    });
-    if (!response.ok) throw await this.parseError(response);
+    const response = await ssrfFetch(
+      this.name,
+      url,
+      {
+        headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      },
+      { signal },
+    );
     const text = await response.text();
     if (text.length > MAX_BODY_BYTES) {
       throw new ProviderError(
@@ -841,7 +919,7 @@ export class GoogleProvider implements Provider {
         headers: this.headers(apiKey),
         body: JSON.stringify(this.buildPayload(messages, options)),
       },
-      { validateUrl: hasCustomEndpoint },
+      { validateUrl: hasCustomEndpoint, signal: options?.signal },
     );
 
     if (!response.ok) {
@@ -881,7 +959,7 @@ export class GoogleProvider implements Provider {
         headers: this.headers(apiKey),
         body: JSON.stringify(this.buildPayload(messages, options)),
       },
-      { validateUrl: hasCustomEndpoint, timeout: STREAM_TIMEOUT_MS },
+      { validateUrl: hasCustomEndpoint, timeout: STREAM_TIMEOUT_MS, signal: options?.signal },
     );
 
     if (!response.ok) {
@@ -904,7 +982,8 @@ export class GoogleProvider implements Provider {
     };
 
     for await (const raw of readSSEStream(body)) {
-      const parsed: unknown = JSON.parse(raw);
+      let parsed: unknown;
+      try { parsed = JSON.parse(raw); } catch { continue; }
       if (!isObject(parsed)) continue;
 
       // usage metadata
@@ -1062,7 +1141,7 @@ export class GoogleProvider implements Provider {
     return { content, finishReason: 'stop', usage };
   }
 
-  async listModels(apiKey: string, baseUrl?: string): Promise<string[]> {
+  async listModels(apiKey: string, baseUrl?: string, signal?: AbortSignal): Promise<string[]> {
     const rawBase = baseUrl ?? 'https://generativelanguage.googleapis.com/v1beta';
     const url = `${rawBase}/models`;
     const hasCustomEndpoint = baseUrl !== undefined;
@@ -1073,10 +1152,8 @@ export class GoogleProvider implements Provider {
       {
         headers: this.headers(apiKey),
       },
-      { validateUrl: hasCustomEndpoint },
+      { validateUrl: hasCustomEndpoint, signal },
     );
-
-    if (!response.ok) throw await this.parseError(response);
 
     const text = await response.text();
     if (text.length > MAX_BODY_BYTES) {
@@ -1105,7 +1182,7 @@ export class GoogleProvider implements Provider {
 // ─── Ollama ────────────────────────────────────────────────
 
 export class OllamaProvider implements Provider {
-  readonly name = 'ollama' as AIProvider;
+  readonly name: AIProvider = 'ollama';
 
   async complete(
     model: string,
@@ -1115,12 +1192,18 @@ export class OllamaProvider implements Provider {
   ): Promise<AICompletionResponse> {
     // Ollama doesn't use API key; `apiKey` param is ignored.
     const baseUrl = options?.baseUrl ?? 'http://localhost:11434';
+    const hasCustomEndpoint = options?.baseUrl !== undefined;
 
-    const response = await fetch(`${baseUrl}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(this.buildPayload(model, messages, options, false)),
-    });
+    const response = await ssrfFetch(
+      this.name,
+      `${baseUrl}/api/chat`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(this.buildPayload(model, messages, options, false)),
+      },
+      { validateUrl: hasCustomEndpoint, signal: options?.signal },
+    );
 
     if (!response.ok) {
       throw await this.parseError(response);
@@ -1137,21 +1220,28 @@ export class OllamaProvider implements Provider {
     options?: ProviderCompleteOptions,
   ): AsyncGenerator<AIStreamChunk, AICompletionResponse> {
     const baseUrl = options?.baseUrl ?? 'http://localhost:11434';
+    const hasCustomEndpoint = options?.baseUrl !== undefined;
 
-    const response = await fetch(`${baseUrl}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(this.buildPayload(model, messages, options, true)),
-    });
+    const response = await ssrfFetch(
+      this.name,
+      `${baseUrl}/api/chat`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(this.buildPayload(model, messages, options, true)),
+      },
+      { validateUrl: hasCustomEndpoint, timeout: STREAM_TIMEOUT_MS, signal: options?.signal },
+    );
 
     if (!response.ok) {
       throw await this.parseError(response);
     }
 
-    const body = response.body;
-    if (!body) {
+    const rawBody = response.body;
+    if (!rawBody) {
       throw new Error('Response body is null — cannot stream');
     }
+    const body = rawBody.pipeThrough(createBodySizeLimit(MAX_BODY_BYTES));
 
     let accumulatedContent = '';
     let finalUsage: AICompletionResponse['usage'] = {
@@ -1161,7 +1251,8 @@ export class OllamaProvider implements Provider {
     };
 
     for await (const raw of readJSONLines(body)) {
-      const parsed: unknown = JSON.parse(raw);
+      let parsed: unknown;
+      try { parsed = JSON.parse(raw); } catch { continue; }
       if (!isObject(parsed)) continue;
 
       const msg = parsed['message'];
@@ -1238,9 +1329,12 @@ export class OllamaProvider implements Provider {
     return { content, finishReason: 'stop', usage };
   }
 
-  async listModels(_apiKey: string, baseUrl?: string): Promise<string[]> {
+  async listModels(_apiKey: string, baseUrl?: string, signal?: AbortSignal): Promise<string[]> {
     const url = `${baseUrl ?? 'http://localhost:11434'}/api/tags`;
-    const response = await fetch(url);
+    const response = await ssrfFetch(this.name, url, undefined, {
+      validateUrl: baseUrl !== undefined,
+      signal,
+    });
     if (!response.ok)
       throw new ProviderError(
         this.name,
@@ -1279,6 +1373,7 @@ const providerRegistry: Record<AIProvider, Provider> = {
   google: new GoogleProvider(),
   mistral: new MistralProvider(),
   groq: new GroqProvider(),
+  ollama: new OllamaProvider(),
   custom: new CustomProvider(),
 };
 

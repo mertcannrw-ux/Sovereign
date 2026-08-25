@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Shield,
   Mail,
@@ -87,6 +87,7 @@ export function AuthSettings({ projectId }: AuthSettingsProps) {
   const [isSaving, setIsSaving] = useState(false);
   const [saveResult, setSaveResult] = useState<{ success: boolean; message: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const saveResultTimerRef = useRef<number | undefined>(undefined);
 
   // New user form
   const [showNewUser, setShowNewUser] = useState(false);
@@ -108,6 +109,12 @@ export function AuthSettings({ projectId }: AuthSettingsProps) {
     loadConfig();
     loadUsers();
   }, [projectId]);
+
+  useEffect(() => {
+    return () => {
+      clearTimeout(saveResultTimerRef.current);
+    };
+  }, []);
 
   const loadConfig = async () => {
     setIsLoadingConfig(true);
@@ -180,7 +187,8 @@ export function AuthSettings({ projectId }: AuthSettingsProps) {
       if (data.result?.data) {
         setConfig(data.result.data as AuthConfig);
         setSaveResult({ success: true, message: 'Auth settings saved successfully' });
-        setTimeout(() => setSaveResult(null), 3000);
+        clearTimeout(saveResultTimerRef.current);
+        saveResultTimerRef.current = window.setTimeout(() => setSaveResult(null), 3000);
       } else {
         const errorMessage = data.error?.message ?? 'Failed to save';
         setSaveResult({ success: false, message: errorMessage });

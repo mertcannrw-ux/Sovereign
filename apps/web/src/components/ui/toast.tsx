@@ -105,7 +105,7 @@ const ToastClose = React.forwardRef<
 ));
 ToastClose.displayName = ToastPrimitive.Close.displayName;
 
-interface ToastActionProps extends React.ComponentPropsWithoutRef<typeof ToastPrimitive.Action> {}
+type ToastActionProps = React.ComponentPropsWithoutRef<typeof ToastPrimitive.Action>;
 
 const ToastAction = React.forwardRef<
   React.ElementRef<typeof ToastPrimitive.Action>,

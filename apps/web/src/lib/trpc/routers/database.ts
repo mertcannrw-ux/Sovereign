@@ -1,12 +1,23 @@
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
+import { Prisma } from '@prisma-generated/prisma/client';
 import { protectedProcedure, router } from '../trpc';
+import { requireProjectRole } from '@/server/authz';
+import { checkRateLimit } from '@/server/rate-limit';
+import { isSafeDefault, sanitizeSqlForTenant } from '@/server/db-browser';
 
 /**
  * Schema for a single column definition.
  */
 const columnSchema = z.object({
-  name: z.string().min(1).max(63),
+  name: z
+    .string()
+    .min(1)
+    .max(63)
+    .regex(
+      /^[a-z][a-z0-9_]*$/,
+      'Column name must start with a lowercase letter and contain only lowercase letters, digits, and underscores',
+    ),
   type: z.enum([
     'TEXT',
     'VARCHAR(255)',
@@ -33,20 +44,7 @@ export const databaseRouter = router({
   listTables: protectedProcedure
     .input(z.object({ projectId: z.string() }))
     .query(async ({ ctx, input }) => {
-      const project = await ctx.db.project.findUnique({
-        where: { id: input.projectId },
-        include: { collaborators: { where: { userId: ctx.user.id } } },
-      });
-
-      if (!project) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Project not found' });
-      }
-
-      const isOwner = project.ownerId === ctx.user.id;
-      const isCollab = project.collaborators.length > 0;
-      if (!isOwner && !isCollab) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
-      }
+      await requireProjectRole(ctx, input.projectId, 'VIEWER');
 
       const appDb = await ctx.db.appDatabase.findFirst({ where: { projectId: input.projectId } });
 
@@ -74,22 +72,14 @@ export const databaseRouter = router({
    * Get the schema of a specific table — columns, types, constraints.
    */
   getTableSchema: protectedProcedure
-    .input(z.object({ projectId: z.string(), tableName: z.string().min(1) }))
+    .input(
+      z.object({
+        projectId: z.string(),
+        tableName: z.string().regex(/^[a-z][a-z0-9_]*$/, 'Invalid table name format'),
+      }),
+    )
     .query(async ({ ctx, input }) => {
-      const project = await ctx.db.project.findUnique({
-        where: { id: input.projectId },
-        include: { collaborators: { where: { userId: ctx.user.id } } },
-      });
-
-      if (!project) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Project not found' });
-      }
-
-      const isOwner = project.ownerId === ctx.user.id;
-      const isCollab = project.collaborators.length > 0;
-      if (!isOwner && !isCollab) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
-      }
+      await requireProjectRole(ctx, input.projectId, 'VIEWER');
 
       const appDb = await ctx.db.appDatabase.findFirst({ where: { projectId: input.projectId } });
 
@@ -157,20 +147,7 @@ export const databaseRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const project = await ctx.db.project.findUnique({
-        where: { id: input.projectId },
-        include: { collaborators: { where: { userId: ctx.user.id } } },
-      });
-
-      if (!project) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Project not found' });
-      }
-
-      const isOwner = project.ownerId === ctx.user.id;
-      const isCollab = project.collaborators.length > 0;
-      if (!isOwner && !isCollab) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
-      }
+      await requireProjectRole(ctx, input.projectId, 'EDITOR');
 
       const appDb = await ctx.db.appDatabase.findFirst({ where: { projectId: input.projectId } });
 
@@ -187,6 +164,12 @@ export const databaseRouter = router({
           if (!col.nullable) parts.push('NOT NULL');
           if (col.unique) parts.push('UNIQUE');
           if (col.defaultValue !== null) {
+            if (!isSafeDefault(col.defaultValue)) {
+              throw new TRPCError({
+                code: 'BAD_REQUEST',
+                message: `Unsupported default value for column "${col.name}"`,
+              });
+            }
             parts.push(`DEFAULT ${col.defaultValue}`);
           }
           return parts.join(' ');
@@ -208,22 +191,14 @@ export const databaseRouter = router({
    * Drop a table from the project's database schema.
    */
   deleteTable: protectedProcedure
-    .input(z.object({ projectId: z.string(), tableName: z.string().min(1) }))
+    .input(
+      z.object({
+        projectId: z.string(),
+        tableName: z.string().regex(/^[a-z][a-z0-9_]*$/, 'Invalid table name format'),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
-      const project = await ctx.db.project.findUnique({
-        where: { id: input.projectId },
-        include: { collaborators: { where: { userId: ctx.user.id } } },
-      });
-
-      if (!project) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Project not found' });
-      }
-
-      const isOwner = project.ownerId === ctx.user.id;
-      const isCollab = project.collaborators.length > 0;
-      if (!isOwner && !isCollab) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
-      }
+      await requireProjectRole(ctx, input.projectId, 'EDITOR');
 
       const appDb = await ctx.db.appDatabase.findFirst({ where: { projectId: input.projectId } });
 
@@ -234,14 +209,17 @@ export const databaseRouter = router({
         });
       }
 
-      const sql = `DROP TABLE IF EXISTS "${appDb.schemaName}"."${input.tableName}" CASCADE`;
+      const sql = `DROP TABLE IF EXISTS "${appDb.schemaName}"."${input.tableName}"`;
 
       try {
         await ctx.db.$executeRawUnsafe(sql);
         return { success: true, tableName: input.tableName };
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to delete table';
-        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message });
+        console.error('Failed to delete table:', err);
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'Failed to delete table. Ensure table exists and has no dependent objects.',
+        });
       }
     }),
 
@@ -249,26 +227,17 @@ export const databaseRouter = router({
    * Execute a read-only SQL query against the project's database schema.
    */
   executeQuery: protectedProcedure
-    .input(
-      z.object({
-        projectId: z.string(),
-        sql: z.string().min(1),
-      }),
-    )
+    .input(z.object({ projectId: z.string(), sql: z.string().min(1) }))
     .query(async ({ ctx, input }) => {
-      const project = await ctx.db.project.findUnique({
-        where: { id: input.projectId },
-        include: { collaborators: { where: { userId: ctx.user.id } } },
-      });
+      await requireProjectRole(ctx, input.projectId, 'VIEWER');
 
-      if (!project) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Project not found' });
-      }
-
-      const isOwner = project.ownerId === ctx.user.id;
-      const isCollab = project.collaborators.length > 0;
-      if (!isOwner && !isCollab) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
+      const rate = await checkRateLimit('dbQuery', ctx.user.id);
+      if (!rate.allowed) {
+        const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: `Query rate limit exceeded. Try again in ${retryIn}s.`,
+        });
       }
 
       const appDb = await ctx.db.appDatabase.findFirst({ where: { projectId: input.projectId } });
@@ -280,24 +249,34 @@ export const databaseRouter = router({
         });
       }
 
-      // Only allow SELECT/WITH queries for safety
-      const trimmed = input.sql.trim().toUpperCase();
-      if (!trimmed.startsWith('SELECT') && !trimmed.startsWith('WITH')) {
+      const statement = sanitizeSqlForTenant(input.sql, appDb.schemaName);
+      if (!statement) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
-          message: 'Only SELECT and WITH (read-only) queries are allowed',
+          message: 'Only single SELECT/WITH statements are allowed — platform schemas, system catalogs, other tenant schemas, and multi-statement queries are blocked',
         });
       }
 
-      // Set the search path to the project's schema first, then public
-      await ctx.db.$executeRawUnsafe(`SET search_path TO "${appDb.schemaName}", public`);
-
+      // Read-only transaction pinned to the tenant schema on one connection, so
+      // search_path can never leak to another tenant through the pool.
       try {
-        const rows = await ctx.db.$queryRawUnsafe<Record<string, unknown>[]>(input.sql);
-        return { rows, rowCount: rows.length };
+        const rows = await ctx.db.$transaction(async (tx) => {
+          await tx.$executeRaw(Prisma.sql`SET TRANSACTION READ ONLY`);
+          await tx.$executeRaw(Prisma.sql`SET LOCAL statement_timeout = '10s'`);
+          await tx.$executeRaw(
+            Prisma.sql`SET LOCAL search_path TO ${Prisma.raw('"' + appDb.schemaName.replaceAll('"', '""') + '"')}`,
+          );
+          return tx.$queryRawUnsafe<Record<string, unknown>[]>(
+            `SELECT * FROM (${statement}) AS _q LIMIT 501`,
+          );
+        });
+        return { rows: rows.slice(0, 500), rowCount: rows.length };
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Query execution failed';
-        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message });
+        console.error('Failed to execute query:', err);
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Query execution failed. Please verify your SQL syntax and table references.',
+        });
       }
     }),
 });

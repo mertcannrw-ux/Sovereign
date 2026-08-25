@@ -1,4 +1,5 @@
 import type { ClarifyingQuestion, GeneratedFile } from '@/lib/generation-protocol';
+import type { AgentStep } from '@/lib/agent-protocol';
 
 export interface GenerationPhaseEvent {
   phase: 'planning' | 'generating' | 'building';
@@ -10,6 +11,54 @@ export interface FileProgressEvent extends GeneratedFile {
   column: number;
 }
 
+export interface FileOperationEvent {
+  operation: 'create' | 'update' | 'delete';
+  path: string;
+  content?: string;
+  versionNumber: number;
+}
+
+export interface FilePreviewEvent {
+  operation: 'create' | 'update' | 'delete';
+  path: string;
+  content?: string;
+}
+
+
+export interface ImageJobEventData {
+  id: string;
+  status: 'running' | 'complete' | 'failed';
+  semanticUse?: string;
+  prompt?: string;
+  placeholderToken?: string;
+  publicUrl?: string;
+  assetId?: string;
+  error?: string;
+}
+
+export interface DesignDirectionRecord {
+  id: string;
+  orderNumber: number;
+  title: string;
+  visualBrief: string;
+  imagePrompt: string;
+  palette: unknown;
+  typography: unknown;
+  layoutNotes: string;
+  status: 'generating' | 'ready' | 'failed';
+  previewAssetId?: string | null;
+  errorMessage?: string | null;
+  previewAsset?: {
+    publicUrl: string;
+  } | null;
+}
+
+export interface DesignDirectionsEventData {
+  id: string;
+  status: 'pending' | 'ready' | 'selected' | 'skipped' | 'failed';
+  originalRequest: string;
+  directions: DesignDirectionRecord[];
+}
 
 export interface GenerationQuestionsEvent {
   questions: ClarifyingQuestion[];
@@ -38,11 +87,16 @@ export interface GenerationReadyEvent {
 }
 export type GenerationEvent =
   | { type: 'phase'; data: GenerationPhaseEvent }
+  | { type: 'step'; data: AgentStep }
+  | { type: 'file-operation'; data: FileOperationEvent }
+  | { type: 'file-preview'; data: FilePreviewEvent }
   | { type: 'file-start'; data: { path: string } }
   | { type: 'file-progress'; data: FileProgressEvent }
   | { type: 'file-complete'; data: GeneratedFile }
   | { type: 'thinking'; data: { content: string } }
   | { type: 'questions'; data: GenerationQuestionsEvent }
+  | { type: 'image-job'; data: ImageJobEventData }
+  | { type: 'design-directions'; data: DesignDirectionsEventData }
   | { type: 'ready'; data: GenerationReadyEvent }
   | { type: 'failed'; data: { message: string } };
 
@@ -55,14 +109,24 @@ function parseEventBlock(block: string): GenerationEvent | null {
   }
   if (!event || data.length === 0) return null;
 
-  const payload = JSON.parse(data.join('\n')) as GenerationEvent['data'];
+  let payload: GenerationEvent['data'];
+  try {
+    payload = JSON.parse(data.join('\n')) as GenerationEvent['data'];
+  } catch {
+    return null;
+  }
   if (
     event !== 'phase' &&
+    event !== 'step' &&
+    event !== 'file-operation' &&
+    event !== 'file-preview' &&
     event !== 'file-start' &&
     event !== 'file-progress' &&
     event !== 'file-complete' &&
     event !== 'thinking' &&
     event !== 'questions' &&
+    event !== 'image-job' &&
+    event !== 'design-directions' &&
     event !== 'ready' &&
     event !== 'failed'
   ) {
@@ -83,18 +147,25 @@ export async function consumeGenerationStream(
 
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = '';
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += value.replace(/\r\n/g, '\n');
-    let boundary = buffer.indexOf('\n\n');
-    while (boundary >= 0) {
-      const parsed = parseEventBlock(buffer.slice(0, boundary));
-      buffer = buffer.slice(boundary + 2);
-      if (parsed) await onEvent(parsed);
-      boundary = buffer.indexOf('\n\n');
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += value.replace(/\r\n/g, '\n');
+      let boundary = buffer.indexOf('\n\n');
+      while (boundary >= 0) {
+        const parsed = parseEventBlock(buffer.slice(0, boundary));
+        buffer = buffer.slice(boundary + 2);
+        if (parsed) await onEvent(parsed);
+        boundary = buffer.indexOf('\n\n');
+      }
     }
+    const trailing = parseEventBlock(buffer.trim());
+    if (trailing) await onEvent(trailing);
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {}
+    reader.releaseLock();
   }
-  const trailing = parseEventBlock(buffer.trim());
-  if (trailing) await onEvent(trailing);
 }

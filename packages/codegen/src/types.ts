@@ -1,6 +1,7 @@
 // Types for the Code Generation Engine — pure stages, no in-memory state
 
 import type { FileOperation } from '@app-builder/shared';
+export type { FileOperation };
 
 // ─── Core types ───────────────────────────────────────────
 

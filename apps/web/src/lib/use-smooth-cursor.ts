@@ -70,7 +70,9 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
 /**
  * Smoothly animates a cursor position from its current position to a target.
- * Decoupled from React render — runs on requestAnimationFrame.
+ * RAF loop mutates refs + DOM/CSS rather than firing React state every frame
+ * to avoid 60fps reconciliation cascades during streaming. `pos` is coalesced
+ * to ~6fps (throttled) so consumers can still read it without per-frame renders.
  */
 export function useSmoothCursor(target: CursorPos | null) {
   const currentPosRef = useRef<CursorPos>({ line: 1, column: 0 });
@@ -78,10 +80,13 @@ export function useSmoothCursor(target: CursorPos | null) {
   const animFrameRef = useRef<number>(0);
   const startTimeRef = useRef(0);
   const startPosRef = useRef<CursorPos>({ line: 1, column: 0 });
+  // Exposed cursor element (optional): if set, RAF directly writes transform.
+  const cursorElRef = useRef<HTMLElement | null>(null);
 
-  // Sneak preview for instant feedback without waiting for the next RAF.
+  // Throttled React state so consumers see progress without 60fps renders.
   const [displayPos, setDisplayPos] = useState<CursorPos>({ line: 1, column: 0 });
-  // Separate visibility flag so the cursor can fade in/out.
+  const throttledPosRef = useRef<CursorPos>({ line: 1, column: 0 });
+  const lastFlushRef = useRef<number>(0);
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -94,11 +99,9 @@ export function useSmoothCursor(target: CursorPos | null) {
 
     setVisible(true);
 
-    // Compute distance for animation duration.
     const dLine = Math.abs(target.line - currentPosRef.current.line);
     const dCol = Math.abs(target.column - currentPosRef.current.column);
     const distance = Math.sqrt(dLine * dLine + dCol * dCol);
-    // ~300ms base, 10ms per unit of distance, max 800ms
     const duration = Math.min(800, 300 + distance * 10);
 
     startPosRef.current = { ...currentPosRef.current };
@@ -107,14 +110,29 @@ export function useSmoothCursor(target: CursorPos | null) {
     const animate = (now: number) => {
       const elapsed = now - startTimeRef.current;
       const t = Math.min(1, elapsed / duration);
-      // Ease-out cubic for a natural deceleration.
       const ease = 1 - Math.pow(1 - t, 3);
 
       const newLine = lerp(startPosRef.current.line, target.line, ease);
       const newCol = lerp(startPosRef.current.column, target.column, ease);
 
       currentPosRef.current = { line: newLine, column: newCol };
-      setDisplayPos({ line: newLine, column: newCol });
+      throttledPosRef.current = { line: newLine, column: newCol };
+
+      // Direct DOM write if a cursor element was registered (avoids React render).
+      const el = cursorElRef.current;
+      if (el) {
+        // Consumer can position via CSS using these values if needed.
+        el.style.setProperty('--cursor-line', String(newLine));
+        el.style.setProperty('--cursor-col', String(newCol));
+        // Fallback transform: ~14px line height assumption
+        el.style.transform = `translate(${newCol * 8}px, ${newLine * 14}px)`;
+      }
+
+      // Coalesce React state to ~6fps (every ~160ms) and on completion.
+      if (t >= 1 || now - lastFlushRef.current >= 160) {
+        lastFlushRef.current = now;
+        setDisplayPos({ line: newLine, column: newCol });
+      }
 
       if (t < 1) {
         animFrameRef.current = requestAnimationFrame(animate);
@@ -123,11 +141,10 @@ export function useSmoothCursor(target: CursorPos | null) {
 
     animFrameRef.current = requestAnimationFrame(animate);
 
-    // eslint-disable-next-line consistent-return
     return () => {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     };
   }, [target?.line, target?.column]);
 
-  return { pos: displayPos, visible };
+  return { pos: displayPos, visible, cursorElRef };
 }

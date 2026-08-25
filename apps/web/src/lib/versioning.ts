@@ -1,6 +1,7 @@
-import type { Prisma } from '@prisma-generated/prisma/client';
+import { Prisma } from '@prisma-generated/prisma/client';
 import { getDb } from '@/lib/db';
 import { createHash } from 'node:crypto';
+import type { DbClient } from '@/lib/project-files';
 
 // ─── Types ─────────────────────────────────────────────
 
@@ -17,6 +18,8 @@ export interface VersionInfo {
   manifest: unknown;
   createdAt: Date;
   sourceMessageId: string | null;
+  /** Set only for restore-point snapshots (e.g. "Restored version 3"). */
+  message: string | null;
 }
 export interface RestoredProjectFile {
   path: string;
@@ -72,40 +75,63 @@ export function computeDiff(before: string, after: string): string {
 // ─── Version CRUD ──────────────────────────────────────
 
 /**
+ * Hash a project ID string to a BigInt for use as a Postgres advisory lock
+ * key. Uses a simple FNV-like hash folded to a positive signed-64-bit value.
+ */
+function projectIdToAdvisoryKey(projectId: string): bigint {
+  const factor = BigInt(31);
+  const mask = BigInt('0x7fffffffffffffff');
+  let hash = BigInt(0);
+  for (let i = 0; i < projectId.length; i++) {
+    hash = (hash * factor + BigInt(projectId.charCodeAt(i))) & mask;
+  }
+  return hash;
+}
+
+/**
  * Create a project snapshot for a project, associating it with a source message
  * and the set of file diffs that resulted from that message.
  *
  * @returns The new snapshot id and its version number.
  */
 export async function createVersion(
+  db: DbClient,
   projectId: string,
   sourceMessageId: string | null,
   files: VersionDiffEntry[],
 ): Promise<{ id: string; versionNumber: number }> {
-  // Determine the next sequential version number
-  const latestVersion = await getDb().projectSnapshot.findFirst({
+  const manifest = files.map((f) => ({
+    file: f.file,
+    operation: f.operation,
+    ...(f.before !== undefined ? { before: f.before } : {}),
+    ...(f.after !== undefined ? { after: f.after } : {}),
+  }));
+
+  // Acquire a transaction-scoped advisory lock keyed on the project so that
+  // concurrent version allocations serialize. This replaces the previous P2002
+  // retry loop, which could not work inside an aborted Postgres transaction
+  // (the unique violation poisons the transaction, making the retry's
+  // findFirst fail immediately).
+  const lockKey = projectIdToAdvisoryKey(projectId);
+  await db.$executeRaw`SELECT pg_advisory_xact_lock(${lockKey})`;
+
+  const latestVersion = await db.projectSnapshot.findFirst({
     where: { projectId },
     orderBy: { versionNumber: 'desc' },
     select: { versionNumber: true },
   });
-
   const versionNumber = (latestVersion?.versionNumber ?? 0) + 1;
 
-  const version = await getDb().projectSnapshot.create({
+  const version = await db.projectSnapshot.create({
     data: {
       projectId,
       sourceMessageId,
       versionNumber,
-      manifest: files.map((f) => ({
-        file: f.file,
-        operation: f.operation,
-        ...(f.before !== undefined ? { before: f.before } : {}),
-        ...(f.after !== undefined ? { after: f.after } : {}),
-      })),
+      manifest,
     },
   });
 
-  return { id: version.id, versionNumber };
+  return { id: version.id, versionNumber: version.versionNumber };
 }
 
 /**
@@ -123,6 +149,7 @@ export async function getVersions(projectId: string): Promise<VersionInfo[]> {
     manifest: v.manifest,
     createdAt: v.createdAt,
     sourceMessageId: v.sourceMessageId,
+    message: v.message,
   }));
 }
 
@@ -144,18 +171,11 @@ export async function restoreVersion(
   }
 
   const files = reconstructProjectFiles(snapshots.map((snapshot) => snapshot.manifest));
-  const latestVersion = await getDb().projectSnapshot.findFirst({
-    where: { projectId },
-    orderBy: { versionNumber: 'desc' },
-    select: { versionNumber: true },
-  });
-  const newVersionNumber = (latestVersion?.versionNumber ?? 0) + 1;
   const currentFiles = await getDb().projectFile.findMany({
     where: { projectId },
     select: { path: true },
   });
   const restoredPaths = new Set(files.map((file) => file.path));
-
   const manifest = [
     ...files.map((file) => ({
       file: file.path,
@@ -166,8 +186,12 @@ export async function restoreVersion(
       .filter((file) => !restoredPaths.has(file.path))
       .map((file) => ({ file: file.path, operation: 'delete' as const })),
   ];
-
   const version = await getDb().$transaction(async (tx) => {
+    // Serialize concurrent restores to the same project — same pattern as
+    // createVersion. Without this, two simultaneous restores race the
+    // versionNumber allocation (both read N, both write N+1).
+    const lockKey = projectIdToAdvisoryKey(projectId);
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${lockKey})`;
     await tx.projectFile.deleteMany({ where: { projectId } });
     if (files.length > 0) {
       await tx.projectFile.createMany({
@@ -179,6 +203,12 @@ export async function restoreVersion(
         })),
       });
     }
+    const latestVersion = await tx.projectSnapshot.findFirst({
+      where: { projectId },
+      orderBy: { versionNumber: 'desc' },
+      select: { versionNumber: true },
+    });
+    const newVersionNumber = (latestVersion?.versionNumber ?? 0) + 1;
     return tx.projectSnapshot.create({
       data: {
         projectId,
@@ -191,7 +221,7 @@ export async function restoreVersion(
     });
   });
 
-  return { id: version.id, versionNumber: newVersionNumber, files };
+  return { id: version.id, versionNumber: version.versionNumber, files };
 }
 
 // ─── AI Response Parsing ───────────────────────────────

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
@@ -22,8 +22,7 @@ function relativeTime(date: Date) { const min = Math.floor((Date.now() - date.ge
 const statusVariant = { draft: 'secondary', published: 'success', archived: 'warning' } as const;
 type DbStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
 const statusMap: Record<DbStatus, 'draft' | 'published' | 'archived'> = { DRAFT: 'draft', PUBLISHED: 'published', ARCHIVED: 'archived' };
-
-export default function DashboardPage() {
+function DashboardContent() {
   const { data: session, status: authStatus } = useSession();
   const router = useRouter();
   const projectsQuery = trpc.projects.list.useQuery();
@@ -130,5 +129,18 @@ export default function DashboardPage() {
         <Link href="/dashboard/templates" className="mt-10 flex flex-col gap-5 rounded-2xl border border-border bg-background-subtle p-6 transition-colors hover:border-border-strong sm:flex-row sm:items-center"><span className="grid h-12 w-12 place-items-center rounded-xl bg-primary/10 text-primary"><Sparkles className="h-5 w-5" /></span><div className="flex-1"><h2 className="font-semibold">Start from a proven foundation</h2><p className="mt-1 text-sm text-foreground-muted">Explore polished templates for common product patterns.</p></div><ArrowRight className="h-5 w-5 text-foreground-muted" /></Link>
       </main>
     </div>
+  );
+}
+export default function DashboardPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="grid min-h-screen place-items-center bg-background">
+          <div className="h-7 w-7 animate-spin rounded-full border-2 border-border border-t-primary" />
+        </div>
+      }
+    >
+      <DashboardContent />
+    </Suspense>
   );
 }

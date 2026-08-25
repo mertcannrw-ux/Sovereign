@@ -1,20 +1,20 @@
 import { createHash } from 'node:crypto';
-import type { PrismaClient } from '@prisma-generated/prisma/client';
+import type { Prisma, PrismaClient } from '@prisma-generated/prisma/client';
 import type { GeneratedFile } from '@/lib/generation-protocol';
 
+export type DbClient = PrismaClient | Prisma.TransactionClient;
+
 export async function persistProjectFiles(
-  db: PrismaClient,
+  db: DbClient,
   projectId: string,
   files: GeneratedFile[],
 ): Promise<void> {
-  await db.$transaction(
-    files.map((file) => {
-      const contentHash = createHash('sha256').update(file.content).digest('hex');
-      return db.projectFile.upsert({
-        where: { projectId_path: { projectId, path: file.path } },
-        create: { projectId, path: file.path, content: file.content, contentHash },
-        update: { content: file.content, contentHash },
-      });
-    }),
-  );
+  for (const file of files) {
+    const contentHash = createHash('sha256').update(file.content).digest('hex');
+    await db.projectFile.upsert({
+      where: { projectId_path: { projectId, path: file.path } },
+      create: { projectId, path: file.path, content: file.content, contentHash },
+      update: { content: file.content, contentHash },
+    });
+  }
 }

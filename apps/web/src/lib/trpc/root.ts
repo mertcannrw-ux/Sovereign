@@ -9,6 +9,9 @@ import { databaseRouter } from './routers/database';
 import { appAuthRouter } from './routers/appAuth';
 import { deploymentsRouter } from './routers/deployments';
 import { organizationsRouter } from './routers/organizations';
+import { assetsRouter } from './routers/assets';
+import { imageProviderRouter } from './routers/imageProvider';
+import { designDirectionsRouter } from './routers/designDirections';
 
 export const appRouter = router({
   auth: authRouter,
@@ -21,6 +24,9 @@ export const appRouter = router({
   database: databaseRouter,
   appAuth: appAuthRouter,
   organizations: organizationsRouter,
+  assets: assetsRouter,
+  imageProvider: imageProviderRouter,
+  designDirections: designDirectionsRouter,
 });
 
 export type AppRouter = typeof appRouter;

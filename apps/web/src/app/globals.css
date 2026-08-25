@@ -163,6 +163,7 @@
     text-wrap: balance;
   }
 
+  /* Respect users who request reduced motion in the app-builder UI itself. */
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,

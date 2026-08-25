@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Database,
   Plus,
@@ -108,6 +108,18 @@ export function DatabasePanel({ projectId }: DatabasePanelProps) {
   const [isLoadingSchema, setIsLoadingSchema] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // Monotonic request id so a stale schema response cannot overwrite the schema
+  // of a table selected after it; the mounted ref drops results after unmount.
+  const schemaRequestIdRef = useRef(0);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   // Create table dialog
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [newTableName, setNewTableName] = useState('');
@@ -149,6 +161,7 @@ export function DatabasePanel({ projectId }: DatabasePanelProps) {
   };
 
   const loadTableSchema = async (tableName: string) => {
+    const requestId = ++schemaRequestIdRef.current;
     setSelectedTable(tableName);
     setIsLoadingSchema(true);
     try {
@@ -158,13 +171,16 @@ export function DatabasePanel({ projectId }: DatabasePanelProps) {
         body: JSON.stringify({ projectId, tableName }),
       });
       const data = await response.json();
+      if (requestId !== schemaRequestIdRef.current || !isMountedRef.current) return;
       if (data.result?.data) {
         setTableSchema(data.result.data);
       }
     } catch {
       // silently fail
     } finally {
-      setIsLoadingSchema(false);
+      if (requestId === schemaRequestIdRef.current && isMountedRef.current) {
+        setIsLoadingSchema(false);
+      }
     }
   };
 

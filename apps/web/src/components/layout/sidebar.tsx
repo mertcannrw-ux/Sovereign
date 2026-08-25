@@ -41,10 +41,14 @@ export function Sidebar({ open, onClose, className }: SidebarProps) {
     <>
       {open && <button aria-label="Close navigation" className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm md:hidden" onClick={onClose} />}
       <aside className={cn('fixed inset-y-0 left-0 z-50 flex w-[256px] flex-col border-r border-border bg-[#0b0b0b] transition-transform duration-200 md:static md:translate-x-0', open ? 'translate-x-0' : '-translate-x-full', className)}>
-        <div className="flex h-16 items-center justify-between px-5">
-          <Link href="/dashboard" className="flex items-center gap-3" onClick={onClose}>
-            <span className="grid h-8 w-8 place-items-center rounded-full bg-primary text-primary-foreground"><Command className="h-4 w-4" strokeWidth={2.4} /></span>
-            <span className="text-xs font-semibold uppercase tracking-[0.2em] text-foreground">Sovereign</span>
+        <div className="flex h-20 items-center justify-between px-5">
+          <Link href="/dashboard" className="group flex items-center gap-3.5" onClick={onClose}>
+            <span className="grid h-10 w-10 place-items-center rounded-xl bg-primary text-primary-foreground shadow-md shadow-primary/20 ring-1 ring-primary/30 transition-transform duration-200 group-hover:scale-105">
+              <Command className="h-5 w-5" strokeWidth={2.5} />
+            </span>
+            <span className="text-base font-bold uppercase tracking-[0.22em] text-foreground transition-colors group-hover:text-primary">
+              Sovereign
+            </span>
           </Link>
           <Button variant="ghost" size="icon-sm" onClick={onClose} className="md:hidden"><X className="h-4 w-4" /></Button>
         </div>

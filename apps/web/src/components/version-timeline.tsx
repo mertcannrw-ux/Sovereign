@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useCallback } from 'react';
+import { useMemo, useCallback, useState } from 'react';
 import { cn } from '@app-builder/ui/utils';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -40,6 +40,8 @@ export function VersionTimeline({
     () => (versions.length > 0 ? versions[versions.length - 1]!.versionNumber : 0),
     [versions],
   );
+  const [restoringVersion, setRestoringVersion] = useState<number | null>(null);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
 
   // Show up to 24 dots; if more versions exist, compact
   const displayVersions = useMemo(() => {
@@ -52,9 +54,17 @@ export function VersionTimeline({
   }, [versions]);
 
   const handleRestore = useCallback(
-    (e: React.MouseEvent, versionNumber: number) => {
+    async (e: React.MouseEvent, versionNumber: number) => {
       e.stopPropagation();
-      onRestoreVersion(versionNumber);
+      setRestoreError(null);
+      setRestoringVersion(versionNumber);
+      try {
+        await onRestoreVersion(versionNumber);
+      } catch {
+        setRestoreError('Failed to restore version. Please try again.');
+      } finally {
+        setRestoringVersion(null);
+      }
     },
     [onRestoreVersion],
   );
@@ -78,7 +88,8 @@ export function VersionTimeline({
   }
 
   return (
-    <div
+    <>
+      <div
       className={cn(
         'flex items-center gap-1 overflow-x-auto px-3 py-2',
         'scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent',
@@ -152,7 +163,7 @@ export function VersionTimeline({
                         size="sm"
                         className="h-7 w-full text-[11px]"
                         onClick={(e) => handleRestore(e, v.versionNumber)}
-                        disabled={isCurrent}
+                        disabled={isCurrent || restoringVersion === v.versionNumber}
                       >
                         <RotateCcw className="mr-1 h-3 w-3" />
                         {isCurrent ? 'Current' : 'Restore'}
@@ -174,6 +185,12 @@ export function VersionTimeline({
         {currentVersion < maxVersion ? ` of ${maxVersion}` : ''}
       </span>
     </div>
+      {restoreError && (
+        <p className="px-3 pb-2 text-xs text-error" role="alert">
+          {restoreError}
+        </p>
+      )}
+    </>
   );
 }
 

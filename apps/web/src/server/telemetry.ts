@@ -101,7 +101,6 @@ export function initTelemetry(): void {
 
   try {
     // Dynamic import — only loaded when OTEL is configured
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { trace } = require('@opentelemetry/api');
     tracer = trace.getTracer('app-builder');
     log('info', 'OpenTelemetry initialized', { endpoint });

@@ -12,6 +12,8 @@
     "build": "turbo build",
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
+    "test": "turbo test",
+    "clean:issues": "node -e \"if(require('fs').existsSync('ISSUES.md')) require('fs').unlinkSync('ISSUES.md')\"",
     "check": "turbo typecheck lint build",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

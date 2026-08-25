@@ -18,9 +18,22 @@ const prisma = new PrismaClient({ adapter });
 async function main() {
   console.log('🌱 Seeding database...');
 
+  // Refuse to run in production so an automated pipeline that copies the
+  // .env.example placeholder credentials can never provision a known-password
+  // admin. Seeds are for development/staging only.
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('Refusing to seed in production. Seeds are for development/staging only.');
+  }
+
   // ── Admin user ──────────────────────────────────
-  const adminEmail = 'admin@appbuilder.local';
-  const adminPassword = 'Admin123!';
+  // Credentials come from the environment: refusing to seed a hardcoded
+  // password (or run at all outside development) keeps the default-credential
+  // footgun out of production.
+  const adminEmail = process.env.SEED_ADMIN_EMAIL;
+  const adminPassword = process.env.SEED_ADMIN_PASSWORD;
+  if (!adminEmail || !adminPassword || adminPassword.length < 12) {
+    throw new Error('SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD (min 12 chars) must be set when seeding');
+  }
 
   const existingUser = await prisma.user.findUnique({
     where: { email: adminEmail },
@@ -44,9 +57,7 @@ async function main() {
     });
     adminId = user.id;
 
-    console.log(`  ✅ Admin user created:`);
-    console.log(`     Email:    ${adminEmail}`);
-    console.log(`     Password: ${adminPassword}`);
+    console.log(`  ✅ Admin user created (credentials from environment):`);
     console.log(`     User ID:  ${user.id}`);
   }
 

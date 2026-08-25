@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { protectedProcedure, router } from '../trpc';
+import { requireProjectRole } from '@/server/authz';
 
 /**
  * Schema for updating auth configuration.
@@ -30,7 +31,11 @@ const authConfigSchema = z.object({
     .optional(),
   branding: z
     .object({
-      logoUrl: z.string().optional(),
+      logoUrl: z
+        .string()
+        .url()
+        .refine((url) => url.startsWith('https://'), 'Logo URL must use HTTPS')
+        .optional(),
       primaryColor: z.string().optional(),
       appName: z.string().optional(),
     })
@@ -45,7 +50,7 @@ const createUserSchema = z.object({
   email: z.string().email(),
   name: z.string().min(1).max(100).optional(),
   password: z.string().min(6).optional(),
-  role: z.string().default('user'),
+  role: z.enum(['user', 'admin', 'owner']).default('user'),
 });
 
 export const appAuthRouter = router({
@@ -55,31 +60,13 @@ export const appAuthRouter = router({
   getConfig: protectedProcedure
     .input(z.object({ projectId: z.string() }))
     .query(async ({ ctx, input }) => {
-      const project = await ctx.db.project.findUnique({
-        where: { id: input.projectId },
-        include: { collaborators: { where: { userId: ctx.user.id } } },
-      });
+      await requireProjectRole(ctx, input.projectId, 'VIEWER');
 
-      if (!project) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Project not found' });
-      }
-
-      const isOwner = project.ownerId === ctx.user.id;
-      const isCollab = project.collaborators.length > 0;
-      if (!isOwner && !isCollab) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
-      }
-
-      let config = await ctx.db.appAuthConfig.findUnique({
+      const config = await ctx.db.appAuthConfig.upsert({
         where: { projectId: input.projectId },
+        create: { projectId: input.projectId },
+        update: {},
       });
-
-      if (!config) {
-        // Create default auth config for this project
-        config = await ctx.db.appAuthConfig.create({
-          data: { projectId: input.projectId },
-        });
-      }
 
       return config;
     }),
@@ -95,21 +82,7 @@ export const appAuthRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const project = await ctx.db.project.findUnique({
-        where: { id: input.projectId },
-        include: { collaborators: { where: { userId: ctx.user.id } } },
-      });
-
-      if (!project) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Project not found' });
-      }
-
-      if (project.ownerId !== ctx.user.id) {
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: 'Only the project owner can update auth settings',
-        });
-      }
+      await requireProjectRole(ctx, input.projectId, 'OWNER');
 
       const existing = await ctx.db.appAuthConfig.findUnique({
         where: { projectId: input.projectId },
@@ -160,20 +133,7 @@ export const appAuthRouter = router({
   listUsers: protectedProcedure
     .input(z.object({ projectId: z.string() }))
     .query(async ({ ctx, input }) => {
-      const project = await ctx.db.project.findUnique({
-        where: { id: input.projectId },
-        include: { collaborators: { where: { userId: ctx.user.id } } },
-      });
-
-      if (!project) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Project not found' });
-      }
-
-      const isOwner = project.ownerId === ctx.user.id;
-      const isCollab = project.collaborators.length > 0;
-      if (!isOwner && !isCollab) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
-      }
+      await requireProjectRole(ctx, input.projectId, 'VIEWER');
 
       const users = await ctx.db.appUser.findMany({
         where: { projectId: input.projectId },
@@ -196,24 +156,18 @@ export const appAuthRouter = router({
    * Create a new user in the project's app (admin only — owner or admin role).
    */
   createUser: protectedProcedure.input(createUserSchema).mutation(async ({ ctx, input }) => {
-    const project = await ctx.db.project.findUnique({
-      where: { id: input.projectId },
-      include: { collaborators: { where: { userId: ctx.user.id } } },
-    });
+    await requireProjectRole(ctx, input.projectId, 'OWNER');
 
-    if (!project) {
-      throw new TRPCError({ code: 'NOT_FOUND', message: 'Project not found' });
-    }
-
-    const isOwner = project.ownerId === ctx.user.id;
-    const isCollab = project.collaborators.length > 0;
-    if (!isOwner && !isCollab) {
-      throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
-    }
+    // Normalize like register/login so the case-sensitive unique constraint
+    // ([projectId, email]) can't be bypassed with a case variant.
+    const email = input.email.trim().toLowerCase();
 
     // Check for existing user with same email in this project
-    const existing = await ctx.db.appUser.findUnique({
-      where: { projectId_email: { projectId: input.projectId, email: input.email } },
+    const existing = await ctx.db.appUser.findFirst({
+      where: {
+        projectId: input.projectId,
+        email: { equals: email, mode: 'insensitive' },
+      },
     });
 
     if (existing) {
@@ -229,7 +183,7 @@ export const appAuthRouter = router({
     const user = await ctx.db.appUser.create({
       data: {
         projectId: input.projectId,
-        email: input.email,
+        email,
         name: input.name ?? null,
         passwordHash: passwordHash ?? null,
         role: input.role,
@@ -254,20 +208,7 @@ export const appAuthRouter = router({
   deleteUser: protectedProcedure
     .input(z.object({ projectId: z.string(), userId: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      const project = await ctx.db.project.findUnique({
-        where: { id: input.projectId },
-        include: { collaborators: { where: { userId: ctx.user.id } } },
-      });
-
-      if (!project) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Project not found' });
-      }
-
-      const isOwner = project.ownerId === ctx.user.id;
-      const isCollab = project.collaborators.length > 0;
-      if (!isOwner && !isCollab) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
-      }
+      await requireProjectRole(ctx, input.projectId, 'OWNER');
 
       const user = await ctx.db.appUser.findUnique({
         where: { id: input.userId },

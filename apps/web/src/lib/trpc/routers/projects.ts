@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { protectedProcedure, router } from '../trpc';
+import { requireOrganizationRole, requireProjectRole } from '@/server/authz';
 
 function generateSlug(name: string): string {
   return (
@@ -46,6 +47,8 @@ export const projectsRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      await requireOrganizationRole(ctx, input.organizationId, 'MEMBER');
+
       let slug = generateSlug(input.name);
 
       // Ensure the slug is unique
@@ -96,13 +99,7 @@ export const projectsRouter = router({
       });
     }
 
-    const isOwner = project.ownerId === ctx.user.id;
-    const isCollaborator = project.collaborators.some(
-      (c: { userId: string }) => c.userId === ctx.user.id,
-    );
-    if (!isOwner && !isCollaborator) {
-      throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
-    }
+    await requireProjectRole(ctx, input.id, 'VIEWER');
 
     return project;
   }),
@@ -111,16 +108,11 @@ export const projectsRouter = router({
   files: protectedProcedure.input(z.object({ id: z.string() })).query(async ({ ctx, input }) => {
     const project = await ctx.db.project.findUnique({
       where: { id: input.id },
-      include: {
-        collaborators: { where: { userId: ctx.user.id }, select: { userId: true } },
-        files: { orderBy: { path: 'asc' } },
-      },
+      include: { files: { orderBy: { path: 'asc' } } },
     });
-
     if (!project) throw new TRPCError({ code: 'NOT_FOUND', message: 'Project not found' });
-    if (project.ownerId !== ctx.user.id && project.collaborators.length === 0) {
-      throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
-    }
+
+    await requireProjectRole(ctx, input.id, 'VIEWER');
 
     return project.files.map((file) => ({ path: file.path, content: file.content }));
   }),
@@ -139,23 +131,7 @@ export const projectsRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const project = await ctx.db.project.findUnique({
-        where: { id: input.id },
-      });
-
-      if (!project) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: 'Project not found',
-        });
-      }
-
-      if (project.ownerId !== ctx.user.id) {
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: 'Only the owner can update this project',
-        });
-      }
+      await requireProjectRole(ctx, input.id, 'OWNER');
 
       const updated = await ctx.db.project.update({
         where: { id: input.id },
@@ -182,23 +158,7 @@ export const projectsRouter = router({
   delete: protectedProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      const project = await ctx.db.project.findUnique({
-        where: { id: input.id },
-      });
-
-      if (!project) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: 'Project not found',
-        });
-      }
-
-      if (project.ownerId !== ctx.user.id) {
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: 'Only the owner can delete this project',
-        });
-      }
+      await requireProjectRole(ctx, input.id, 'OWNER');
 
       await ctx.db.project.delete({ where: { id: input.id } });
 

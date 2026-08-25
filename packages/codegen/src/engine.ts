@@ -102,6 +102,7 @@ const DANGEROUS_PATH_PATTERNS = [
   /\0/, // NUL byte
   /\\/, // backslash
   /^\//, // absolute path
+  /^[a-zA-Z]:/, // Windows drive-letter absolute path (e.g. C:/ or D:\)
 ];
 
 export function normalizePath(path: string): string {
@@ -146,10 +147,20 @@ export function validateChanges(
 ): { valid: FileChange[]; diagnostics: Diagnostic[] } {
   const valid: FileChange[] = [];
   const diagnostics: Diagnostic[] = [];
+  const seenPaths = new Set<string>();
   let totalBytes = 0;
 
   for (const change of changes) {
     const normalizedPath = validatePath(change.path);
+    if (normalizedPath && seenPaths.has(normalizedPath)) {
+      diagnostics.push({
+        file: change.path,
+        severity: 'error',
+        message: `Duplicate file path: ${change.path} (normalized: ${normalizedPath})`,
+      });
+      continue;
+    }
+    if (normalizedPath) seenPaths.add(normalizedPath);
 
     if (!normalizedPath) {
       diagnostics.push({
@@ -193,14 +204,21 @@ export function validateChanges(
       break;
     }
 
+    if (change.operation === 'ask_user') {
+      continue;
+    }
+
+    const isExisting = _manifest != null && Object.hasOwn(_manifest, normalizedPath);
+    const operation: FileChange['operation'] =
+      change.operation === 'delete'
+        ? 'DELETE'
+        : isExisting
+          ? 'UPDATE'
+          : 'CREATE';
+
     valid.push({
       path: normalizedPath,
-      operation:
-        change.operation === 'write'
-          ? 'CREATE'
-          : change.operation === 'delete'
-            ? 'DELETE'
-            : 'UPDATE',
+      operation,
       content: change.content,
     });
   }

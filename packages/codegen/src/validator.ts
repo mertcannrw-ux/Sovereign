@@ -21,7 +21,7 @@ export class ASTValidator {
   }
 
   private validateFile(file: FileChange, diagnostics: Diagnostic[]): void {
-    const ext = file.path.split('.').pop();
+    const ext = file.path.split('.').pop()?.toLowerCase();
 
     switch (ext) {
       case 'ts':
@@ -43,7 +43,7 @@ export class ASTValidator {
 
   private validateTypeScript(content: string, path: string, diagnostics: Diagnostic[]): void {
     // Basic checks — full validation happens at build time
-    if (content.includes('eval(')) {
+    if (/\beval\s*\(/.test(content)) {
       diagnostics.push({
         file: path,
         severity: 'warning',

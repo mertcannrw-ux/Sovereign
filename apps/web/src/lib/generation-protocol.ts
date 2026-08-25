@@ -100,7 +100,7 @@ Requirements:
 - For a new project, emit index.html. For an existing project, emit only files that must change; never repeat unchanged files.
 - Build a polished, responsive, accessible site that works immediately.
 - Use complete file contents, never patches or ellipses.
-- Prefer a dependency-free HTML/CSS/JavaScript site so preview starts instantly.
+- Prefer a dependency-free HTML/CSS/JavaScript site so preview starts instantly. Include Tailwind CDN (<script src="https://cdn.tailwindcss.com"></script>) or custom CSS with smooth transitions and keyframe animations. Never write global prefers-reduced-motion rules with animation-duration: 0.01ms !important on all elements (*), as it freezes watch hands, canvas loops, and clock movements.
 - You may create src/styles.css and src/main.js and reference them from index.html.
 - Do not use markdown code fences.
 - Paths must be relative and may not contain .., backslashes, or leading slashes.

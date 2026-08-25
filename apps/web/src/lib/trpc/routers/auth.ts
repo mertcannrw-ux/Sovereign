@@ -2,6 +2,7 @@ import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import { TRPCError } from '@trpc/server';
 import { publicProcedure, protectedProcedure, router } from '../trpc';
+import { checkRateLimit } from '@/server/rate-limit';
 
 export const authRouter = router({
   /**
@@ -18,8 +19,18 @@ export const authRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const existing = await ctx.db.user.findUnique({
-        where: { email: input.email },
+      const rate = await checkRateLimit('register', ctx.ipHash);
+      if (!rate.allowed) {
+        const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: `Too many sign-ups. Try again in ${retryIn}s.`,
+        });
+      }
+
+      const email = input.email.trim().toLowerCase();
+      const existing = await ctx.db.user.findFirst({
+        where: { email: { equals: email, mode: 'insensitive' } },
       });
       if (existing) {
         throw new TRPCError({
@@ -32,7 +43,7 @@ export const authRouter = router({
 
       const user = await ctx.db.user.create({
         data: {
-          email: input.email,
+          email,
           name: input.name ?? null,
           passwordHash: hashedPassword,
         },
@@ -58,19 +69,22 @@ export const authRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const user = await ctx.db.user.findUnique({
-        where: { email: input.email },
-      });
-      if (!user) {
+      const rate = await checkRateLimit('signIn', ctx.ipHash);
+      if (!rate.allowed) {
+        const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
         throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: 'Invalid email or password',
+          code: 'TOO_MANY_REQUESTS',
+          message: `Too many sign-in attempts. Try again in ${retryIn}s.`,
         });
       }
 
-      if (!user.passwordHash) {
+      const email = input.email.trim().toLowerCase();
+      const user = await ctx.db.user.findFirst({
+        where: { email: { equals: email, mode: 'insensitive' } },
+      });
+      if (!user || !user.passwordHash) {
         throw new TRPCError({
-          code: 'NOT_FOUND',
+          code: 'UNAUTHORIZED',
           message: 'Invalid email or password',
         });
       }

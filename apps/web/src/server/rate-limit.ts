@@ -4,6 +4,7 @@
  */
 
 import { env } from '@/env';
+import { createHmac } from 'node:crypto';
 
 // ─── Types ────────────────────────────────────────────────
 
@@ -24,9 +25,16 @@ interface RateLimitResult {
 
 const devBuckets = new Map<string, { count: number; resetAt: number }>();
 
+function evictExpiredDevBuckets(now: number): void {
+  for (const [key, bucket] of devBuckets) {
+    if (now > bucket.resetAt) devBuckets.delete(key);
+  }
+}
+
 function devSlidingWindow(key: string, config: RateLimitConfig): RateLimitResult {
   const now = Date.now();
   const windowMs = config.windowSeconds * 1000;
+  evictExpiredDevBuckets(now);
   const bucket = devBuckets.get(key);
 
   if (!bucket || now > bucket.resetAt) {
@@ -86,7 +94,7 @@ async function upstashSlidingWindow(
   }
 
   const results = await response.json();
-  const count = results[1]?.result ?? 0;
+  const count = (results[2]?.result as number) ?? 0;
 
   return {
     allowed: count <= config.limit,
@@ -111,10 +119,27 @@ export const RATE_LIMITS = {
 
 export type RateLimitKey = keyof typeof RATE_LIMITS;
 
+// Emitted once per process so operators notice pre-auth buckets collapse to a
+// single global key when no trusted proxy header is present.
+let warnedTrustedProxy = false;
+
 export async function checkRateLimit(
   key: RateLimitKey,
   identifier: string,
 ): Promise<RateLimitResult> {
+  if (
+    process.env.NODE_ENV === 'production' &&
+    process.env.TRUSTED_PROXY !== 'true' &&
+    !warnedTrustedProxy
+  ) {
+    warnedTrustedProxy = true;
+    console.warn(
+      '[rate-limit] TRUSTED_PROXY is not set. Requests are seen as 127.0.0.1, so pre-auth ' +
+        'limits (register/signIn) share one GLOBAL bucket. Set TRUSTED_PROXY=true behind your ' +
+        'proxy so limits are enforced per client IP.',
+    );
+  }
+
   const config = RATE_LIMITS[key];
   const redisKey = `rl:${key}:${identifier}`;
   return upstashSlidingWindow(redisKey, config);
@@ -122,13 +147,18 @@ export async function checkRateLimit(
 
 /**
  * Hash an IP address for privacy-preserving rate limiting.
+ * Keyed HMAC-SHA256 so clients cannot precompute the rate-limit key for a
+ * forged IP header.
  */
 export function hashIp(ip: string): string {
-  // Simple hash — not cryptographic, just obfuscation for rate limit keys
-  let hash = 0;
-  for (let i = 0; i < ip.length; i++) {
-    const char = ip.charCodeAt(i);
-    hash = ((hash << 5) - hash + char) | 0;
+  const secret = env.NEXTAUTH_SECRET;
+  if (!secret) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('NEXTAUTH_SECRET must be set for IP hashing');
+    }
   }
-  return Math.abs(hash).toString(36);
+  return createHmac('sha256', secret || 'dev-secret-key-fallback')
+    .update(ip)
+    .digest('hex')
+    .slice(0, 32);
 }

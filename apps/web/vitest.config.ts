@@ -17,7 +17,8 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/__tests__/setup.ts'],
-    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    // F-28: include package tests so image-client.test.ts is not orphaned
+    include: ['src/**/*.{test,spec}.{ts,tsx}', '../../packages/**/__tests__/**/*.{test,spec}.{ts,tsx}', '../../packages/**/src/**/*.{test,spec}.{ts,tsx}'],
     globals: true,
     coverage: {
       provider: 'v8',

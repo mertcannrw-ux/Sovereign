@@ -57,6 +57,8 @@ cp .env.example .env
 
 *(Note: The default `.env` is configured for local development using the embedded PostgreSQL socket server).*
 
+> **Production — rate limiting:** when deployed behind a reverse proxy (Vercel, Cloudflare, Nginx, …), set `TRUSTED_PROXY="true"`. Without it the app sees every request as `127.0.0.1`, so pre-auth rate limits (`register`/`signIn`) collapse into a single global bucket shared by all users. See `.env.example`.
+
 ---
 
 ## 🗄️ Database Setup & Development
@@ -74,12 +76,12 @@ In a separate terminal window, populate the database:
 npm run db:seed
 ```
 
-#### 🔑 Default Local Admin Credentials
+#### 🔑 Local Admin Credentials (from .env)
 | Field | Credential |
 | :--- | :--- |
 | **Sign-in URL** | [http://localhost:3000/auth/signin](http://localhost:3000/auth/signin) |
-| **Email** | `admin@appbuilder.local` |
-| **Password** | `Admin123!` |
+| **Email** | Set by `SEED_ADMIN_EMAIL` in `.env` (default `admin@appbuilder.local`) |
+| **Password** | Set by `SEED_ADMIN_PASSWORD` in `.env` |
 | **Organization** | `Admin's Organization` |
 
 ---

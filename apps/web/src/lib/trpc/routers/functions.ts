@@ -2,27 +2,15 @@ import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { protectedProcedure, router } from '../trpc';
 import type { Context } from '../context';
+import type { ProjectRole } from '@app-builder/shared';
+import { requireProjectRole } from '@/server/authz';
 
 async function assertProjectAccess(
-  db: Context['db'],
+  ctx: Context,
   projectId: string,
-  userId: string,
+  minimumRole: ProjectRole = 'VIEWER',
 ): Promise<void> {
-  const project = await db.project.findUnique({ where: { id: projectId } });
-
-  if (!project) {
-    throw new TRPCError({ code: 'NOT_FOUND', message: 'Project not found' });
-  }
-
-  if (project.ownerId === userId) return;
-
-  const collaborator = await db.projectCollaborator.findFirst({
-    where: { projectId, userId },
-  });
-
-  if (!collaborator) {
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' });
-  }
+  await requireProjectRole(ctx, projectId, minimumRole);
 }
 
 function defaultHandlerCode(): string {
@@ -44,7 +32,7 @@ export const functionsRouter = router({
   list: protectedProcedure
     .input(z.object({ projectId: z.string() }))
     .query(async ({ ctx, input }) => {
-      await assertProjectAccess(ctx.db, input.projectId, ctx.user.id);
+      await assertProjectAccess(ctx, input.projectId, 'VIEWER');
 
       const functions = await ctx.db.backendFunction.findMany({
         where: { projectId: input.projectId },
@@ -67,7 +55,7 @@ export const functionsRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      await assertProjectAccess(ctx.db, input.projectId, ctx.user.id);
+      await assertProjectAccess(ctx, input.projectId, 'EDITOR');
 
       // Check for duplicates
       const existing = await ctx.db.backendFunction.findUnique({
@@ -125,7 +113,7 @@ export const functionsRouter = router({
         });
       }
 
-      await assertProjectAccess(ctx.db, existing.projectId, ctx.user.id);
+      await assertProjectAccess(ctx, existing.projectId, 'EDITOR');
 
       const updated = await ctx.db.backendFunction.update({
         where: { id: input.id },
@@ -157,7 +145,7 @@ export const functionsRouter = router({
         });
       }
 
-      await assertProjectAccess(ctx.db, existing.projectId, ctx.user.id);
+      await assertProjectAccess(ctx, existing.projectId, 'EDITOR');
 
       await ctx.db.backendFunction.delete({ where: { id: input.id } });
 

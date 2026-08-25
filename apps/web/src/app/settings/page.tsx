@@ -195,6 +195,18 @@ function AIProvidersTab() {
   const [deleteConfirm, setDeleteConfirm] = useState<ProviderId | null>(null);
   const [providerModels, setProviderModels] = useState<Record<string, string[]>>({});
 
+  const imageConfigQuery = trpc.imageProvider.get.useQuery();
+  const imageSaveMutation = trpc.imageProvider.save.useMutation();
+  const imageTestMutation = trpc.imageProvider.test.useMutation();
+  const imageDeleteMutation = trpc.imageProvider.delete.useMutation();
+
+  const [isEditingImageConfig, setIsEditingImageConfig] = useState(false);
+  const [imageEndpoint, setImageEndpoint] = useState('');
+  const [imageKey, setImageKey] = useState('');
+  const [imageModel, setImageModel] = useState('dall-e-3');
+  const [imageTestResult, setImageTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [isTestingImageConfig, setIsTestingImageConfig] = useState(false);
+
   const keys = keysQuery.data ?? [];
   const getKeyForProvider = (provider: ProviderId) => keys.find((key) => key.provider === provider);
 
@@ -381,6 +393,124 @@ function AIProvidersTab() {
               </Card>
             );
           })}
+          {/* Image Generation Card */}
+          <Card className="border-border bg-background-subtle transition-colors hover:border-border-strong mt-4">
+            <CardContent className="p-5">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-lg font-bold text-primary">
+                    🎨
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-medium text-foreground">Image Generation (BYOK)</h3>
+                      <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+                        Optional
+                      </span>
+                    </div>
+                    <p className="text-xs text-foreground-muted">
+                      {imageConfigQuery.data
+                        ? `Configured · ${imageConfigQuery.data.maskedKey} · Model: ${imageConfigQuery.data.model}`
+                        : 'Not configured (Separate OpenAI-compatible image endpoint)'}
+                    </p>
+                    <p className="mt-1 text-[11px] text-foreground-muted">
+                      Note: Image generation also requires server-side Cloudflare R2 storage to persist generated media assets.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  {imageConfigQuery.data ? (
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={async () => {
+                          setIsTestingImageConfig(true);
+                          setImageTestResult(null);
+                          try {
+                            const res = await imageTestMutation.mutateAsync();
+                            setImageTestResult(res);
+                          } catch (err) {
+                            setImageTestResult({
+                              success: false,
+                              message: err instanceof Error ? err.message : 'Test failed',
+                            });
+                          } finally {
+                            setIsTestingImageConfig(false);
+                          }
+                        }}
+                        disabled={isTestingImageConfig}
+                      >
+                        {isTestingImageConfig ? (
+                          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Zap className="mr-1.5 h-3.5 w-3.5" />
+                        )}
+                        Test Endpoint
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          if (imageConfigQuery.data) {
+                            setImageEndpoint(imageConfigQuery.data.baseUrl);
+                            setImageModel(imageConfigQuery.data.model);
+                          }
+                          setImageKey('');
+                          setImageTestResult(null);
+                          setIsEditingImageConfig(true);
+                        }}
+                      >
+                        Configure
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={async () => {
+                          if (imageConfigQuery.data) {
+                            await imageDeleteMutation.mutateAsync({ id: imageConfigQuery.data.id });
+                            await imageConfigQuery.refetch();
+                          }
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4 text-error" />
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        setImageEndpoint('https://api.openai.com/v1');
+                        setImageModel('dall-e-3');
+                        setImageKey('');
+                        setImageTestResult(null);
+                        setIsEditingImageConfig(true);
+                      }}
+                    >
+                      <Plus className="mr-1.5 h-3.5 w-3.5" /> Configure Image Provider
+                    </Button>
+                  )}
+                </div>
+              </div>
+              {imageTestResult && (
+                <div
+                  className={cn(
+                    'mt-3 rounded-md p-3 text-sm',
+                    imageTestResult.success ? 'bg-success/10 text-success' : 'bg-error/10 text-error',
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    {imageTestResult.success ? (
+                      <CheckCircle2 className="h-4 w-4" />
+                    ) : (
+                      <XCircle className="h-4 w-4" />
+                    )}
+                    {imageTestResult.message}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
       )}
 
@@ -466,6 +596,78 @@ function AIProvidersTab() {
                 <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
               )}
               Save and load models
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* Image Provider Dialog */}
+      <Dialog open={isEditingImageConfig} onOpenChange={setIsEditingImageConfig}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Configure Image Provider</DialogTitle>
+            <DialogDescription>
+              Enter an OpenAI-compatible endpoint, API key, and image model for image generation.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-foreground">Endpoint Base URL</label>
+              <Input
+                placeholder="https://api.openai.com/v1"
+                value={imageEndpoint}
+                onChange={(e) => setImageEndpoint(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-foreground">API Key</label>
+              <Input
+                type="password"
+                placeholder={imageConfigQuery.data ? 'Leave blank to keep existing key' : 'sk-...'}
+                value={imageKey}
+                onChange={(e) => setImageKey(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-foreground">Image Model</label>
+              <Input
+                placeholder="dall-e-3"
+                value={imageModel}
+                onChange={(e) => setImageModel(e.target.value)}
+              />
+            </div>
+          </div>
+            {imageTestResult && !imageTestResult.success && (
+              <div className="rounded-md bg-error/10 p-3 text-sm text-error">
+                <div className="flex items-center gap-2">
+                  <XCircle className="h-4 w-4" />
+                  {imageTestResult.message}
+                </div>
+              </div>
+            )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsEditingImageConfig(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={async () => {
+                try {
+                  await imageSaveMutation.mutateAsync({
+                    baseUrl: imageEndpoint,
+                    apiKey: imageKey || undefined,
+                    model: imageModel,
+                  });
+                  await imageConfigQuery.refetch();
+                  setIsEditingImageConfig(false);
+                } catch (err) {
+                  setImageTestResult({
+                    success: false,
+                    message: err instanceof Error ? err.message : 'Failed to save configuration',
+                  });
+                }
+              }}
+              disabled={imageSaveMutation.isPending}
+            >
+              {imageSaveMutation.isPending ? 'Saving...' : 'Save Configuration'}
             </Button>
           </DialogFooter>
         </DialogContent>
