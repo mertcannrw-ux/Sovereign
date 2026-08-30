@@ -75,7 +75,7 @@ export default function App() {
       ]),
     );
     const app = result.files.get('src/App.tsx')!;
-    expect(app).toContain('Home');
+    expect(app).toContain('House');
     expect(app).toContain('Circle');
     expect(app).not.toContain('HomeIcon');
     expect(app).not.toContain('NopeIcon');
@@ -88,22 +88,46 @@ export default function App() {
       new Map([
         [
           'vite.config.ts',
-          `import { visualEditor } from '@app-builder/visual-editor';
-export default { plugins: [visualEditor()] };
+          `import react from '@vitejs/plugin-react';
+import { visualEditor } from '@app-builder/visual-editor';
+export default {
+  plugins: [react(), visualEditor({ root: 'src' })],
+  resolve: { alias: { '@': '/src' } },
+  server: { port: 4173 },
+};
 `,
         ],
-        ['index.html', '<html><head></head><body><div id="root"></div></body></html>'],
+        [
+          'index.html',
+          '<html><head></head><body><div id="root"></div><script type="module" src="./src/main.tsx"></script></body></html>',
+        ],
         ['src/App.tsx', 'export default function App() { return <main />; }'],
       ]),
     );
-    expect(result.files.get('vite.config.ts')).toContain('@vitejs/plugin-react');
-    expect(result.files.get('vite.config.ts')).not.toContain('@app-builder/visual-editor');
+    const vite = result.files.get('vite.config.ts')!;
+    expect(vite).toContain('@vitejs/plugin-react');
+    expect(vite).toContain("alias: { '@': '/src' }");
+    expect(vite).toContain('port: 4173');
+    expect(vite).not.toContain('@app-builder/visual-editor');
+    expect(vite).not.toContain('visualEditor');
     const html = result.files.get('index.html')!;
     expect(html).toMatch(/<html[^>]*lang="en"/);
     expect(html).toContain('name="viewport"');
     expect(html).toContain('name="description"');
     expect(html).toContain('<title>');
-    expect(html).toContain('/src/main.tsx');
+    expect(html).toContain('src="/src/main.tsx"');
+    expect(html.match(/src\/main\.tsx/g)).toHaveLength(1);
+  });
+
+  it('does not wipe extra tsconfig options when JSON cannot be repaired', () => {
+    const broken = 'compilerOptions jsx preserve extras keep';
+    const result = applyStackContract(
+      new Map([
+        ['tsconfig.json', broken],
+        ['src/App.tsx', 'export default function App() { return <main />; }'],
+      ]),
+    );
+    expect(result.files.get('tsconfig.json')).toBe(broken);
   });
 
   it('deletes .env and strips non-VITE_ keys from .env.example', () => {

@@ -10,6 +10,13 @@ describe('repairJson', () => {
     expect(repairJson('{"a":1,"b":[2,3,],}')).toEqual({ a: 1, b: [2, 3] });
   });
 
+  it('strips a trailing comma at EOF', () => {
+    expect(repairJson('{"name":"shop","dependencies":{"clsx":"2.1.1",')).toEqual({
+      name: 'shop',
+      dependencies: { clsx: '2.1.1' },
+    });
+  });
+
   it('strips line and block comments outside strings', () => {
     const raw = `{
       // name
@@ -33,8 +40,9 @@ describe('repairJson', () => {
     });
   });
 
-  it('inserts null for a missing value after a colon', () => {
-    expect(repairJson('{"scripts":{"dev":')).toEqual({ scripts: { dev: null } });
+  it('drops an incomplete key/value instead of inserting null', () => {
+    expect(repairJson('{"compilerOptions":{"strict":')).toEqual({ compilerOptions: {} });
+    expect(repairJson('{"scripts":{"dev":')).toEqual({ scripts: {} });
   });
 
   it('returns null for irreparable input', () => {

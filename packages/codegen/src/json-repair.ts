@@ -1,7 +1,7 @@
 /**
  * Cheap JSON repair for generated package.json / tsconfig.json.
  * Handles comments, trailing commas, and truncated objects/arrays/strings.
- * Not a general-purpose JSON5 parser.
+ * Does not invent `null` values or drop recovered keys in favor of a seed.
  */
 
 export function repairJson(text: string): unknown | null {
@@ -85,7 +85,7 @@ function stripTrailingCommas(input: string): string {
     if (c === ',') {
       let j = i + 1;
       while (j < input.length && /\s/.test(input[j]!)) j += 1;
-      if (input[j] === '}' || input[j] === ']') continue;
+      if (j >= input.length || input[j] === '}' || input[j] === ']') continue;
     }
     out += c;
   }
@@ -96,7 +96,6 @@ function closeTruncated(input: string): string {
   let inString = false;
   let escaped = false;
   const stack: Array<'{' | '['> = [];
-  let awaitingValue = false;
 
   for (let i = 0; i < input.length; i += 1) {
     const c = input[i]!;
@@ -108,33 +107,19 @@ function closeTruncated(input: string): string {
     }
     if (c === '"') {
       inString = true;
-      awaitingValue = false;
       continue;
     }
     if (c === '{') {
       stack.push('{');
-      awaitingValue = false;
       continue;
     }
     if (c === '[') {
       stack.push('[');
-      awaitingValue = false;
       continue;
     }
     if (c === '}' || c === ']') {
       stack.pop();
-      awaitingValue = false;
-      continue;
     }
-    if (c === ':') {
-      awaitingValue = true;
-      continue;
-    }
-    if (c === ',') {
-      awaitingValue = stack[stack.length - 1] === '{';
-      continue;
-    }
-    if (!/\s/.test(c)) awaitingValue = false;
   }
 
   let out = input;
@@ -142,10 +127,20 @@ function closeTruncated(input: string): string {
     if (escaped) out += '\\';
     out += '"';
   }
-  if (awaitingValue) out += 'null';
+
+  out = dropIncompleteMember(out);
 
   for (let i = stack.length - 1; i >= 0; i -= 1) {
     out += stack[i] === '{' ? '}' : ']';
   }
+  return out;
+}
+
+/** Drops a dangling `"key":` or trailing comma instead of inventing `null`. */
+function dropIncompleteMember(input: string): string {
+  let out = input.trimEnd();
+  out = out.replace(/,?\s*"[^"\\]*(?:\\.[^"\\]*)*"\s*:\s*$/, '');
+  out = out.replace(/:\s*$/, '');
+  out = out.replace(/,\s*$/, '');
   return out;
 }

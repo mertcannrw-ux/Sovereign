@@ -9,7 +9,6 @@ import {
   SEED_INDEX_HTML,
   SEED_VITE_CONFIG,
   SEEDS,
-  seedTsconfig,
 } from './stack-seeds';
 import stackLock from './stack-lock.json';
 
@@ -82,12 +81,13 @@ function ensureIndexHtml(content: string): string {
   if (!/<title[\s>]/i.test(html)) {
     injectHead('<title>App</title>');
   }
-  if (!/<script[^>]*src\s*=\s*["']\/src\/main\.tsx["']/i.test(html)) {
-    if (/<\/body>/i.test(html)) {
-      html = html.replace(/<\/body>/i, '    <script type="module" src="/src/main.tsx"></script>\n  </body>');
-    } else {
-      html += '\n<script type="module" src="/src/main.tsx"></script>\n';
-    }
+  const mainScriptSrc = /src\s*=\s*["'](?:\.\/)?\/?src\/main\.tsx["']/i;
+  if (mainScriptSrc.test(html)) {
+    html = html.replace(/src\s*=\s*["'](?:\.\/)?\/?src\/main\.tsx["']/gi, 'src="/src/main.tsx"');
+  } else if (/<\/body>/i.test(html)) {
+    html = html.replace(/<\/body>/i, '    <script type="module" src="/src/main.tsx"></script>\n  </body>');
+  } else {
+    html += '\n<script type="module" src="/src/main.tsx"></script>\n';
   }
   return html;
 }
@@ -95,7 +95,7 @@ function ensureIndexHtml(content: string): string {
 function ensureTsconfig(content: string): { json: string; repaired: boolean; seeded: boolean } {
   const parsed = repairJson(content);
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return { json: seedTsconfig(), repaired: true, seeded: true };
+    return { json: content, repaired: false, seeded: false };
   }
   const obj = parsed as Record<string, unknown>;
   const compilerOptions =
@@ -119,9 +119,43 @@ function ensureTsconfig(content: string): { json: string; repaired: boolean; see
   return { json: stringifyJson(obj), repaired: !originallyValid || changed, seeded: false };
 }
 
+function stripCall(source: string, name: string): string {
+  const re = new RegExp(`\\b${name}\\s*\\(`);
+  let out = source;
+  while (true) {
+    const match = re.exec(out);
+    if (!match) break;
+    const start = match.index;
+    let i = start + match[0].length;
+    let depth = 1;
+    while (i < out.length && depth > 0) {
+      if (out[i] === '(') depth += 1;
+      else if (out[i] === ')') depth -= 1;
+      i += 1;
+    }
+    let end = i;
+    while (end < out.length && /[\s,]/.test(out[end]!)) {
+      if (out[end] === ',') {
+        end += 1;
+        break;
+      }
+      end += 1;
+    }
+    out = `${out.slice(0, start)}${out.slice(end)}`;
+    re.lastIndex = 0;
+  }
+  return out;
+}
+
 function ensureViteConfig(content: string): string {
-  if (VISUAL_EDITOR_RE.test(content)) return SEED_VITE_CONFIG;
-  return content;
+  if (!VISUAL_EDITOR_RE.test(content) && !/\bvisualEditor\b/.test(content)) return content;
+  let next = content.replace(/import\s+[^;]*?from\s+['"]@app-builder\/visual-editor['"]\s*;?\r?\n?/g, '');
+  next = next.replace(/import\s+['"]@app-builder\/visual-editor['"]\s*;?\r?\n?/g, '');
+  next = stripCall(next, 'visualEditor');
+  next = next.replace(/,\s*,/g, ',');
+  next = next.replace(/\[\s*,/g, '[');
+  next = next.replace(/,\s*\]/g, ']');
+  return next.trim().length === 0 ? SEED_VITE_CONFIG : next;
 }
 
 export function applyStackContract(

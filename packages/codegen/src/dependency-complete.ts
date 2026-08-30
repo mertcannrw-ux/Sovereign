@@ -74,7 +74,7 @@ export function completePackageJson(
 
   const parsed = repairJson(raw);
   if (parsed === null || !isPlainObject(parsed)) {
-    return { json: stringifyJson(seedCompleted(options)), repaired: true, completed: true, seeded: true };
+    return { json: raw, repaired: false, completed: false, seeded: false };
   }
 
   const pkg: PackageJsonShape = { ...parsed };

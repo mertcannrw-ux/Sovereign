@@ -61,4 +61,15 @@ describe('completePackageJson', () => {
     const pkg = JSON.parse(result.json) as { dependencies: Record<string, string> };
     expect(pkg.dependencies['lucide-react']).toBe(stackLock.conditionalDependencies['lucide-react']);
   });
+
+  it('keeps irreparable package.json text instead of reseeding', () => {
+    const truncated = completePackageJson('{"name":"shop","dependencies":{"clsx":"2.1.1",');
+    expect(truncated.seeded).toBe(false);
+    expect(JSON.parse(truncated.json).dependencies.clsx).toBe('2.1.1');
+    const unrecoverable = 'not json at all { clsx: 2.1.1 }';
+    const kept = completePackageJson(unrecoverable);
+    expect(kept.json).toBe(unrecoverable);
+    expect(kept.seeded).toBe(false);
+    expect(kept.completed).toBe(false);
+  });
 });

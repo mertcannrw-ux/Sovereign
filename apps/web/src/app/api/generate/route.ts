@@ -1021,12 +1021,17 @@ export async function POST(request: NextRequest) {
           let autofixNote: string | null = null;
           if (pendingBatch.length > 0) {
             await flushPendingBatch();
-            const autofix = applyStackContract(files);
-            if (autofix.changes.length > 0) {
-              files.clear();
-              for (const [path, content] of autofix.files) files.set(path, content);
-              await persistAutofix(autofix.changes);
-              autofixNote = autofix.syntheticToolResult;
+            try {
+              const autofix = applyStackContract(files);
+              if (autofix.changes.length > 0) {
+                await persistAutofix(autofix.changes);
+                files.clear();
+                for (const [path, content] of autofix.files) files.set(path, content);
+                autofixNote = autofix.syntheticToolResult;
+              }
+            } catch (error) {
+              console.error('generate.autofix_skipped', error);
+              autofixNote = 'autofix skipped: contract checker failed after files were saved.';
             }
           }
           if (handledFilesystemMutation) {
@@ -1047,7 +1052,10 @@ export async function POST(request: NextRequest) {
                   content: toolResults[index] ?? toolResults.join('\n\n'),
                 });
               });
-              if (autofixNote) messages.push({ role: 'user', content: autofixNote });
+              if (autofixNote) {
+                const last = messages[messages.length - 1];
+                if (last?.role === 'tool') last.content = `${last.content}\n\n${autofixNote}`;
+              }
             } else {
               if (autofixNote) toolResults.push(autofixNote);
               messages.push({ role: 'user', content: toolResults.join('\n\n') });
