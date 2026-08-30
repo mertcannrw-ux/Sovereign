@@ -135,6 +135,7 @@ export default function ProjectWorkspace() {
 
   const initialFilesMemo = useMemo(() => filesQuery.data ?? [], [filesQuery.data]);
   const preview = usePreviewRuntime({
+    projectId,
     initialFiles: initialFilesMemo,
     enabled: status === 'authenticated' && filesQuery.isSuccess,
   });
@@ -181,6 +182,15 @@ export default function ProjectWorkspace() {
     if (!projectQuery.data) return;
     setProjectName(projectQuery.data.name);
   }, [projectQuery.data]);
+
+  const seenProjectIdRef = useRef(projectId);
+  useEffect(() => {
+    if (seenProjectIdRef.current === projectId) return;
+    seenProjectIdRef.current = projectId;
+    setInput('');
+    setSelectedPreviewElement(null);
+    setIsEditMode(false);
+  }, [projectId]);
 
   useEffect(() => {
     if (availableModels.length === 0) {
@@ -298,7 +308,7 @@ export default function ProjectWorkspace() {
               <TooltipTrigger asChild>
                 <Button
                   size="default"
-                  className="h-9 gap-2 rounded-lg px-4 text-xs font-semibold shadow-sm sm:text-sm"
+                  className="h-9 cursor-not-allowed gap-2 rounded-lg px-4 text-xs font-semibold opacity-45 shadow-sm sm:text-sm"
                   aria-disabled="true"
                   onClick={(event) => event.preventDefault()}
                 >

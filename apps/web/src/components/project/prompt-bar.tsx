@@ -97,6 +97,7 @@ export function PromptBar({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const listboxId = useId();
   const triggerId = useId();
+  const dialogId = useId();
 
   const filteredModels = useMemo(() => {
     if (!modelSearchQuery.trim()) return availableModels;
@@ -256,6 +257,7 @@ export function PromptBar({
       {showModelPopover && (
         <div
           ref={popoverRef}
+          id={dialogId}
           className="absolute bottom-full right-12 z-30 mb-3 w-80 overflow-hidden rounded-2xl border border-white/15 bg-[#1a1a1c] p-3 shadow-2xl backdrop-blur-xl"
           role="dialog"
           aria-label="Model and reasoning settings"
@@ -278,6 +280,7 @@ export function PromptBar({
                 type="button"
                 id={`${listboxId}-root-0`}
                 role="option"
+                tabIndex={-1}
                 aria-selected={activeOptionIndex === 0}
                 onClick={() => setActiveSubMenu('models')}
                 className={cn(
@@ -296,6 +299,7 @@ export function PromptBar({
                 type="button"
                 id={`${listboxId}-root-1`}
                 role="option"
+                tabIndex={-1}
                 aria-selected={activeOptionIndex === 1}
                 onClick={() => setActiveSubMenu('effort')}
                 className={cn(
@@ -333,14 +337,24 @@ export function PromptBar({
                   placeholder="Search models..."
                   value={modelSearchQuery}
                   onChange={(e) => setModelSearchQuery(e.target.value)}
-                  onKeyDown={(event) =>
-                    onListboxKeyDown(event, modelOptions.length, (index) => {
-                      const option = modelOptions[index];
-                      if (!option) return;
-                      onSelectModelKey(option.key);
-                      setActiveSubMenu('root');
-                    })
-                  }
+                  onKeyDown={(event) => {
+                    if (event.key === 'ArrowDown') {
+                      event.preventDefault();
+                      moveActiveOption(1, modelOptions.length);
+                      return;
+                    }
+                    if (event.key === 'ArrowUp') {
+                      event.preventDefault();
+                      moveActiveOption(-1, modelOptions.length);
+                      return;
+                    }
+                    if (event.key !== 'Enter') return;
+                    event.preventDefault();
+                    const option = modelOptions[activeOptionIndex];
+                    if (!option) return;
+                    onSelectModelKey(option.key);
+                    setActiveSubMenu('root');
+                  }}
                   className="h-9 w-full rounded-lg border border-white/20 bg-[#121214] px-3 pr-7 text-xs font-medium text-white placeholder:text-foreground-muted focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/40"
                   aria-controls={listboxId}
                   aria-autocomplete="list"
@@ -379,8 +393,16 @@ export function PromptBar({
               >
                 {filteredModels.length > 0 ? (
                   filteredModels.map((group) => (
-                    <div key={group.provider} className="space-y-0.5">
-                      <div className="px-2 text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">
+                    <div
+                      key={group.provider}
+                      role="group"
+                      aria-label={group.label}
+                      className="space-y-0.5"
+                    >
+                      <div
+                        className="px-2 text-[10px] font-semibold uppercase tracking-wider text-foreground-muted"
+                        aria-hidden="true"
+                      >
                         {group.label}
                       </div>
                       {group.models.map((model) => {
@@ -394,6 +416,7 @@ export function PromptBar({
                             type="button"
                             id={`${listboxId}-model-${optionIndex}`}
                             role="option"
+                            tabIndex={-1}
                             aria-selected={isSelected}
                             onClick={() => {
                               onSelectModelKey(key);
@@ -462,6 +485,7 @@ export function PromptBar({
                       type="button"
                       id={`${listboxId}-effort-${index}`}
                       role="option"
+                      tabIndex={-1}
                       aria-selected={isSelected}
                       onClick={() => {
                         onReasoningEffortChange(level.value);
@@ -580,9 +604,9 @@ export function PromptBar({
                 'flex items-center rounded-full bg-transparent px-3 py-1.5 text-xs transition-all hover:bg-white/[0.08]',
                 showModelPopover && 'bg-white/[0.10] ring-1 ring-white/15',
               )}
-              aria-haspopup="listbox"
+              aria-haspopup="dialog"
               aria-expanded={showModelPopover}
-              aria-controls={listboxId}
+              aria-controls={dialogId}
             >
               <span className="font-medium text-[#E5E5E5]">{selectedModel || 'Select Model'}</span>
               <span className="ml-2.5 font-normal text-[#9A9A9A]">

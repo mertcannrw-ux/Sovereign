@@ -165,6 +165,7 @@ export function useGeneration({
     useState<DesignDirectionsEventData | null>(null);
 
   const abortControllerRef = useRef<AbortController | null>(null);
+  const seenProjectIdRef = useRef(projectId);
   const previewRef = useRef(preview);
   previewRef.current = preview;
   const editTargetRef = useRef(editTarget);
@@ -183,15 +184,33 @@ export function useGeneration({
   onRestoreInputRef.current = onRestoreInput;
 
   useEffect(() => {
-    if (!history) return;
-    setLocalMessages(history.map(mapHistoryMessage));
+    if (seenProjectIdRef.current === projectId) return;
+    seenProjectIdRef.current = projectId;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    setIsSending(false);
+    setGenerationPhase(null);
+    setActiveFile(null);
+    setLiveThinking(null);
+    setLiveStepTitle(null);
+    setAgentLiveMessage('');
+    setLocalMessages([]);
+    setCurrentVersion(0);
+    setClarifyingQuestions([]);
+    setClarificationAnswers([]);
+    setClarificationStep(0);
+    setCustomClarificationAnswer('');
+    setIsCustomClarification(false);
+    setIsReviewingClarifications(false);
+    setActiveDesignDirections(null);
+  }, [projectId]);
+
+  useEffect(() => {
+    setLocalMessages((history ?? []).map(mapHistoryMessage));
   }, [history]);
 
   const stop = useCallback(() => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
+    abortControllerRef.current?.abort();
     setIsSending(false);
     setGenerationPhase(null);
     setLiveThinking(null);
@@ -412,15 +431,21 @@ export function useGeneration({
           },
         ]);
       } finally {
-        await runtime.flushPendingWrites();
-        setIsSending(false);
-        setGenerationPhase(null);
-        setLiveThinking(null);
-        setLiveStepTitle(null);
-        if (!abortController.signal.aborted) {
-          setAgentLiveMessage('Agent finished');
+        if (abortControllerRef.current === abortController) {
+          abortControllerRef.current = null;
+          setIsSending(false);
+          setGenerationPhase(null);
+          setLiveThinking(null);
+          setLiveStepTitle(null);
+          if (!abortController.signal.aborted) {
+            setAgentLiveMessage('Agent finished');
+          }
         }
-        abortControllerRef.current = null;
+        try {
+          await runtime.flushPendingWrites();
+        } catch {
+          // WC write failure must not leave send UI stuck or clobber a newer run.
+        }
       }
     },
     [isSending, selectedModel, selectedProvider, projectId, reasoningEffort],

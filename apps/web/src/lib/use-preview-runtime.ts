@@ -9,7 +9,6 @@ const PREVIEW_REFRESH_THROTTLE_MS = 500;
 
 export type { PreviewFile };
 
-/** PR 6 fills this in with the runtime-request waiter payload. */
 export interface RuntimeRequestPayload {
   type?: string;
   [key: string]: unknown;
@@ -18,6 +17,7 @@ export interface RuntimeRequestPayload {
 export interface UsePreviewRuntimeOptions {
   initialFiles: PreviewFile[];
   enabled?: boolean;
+  projectId?: string;
 }
 
 export interface UsePreviewRuntimeResult {
@@ -40,15 +40,15 @@ export interface UsePreviewRuntimeResult {
       operation?: FilePreviewEvent['operation'];
     },
   ) => void;
-  /** Today's behavior: no WC write. PR 6 applies this unthrottled. */
+  /** No-op until runtime apply/overlay exists. */
   applyFileOperation: (event: FileOperationEvent) => void;
   applyFiles: (files: PreviewFile[]) => Promise<void>;
   applyImmediateWrite: (files: PreviewFile[]) => Promise<void>;
   setLiveFiles: (files: PreviewFile[]) => void;
   flushPendingWrites: () => Promise<void>;
-  /** PR 6: overlay HTML / WC `index.html` instrument. */
+  /** No-op until overlay injection exists. */
   applyOverlay: (payload?: unknown) => void;
-  /** PR 6: runtime-request handler (run tool waiter). */
+  /** No-op until runtime-request waiter exists. */
   handleRuntimeRequest: (payload: RuntimeRequestPayload) => Promise<void>;
 }
 
@@ -64,6 +64,7 @@ function sortPreviewFiles(files: PreviewFile[]): PreviewFile[] {
 export function usePreviewRuntime({
   initialFiles,
   enabled = true,
+  projectId,
 }: UsePreviewRuntimeOptions): UsePreviewRuntimeResult {
   const sandbox = useWebContainer(initialFiles, enabled);
   const filesRef = useRef(new Map<string, string>());
@@ -77,33 +78,54 @@ export function usePreviewRuntime({
   const writeChainRef = useRef(Promise.resolve());
   const sandboxRef = useRef(sandbox);
   sandboxRef.current = sandbox;
+  const projectIdRef = useRef(projectId);
 
   const bumpRevision = useCallback(() => {
     setFilesRevision((n) => n + 1);
   }, []);
 
+  if (projectId !== undefined && projectIdRef.current !== projectId) {
+    projectIdRef.current = projectId;
+    filesRef.current.clear();
+    pendingWritesRef.current = new Map();
+  }
+  if (filesRef.current.size === 0 && initialFiles.length > 0) {
+    for (const file of initialFiles) filesRef.current.set(file.path, file.content);
+  }
+
   const replaceMap = useCallback(
     (entries: PreviewFile[]) => {
-      const next = new Map<string, string>();
-      for (const file of entries) next.set(file.path, file.content);
-      filesRef.current = next;
+      filesRef.current.clear();
+      for (const file of entries) filesRef.current.set(file.path, file.content);
       bumpRevision();
     },
     [bumpRevision],
   );
 
-  const filesList = useMemo(() => {
-    const files =
-      filesRef.current.size > 0
-        ? Array.from(filesRef.current, ([path, content]) => ({ path, content }))
-        : initialFiles;
-    return sortPreviewFiles(files);
-  }, [filesRevision, initialFiles]);
+  const filesList = useMemo(
+    () => sortPreviewFiles(Array.from(filesRef.current, ([path, content]) => ({ path, content }))),
+    [filesRevision, initialFiles],
+  );
 
-  const enqueueWrite = useCallback((files: PreviewFile[]) => {
-    writeChainRef.current = writeChainRef.current.then(() => sandboxRef.current.writeFiles(files));
-    return writeChainRef.current;
+  const enqueueOp = useCallback((op: () => Promise<void>) => {
+    const next = writeChainRef.current.then(op, op);
+    writeChainRef.current = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
   }, []);
+
+  const enqueueWrite = useCallback(
+    (files: PreviewFile[]) => enqueueOp(() => sandboxRef.current.writeFiles(files)),
+    [enqueueOp],
+  );
+
+  const enqueueReplace = useCallback(
+    (previous: PreviewFile[], next: PreviewFile[]) =>
+      enqueueOp(() => sandboxRef.current.replaceFiles(previous, next)),
+    [enqueueOp],
+  );
 
   const flushPendingWrites = useCallback(async () => {
     if (throttleTimerRef.current !== null) {
@@ -127,13 +149,13 @@ export function usePreviewRuntime({
     const now = performance.now();
     const elapsed = now - lastSandboxWriteRef.current;
     if (elapsed >= FILE_PREVIEW_THROTTLE_MS) {
-      void flushPendingWrites();
+      void flushPendingWrites().catch(() => undefined);
       return;
     }
     if (throttleTimerRef.current === null) {
       throttleTimerRef.current = setTimeout(() => {
         throttleTimerRef.current = null;
-        void flushPendingWrites();
+        void flushPendingWrites().catch(() => undefined);
       }, FILE_PREVIEW_THROTTLE_MS - elapsed);
     }
   }, [flushPendingWrites]);
@@ -154,47 +176,47 @@ export function usePreviewRuntime({
   );
 
   const applyFileOperation = useCallback((_event: FileOperationEvent) => {
-    // PR 6: unthrottled WC write + overlay + filesRevision digest ACK.
+    // No-op until runtime apply/overlay exists.
   }, []);
 
   const applyOverlay = useCallback((_payload?: unknown) => {
-    // PR 6: inject overlay into the WebContainer preview document.
+    // No-op until overlay injection exists.
   }, []);
 
   const handleRuntimeRequest = useCallback(async (_payload: RuntimeRequestPayload) => {
-    // PR 6: runtime-request waiter (run tool). Empty until generate runtime lands.
+    // No-op until runtime-request waiter exists.
   }, []);
 
   const applyFiles = useCallback(
     async (files: PreviewFile[]) => {
       await flushPendingWrites();
       replaceMap(files);
-      await sandboxRef.current.writeFiles(files);
+      await enqueueWrite(files);
       lastPreviewRefreshRef.current = performance.now();
       setPreviewKey((key) => key + 1);
     },
-    [flushPendingWrites, replaceMap],
+    [enqueueWrite, flushPendingWrites, replaceMap],
   );
 
   const applyImmediateWrite = useCallback(
     async (files: PreviewFile[]) => {
       await flushPendingWrites();
-      await sandboxRef.current.writeFiles(files);
+      await enqueueWrite(files);
       lastPreviewRefreshRef.current = performance.now();
       setPreviewKey((key) => key + 1);
     },
-    [flushPendingWrites],
+    [enqueueWrite, flushPendingWrites],
   );
 
   const replaceFiles = useCallback(
     async (previous: PreviewFile[], next: PreviewFile[]) => {
       await flushPendingWrites();
       replaceMap(next);
-      await sandboxRef.current.replaceFiles(previous, next);
+      await enqueueReplace(previous, next);
       lastPreviewRefreshRef.current = performance.now();
       setPreviewKey((key) => key + 1);
     },
-    [flushPendingWrites, replaceMap],
+    [enqueueReplace, flushPendingWrites, replaceMap],
   );
 
   const setLiveFiles = useCallback(
@@ -207,6 +229,21 @@ export function usePreviewRuntime({
   const refreshPreview = useCallback(() => {
     setPreviewKey((key) => key + 1);
   }, []);
+
+  const didMountProjectRef = useRef(false);
+  useEffect(() => {
+    if (!didMountProjectRef.current) {
+      didMountProjectRef.current = true;
+      return;
+    }
+    if (throttleTimerRef.current !== null) {
+      clearTimeout(throttleTimerRef.current);
+      throttleTimerRef.current = null;
+    }
+    lastSandboxWriteRef.current = 0;
+    lastPreviewRefreshRef.current = 0;
+    setPreviewKey(0);
+  }, [projectId]);
 
   useEffect(() => {
     return () => {
@@ -226,7 +263,7 @@ export function usePreviewRuntime({
     filesList,
     filesRevision,
     previewKey,
-    writeFiles: sandbox.writeFiles,
+    writeFiles: enqueueWrite,
     replaceFiles,
     triggerRefresh: sandbox.triggerRefresh,
     refreshPreview,
