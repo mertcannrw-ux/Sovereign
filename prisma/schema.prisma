@@ -951,10 +951,9 @@ model GenerationToolTrace {
   runId         String    @map("run_id")
   toolCallId    String    @map("tool_call_id")
   name          String
-  /// FS tools store { path, contentSha256 } only — never file bodies.
   arguments     Json?
   result        Json?
-  status        String    // pending | complete | failed | timeout
+  status        String
   requestId     String?   @map("request_id")
   command       String?
   timeoutMs     Int?      @map("timeout_ms")
@@ -967,7 +966,7 @@ model GenerationToolTrace {
 
   @@index([runId, createdAt])
   @@index([requestId])
-  @@index([createdAt]) // prune job later (30d)
+  @@index([createdAt])
   @@map("generation_tool_traces")
 }
 
@@ -993,7 +992,7 @@ model VerifyReport {
   projectId    String             @map("project_id")
   status       VerifyReportStatus
   reason       String?
-  channels     Json               // { tsc, eslint, a11y, vite, runtime, build, htmlContract }
+  channels     Json
   rawLogsR2Key String?            @map("raw_logs_r2_key")
   createdAt    DateTime           @default(now()) @map("created_at")
   updatedAt    DateTime           @updatedAt @map("updated_at")
