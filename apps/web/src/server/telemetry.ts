@@ -47,6 +47,8 @@ const REDACTED_FIELDS = new Set([
   'refresh_token',
   'encrypted_token',
   'encryptedToken',
+  'encrypted_key',
+  'encryptedKey',
   'token_iv',
   'tokenIv',
   'token_auth_tag',

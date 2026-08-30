@@ -99,6 +99,7 @@ export async function createVersion(
   projectId: string,
   sourceMessageId: string | null,
   files: VersionDiffEntry[],
+  options?: { message?: string },
 ): Promise<{ id: string; versionNumber: number }> {
   const manifest = files.map((f) => ({
     file: f.file,
@@ -128,6 +129,7 @@ export async function createVersion(
       sourceMessageId,
       versionNumber,
       manifest,
+      ...(options?.message !== undefined ? { message: options.message } : {}),
     },
   });
 
