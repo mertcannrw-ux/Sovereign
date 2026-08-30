@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { getServerSession } from 'next-auth';
 import { NextRequest } from 'next/server';
 import { getProvider, generateImage, ProviderError } from '@app-builder/ai-gateway';
+import { applyStackContract, isForbiddenEnvPath, type StackContractChange } from '@app-builder/codegen';
 import { uploadProjectAsset } from '@/server/assets/project-assets';
 import { getR2ConfigStatus } from '@/server/assets/r2';
 import { AIProvider } from '@app-builder/shared';
@@ -425,6 +426,40 @@ export async function POST(request: NextRequest) {
           activeProvisionalOriginals.delete(change.file);
         }
       };
+      const persistAutofix = async (changes: StackContractChange[]) => {
+        if (changes.length === 0) return;
+        const versionDiffs: VersionDiffEntry[] = changes.map((ch) => ({
+          file: ch.path,
+          operation: ch.operation,
+          ...(ch.before !== undefined ? { before: ch.before } : {}),
+          ...(ch.content !== undefined ? { after: ch.content } : {}),
+        }));
+        const version = await db.$transaction(async (tx) => {
+          for (const ch of changes) {
+            if (ch.operation === 'delete') {
+              await tx.projectFile.deleteMany({ where: { projectId, path: ch.path } });
+            } else {
+              const content = ch.content ?? '';
+              const contentHash = createHash('sha256').update(content).digest('hex');
+              await tx.projectFile.upsert({
+                where: { projectId_path: { projectId, path: ch.path } },
+                create: { projectId, path: ch.path, content, contentHash },
+                update: { content, contentHash },
+              });
+            }
+          }
+          return createVersion(tx, projectId, null, versionDiffs, { message: 'autofix' });
+        });
+        latestVersion = version.versionNumber;
+        for (const ch of changes) {
+          send('file-operation', {
+            operation: ch.operation,
+            path: ch.path,
+            ...(ch.content !== undefined ? { content: ch.content } : {}),
+            versionNumber: latestVersion,
+          });
+        }
+      };
       try {
         send('phase', { phase: 'planning', label: 'Starting agent' });
         for (let iteration = 0; iteration < MAX_ITERATIONS; iteration += 1) {
@@ -697,6 +732,10 @@ export async function POST(request: NextRequest) {
             }
             if (currentAction.type === 'write_file') {
               handledFilesystemAction = true;
+              if (isForbiddenEnvPath(currentAction.path)) {
+                toolResults.push(`write_file error: refused to write ${currentAction.path}. Use .env.example with VITE_* keys only.`);
+                continue;
+              }
               handledFilesystemMutation = true;
               const existed = files.has(currentAction.path);
               const before = files.get(currentAction.path);
@@ -709,6 +748,10 @@ export async function POST(request: NextRequest) {
             }
             if (currentAction.type === 'edit_file') {
               handledFilesystemAction = true;
+              if (isForbiddenEnvPath(currentAction.path)) {
+                toolResults.push(`edit_file error: refused to write ${currentAction.path}. Use .env.example with VITE_* keys only.`);
+                continue;
+              }
               handledFilesystemMutation = true;
               const before = files.get(currentAction.path);
               if (before === undefined) {
@@ -989,7 +1032,22 @@ export async function POST(request: NextRequest) {
             }
           }
           // F-10: commit all buffered file mutations of this turn together
-          if (pendingBatch.length > 0) await flushPendingBatch();
+          let autofixNote: string | null = null;
+          if (pendingBatch.length > 0) {
+            await flushPendingBatch();
+            try {
+              const autofix = applyStackContract(files);
+              if (autofix.changes.length > 0) {
+                await persistAutofix(autofix.changes);
+                files.clear();
+                for (const [path, content] of autofix.files) files.set(path, content);
+                autofixNote = autofix.syntheticToolResult;
+              }
+            } catch (error) {
+              console.error('generate.autofix_skipped', error);
+              autofixNote = 'autofix skipped: contract checker failed after files were saved.';
+            }
+          }
           if (handledFilesystemMutation) {
             consecutiveNoProgressIterations = 0;
           } else if (!askQuestionsAction && !respondAction && !finishAction) {
@@ -1008,7 +1066,12 @@ export async function POST(request: NextRequest) {
                   content: toolResults[index] ?? toolResults.join('\n\n'),
                 });
               });
+              if (autofixNote) {
+                const last = messages[messages.length - 1];
+                if (last?.role === 'tool') last.content = `${last.content}\n\n${autofixNote}`;
+              }
             } else {
+              if (autofixNote) toolResults.push(autofixNote);
               messages.push({ role: 'user', content: toolResults.join('\n\n') });
             }
             if (!askQuestionsAction && !respondAction && !finishAction) {
