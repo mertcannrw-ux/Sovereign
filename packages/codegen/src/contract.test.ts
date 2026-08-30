@@ -75,10 +75,10 @@ export default function App() {
       ]),
     );
     const app = result.files.get('src/App.tsx')!;
-    expect(app).toContain('House');
-    expect(app).toContain('Circle');
-    expect(app).not.toContain('HomeIcon');
-    expect(app).not.toContain('NopeIcon');
+    expect(app).toContain('House as HomeIcon');
+    expect(app).toContain('Circle as NopeIcon');
+    expect(app).toContain('<HomeIcon />');
+    expect(app).toContain('<NopeIcon />');
     const pkg = JSON.parse(result.files.get('package.json')!);
     expect(pkg.dependencies['lucide-react']).toBe(stackLock.conditionalDependencies['lucide-react']);
   });

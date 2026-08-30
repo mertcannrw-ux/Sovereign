@@ -111,24 +111,17 @@ function resolveKnown(name: string): string | null {
 export function rewriteLucideSource(source: string): { source: string; changed: boolean } {
   if (!fileImportsLucide(source)) return { source, changed: false };
 
-  const jsxRenames = new Map<string, string>();
-  let next = source.replace(LUCIDE_FROM_RE, (full, clause: string, quote: string) => {
-    const rewritten = rewriteImportClause(clause, jsxRenames);
+  const next = source.replace(LUCIDE_FROM_RE, (full, clause: string, quote: string) => {
+    const rewritten = rewriteImportClause(clause);
     const endedWithSemi = /;\s*$/.test(full);
     const keyword = /^\s*import\s+type\s+/.test(full) ? 'import type' : 'import';
     return `${keyword} ${rewritten} from ${quote}lucide-react${quote}${endedWithSemi ? ';' : ''}`;
   });
 
-  for (const [from, to] of jsxRenames) {
-    if (from === to) continue;
-    const pattern = new RegExp(`(<\\/?)${escapeRegExp(from)}(?=[\\s>/])`, 'g');
-    next = next.replace(pattern, `$1${to}`);
-  }
-
   return { source: next, changed: next !== source };
 }
 
-function rewriteImportClause(clause: string, jsxRenames: Map<string, string>): string {
+function rewriteImportClause(clause: string): string {
   const trimmed = clause.trim();
   const namedMatch = trimmed.match(/^(?:(\w+)\s*,\s*)?\{([^}]*)\}(?:\s*,\s*(\w+))?$/);
   const namespaceMatch = trimmed.match(/^(?:(\w+)\s*,\s*)?\*\s+as\s+(\w+)$/);
@@ -144,13 +137,9 @@ function rewriteImportClause(clause: string, jsxRenames: Map<string, string>): s
         ? spec.imported
         : resolveLucideExport(spec.imported);
       const rendered = formatSpecifier(spec, resolved);
-      const key = rendered;
-      if (!used.has(key)) {
+      if (!used.has(rendered)) {
         nextNamed.push(rendered);
-        used.add(key);
-      }
-      if (!spec.isType && spec.local === spec.imported && resolved !== spec.imported) {
-        jsxRenames.set(spec.local, resolved);
+        used.add(rendered);
       }
     }
     if (defaultName) {
@@ -175,9 +164,7 @@ function rewriteImportClause(clause: string, jsxRenames: Map<string, string>): s
 
 function formatSpecifier(spec: NamedSpecifier, resolved: string): string {
   const typePrefix = spec.isType ? 'type ' : '';
-  if (spec.local === spec.imported) {
-    return `${typePrefix}${resolved}`;
-  }
+  if (resolved === spec.local) return `${typePrefix}${resolved}`;
   return `${typePrefix}${resolved} as ${spec.local}`;
 }
 
@@ -203,10 +190,6 @@ function parseNamedSpecifiers(inner: string): NamedSpecifier[] {
     if (ident) specifiers.push({ imported: ident[1]!, local: ident[1]!, isType: false });
   }
   return specifiers;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export { FALLBACK_EXPORT };

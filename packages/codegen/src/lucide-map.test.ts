@@ -45,7 +45,7 @@ describe('resolveLucideExport', () => {
 });
 
 describe('rewriteLucideSource', () => {
-  it('rewrites invalid named imports and matching JSX tags', () => {
+  it('aliases remapped exports so local JSX and value uses stay valid', () => {
     const source = `import { HomeIcon, MagnifyingGlassIcon, GhostWidget } from 'lucide-react';
 
 export function Header() {
@@ -60,12 +60,32 @@ export function Header() {
 `;
     const result = rewriteLucideSource(source);
     expect(result.changed).toBe(true);
-    expect(result.source).toContain("import { House, Search, Circle } from 'lucide-react'");
-    expect(result.source).toContain('<House />');
-    expect(result.source).toContain('<Search />');
-    expect(result.source).toContain('<Circle />');
-    expect(result.source).not.toContain('HomeIcon');
-    expect(result.source).not.toContain('GhostWidget');
+    expect(result.source).toContain(
+      "import { House as HomeIcon, Search as MagnifyingGlassIcon, Circle as GhostWidget } from 'lucide-react'",
+    );
+    expect(result.source).toContain('<HomeIcon />');
+    expect(result.source).toContain('<MagnifyingGlassIcon />');
+    expect(result.source).toContain('<GhostWidget />');
+  });
+
+  it('keeps 0.487 alias locals for non-JSX value uses like nav icon maps', () => {
+    const source = `import { Home, Search, Edit, Filter, HelpCircle, Loader2 } from 'lucide-react';
+const NAV = [{ href: '/', icon: Home }, { href: '/search', icon: Search }];
+export const App = () => <Home />;
+export const Spinner = () => <Loader2 />;
+export const Toolbar = () => <><Edit /><Filter /><HelpCircle /></>;
+`;
+    const result = rewriteLucideSource(source);
+    expect(result.source).toContain(
+      "import { House as Home, Search, SquarePen as Edit, Funnel as Filter, CircleHelp as HelpCircle, LoaderCircle as Loader2 } from 'lucide-react'",
+    );
+    expect(result.source).toContain('icon: Home');
+    expect(result.source).toContain('icon: Search');
+    expect(result.source).toContain('<Home />');
+    expect(result.source).toContain('<Loader2 />');
+    expect(result.source).toContain('<Edit />');
+    expect(result.source).toContain('<Filter />');
+    expect(result.source).toContain('<HelpCircle />');
   });
 
   it('does not rewrite real 0.487 exports to Circle or smash object keys', () => {
