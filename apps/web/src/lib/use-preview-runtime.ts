@@ -3,6 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useWebContainer, type PreviewFile } from '@/lib/use-webcontainer';
 import type { FileOperationEvent, FilePreviewEvent } from '@/lib/generation-stream';
+import {
+  isSovereignOverlayPath,
+  isVitePreviewEnabled,
+  overlayPreviewFiles,
+  type PreviewEngine,
+} from '@/lib/preview-startup';
 
 const FILE_PREVIEW_THROTTLE_MS = 120;
 const PREVIEW_REFRESH_THROTTLE_MS = 500;
@@ -25,6 +31,8 @@ export interface UsePreviewRuntimeResult {
   url: string | null;
   logs: string[];
   error: string | null;
+  engine: PreviewEngine;
+  disclosure: string | null;
   /** Mutable path → content store. Re-read when `filesRevision` changes. */
   files: Map<string, string>;
   filesList: PreviewFile[];
@@ -90,13 +98,19 @@ export function usePreviewRuntime({
     pendingWritesRef.current = new Map();
   }
   if (filesRef.current.size === 0 && initialFiles.length > 0) {
-    for (const file of initialFiles) filesRef.current.set(file.path, file.content);
+    for (const file of initialFiles) {
+      if (isSovereignOverlayPath(file.path)) continue;
+      filesRef.current.set(file.path, file.content);
+    }
   }
 
   const replaceMap = useCallback(
     (entries: PreviewFile[]) => {
       filesRef.current.clear();
-      for (const file of entries) filesRef.current.set(file.path, file.content);
+      for (const file of entries) {
+        if (isSovereignOverlayPath(file.path)) continue;
+        filesRef.current.set(file.path, file.content);
+      }
       bumpRevision();
     },
     [bumpRevision],
@@ -116,15 +130,25 @@ export function usePreviewRuntime({
     return next;
   }, []);
 
+  const toWcFiles = useCallback((files: PreviewFile[]) => {
+    const projectFiles = files.filter((file) => !isSovereignOverlayPath(file.path));
+    return overlayPreviewFiles(projectFiles, isVitePreviewEnabled());
+  }, []);
+
   const enqueueWrite = useCallback(
-    (files: PreviewFile[]) => enqueueOp(() => sandboxRef.current.writeFiles(files)),
-    [enqueueOp],
+    (files: PreviewFile[]) => enqueueOp(() => sandboxRef.current.writeFiles(toWcFiles(files))),
+    [enqueueOp, toWcFiles],
   );
 
   const enqueueReplace = useCallback(
     (previous: PreviewFile[], next: PreviewFile[]) =>
-      enqueueOp(() => sandboxRef.current.replaceFiles(previous, next)),
-    [enqueueOp],
+      enqueueOp(() =>
+        sandboxRef.current.replaceFiles(
+          previous.filter((file) => !isSovereignOverlayPath(file.path)),
+          toWcFiles(next),
+        ),
+      ),
+    [enqueueOp, toWcFiles],
   );
 
   const flushPendingWrites = useCallback(async () => {
@@ -167,6 +191,7 @@ export function usePreviewRuntime({
       },
     ) => {
       if (event.operation === 'delete' || event.content === undefined) return;
+      if (isSovereignOverlayPath(event.path)) return;
       filesRef.current.set(event.path, event.content);
       bumpRevision();
       pendingWritesRef.current.set(event.path, event.content);
@@ -259,6 +284,8 @@ export function usePreviewRuntime({
     url: sandbox.url,
     logs: sandbox.logs,
     error: sandbox.error,
+    engine: sandbox.engine,
+    disclosure: sandbox.disclosure,
     files: filesRef.current,
     filesList,
     filesRevision,

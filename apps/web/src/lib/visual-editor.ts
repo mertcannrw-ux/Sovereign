@@ -1,11 +1,19 @@
-const EDITOR_SCRIPT_PATH = '/__sovereign_edit.js';
-const EDITOR_SCRIPT_TAG = `<script src="${EDITOR_SCRIPT_PATH}"></script>`;
+const EDITOR_SCRIPT_PATH = '/.sovereign-edit.js';
+const AXE_SCRIPT_PATH = '/.sovereign/axe.js';
 
+function overlayScriptTag(src: string): string {
+  return `<script src="${src}"></script>`;
+}
+
+/** Patches the WC copy of index.html only — never persist the result as a ProjectFile. */
 export function instrumentPreviewHtml(content: string): string {
-  if (content.includes(EDITOR_SCRIPT_PATH)) return content;
+  let tags = '';
+  if (!content.includes(EDITOR_SCRIPT_PATH)) tags += overlayScriptTag(EDITOR_SCRIPT_PATH);
+  if (!content.includes(AXE_SCRIPT_PATH)) tags += overlayScriptTag(AXE_SCRIPT_PATH);
+  if (!tags) return content;
   const bodyClose = content.match(/<\/body\s*>/i);
-  if (!bodyClose || bodyClose.index === undefined) return `${content}${EDITOR_SCRIPT_TAG}`;
-  return `${content.slice(0, bodyClose.index)}${EDITOR_SCRIPT_TAG}${content.slice(bodyClose.index)}`;
+  if (!bodyClose || bodyClose.index === undefined) return `${content}${tags}`;
+  return `${content.slice(0, bodyClose.index)}${tags}${content.slice(bodyClose.index)}`;
 }
 
 function visualEditorRuntime() {
@@ -234,5 +242,51 @@ function visualEditorRuntime() {
   window.parent.postMessage({ source: MESSAGE_SOURCE, type: 'ready' }, getParentOrigin());
 }
 
+function axeRuntime() {
+  const MESSAGE_SOURCE = 'sovereign-a11y';
+  const getParentOrigin = () => {
+    try {
+      const origin = window.parent.location.origin;
+      return origin && origin !== 'null' ? origin : '*';
+    } catch {
+      return '*';
+    }
+  };
+
+  function report(violations: unknown[]) {
+    window.parent.postMessage(
+      { source: MESSAGE_SOURCE, type: 'violations', violations: violations.slice(0, 25) },
+      getParentOrigin(),
+    );
+  }
+
+  function run() {
+    const axe = (
+      window as Window & {
+        axe?: { run: (context: unknown, options: unknown, callback: (error: unknown, results: { violations?: unknown[] }) => void) => void };
+      }
+    ).axe;
+    if (!axe || typeof axe.run !== 'function') {
+      report([]);
+      return;
+    }
+    void axe.run(document, { resultTypes: ['violations'] }, (_error: unknown, results: { violations?: unknown[] }) => {
+      report(results?.violations ?? []);
+    });
+  }
+
+  function schedule() {
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(run, { timeout: 1500 });
+    } else {
+      setTimeout(run, 1500);
+    }
+  }
+
+  if (document.readyState === 'complete') schedule();
+  else window.addEventListener('load', schedule);
+}
+
 export const VISUAL_EDITOR_SCRIPT = `;(${visualEditorRuntime.toString()})();`;
-export { EDITOR_SCRIPT_PATH };
+export const AXE_RUNTIME_SCRIPT = `;(${axeRuntime.toString()})();`;
+export { EDITOR_SCRIPT_PATH, AXE_SCRIPT_PATH };

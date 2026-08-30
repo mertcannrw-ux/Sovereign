@@ -479,6 +479,8 @@ export default function ProjectWorkspace() {
               status={preview.status}
               logs={preview.logs}
               error={preview.error}
+              engine={preview.engine}
+              disclosure={preview.disclosure}
               previewKey={preview.previewKey}
               isEditMode={isEditMode}
               isSending={generation.isSending}

@@ -2,9 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { cn } from '@app-builder/ui/utils';
-import { AlertCircle, Loader2, MousePointer2 } from 'lucide-react';
+import { AlertCircle, Loader2, MousePointer2, X } from 'lucide-react';
 import type { PreviewCursorTarget } from '@/lib/use-smooth-cursor';
 import type { SelectedPreviewElement } from '@/components/project/types';
+import type { PreviewEngine } from '@/lib/preview-startup';
+
+const DISCLOSURE_DISMISSED_KEY = 'sovereign.previewJsDisclosure.dismissed';
 
 export const VISUAL_EDITOR_SOURCE = 'sovereign-visual-editor';
 
@@ -13,6 +16,8 @@ export interface PreviewPaneProps {
   status: 'idle' | 'booting' | 'installing' | 'starting' | 'ready' | 'error';
   logs: string[];
   error: string | null;
+  engine?: PreviewEngine;
+  disclosure?: string | null;
   previewKey: number;
   isEditMode: boolean;
   isSending: boolean;
@@ -27,6 +32,8 @@ export function PreviewPane({
   status,
   logs,
   error,
+  engine = 'static',
+  disclosure = null,
   previewKey,
   isEditMode,
   isSending,
@@ -35,6 +42,14 @@ export function PreviewPane({
   onSelectedElementChange,
   onElementSelected,
 }: PreviewPaneProps) {
+  const [disclosureDismissed, setDisclosureDismissed] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      return window.sessionStorage.getItem(DISCLOSURE_DISMISSED_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
   const [visiblePreviewSlot, setVisiblePreviewSlot] = useState<0 | 1>(0);
   const [previewSlotRevisions, setPreviewSlotRevisions] = useState<[number | null, number | null]>([
     0,
@@ -163,6 +178,37 @@ export function PreviewPane({
           </div>
         </div>
       )}
+      {error && url ? (
+        <div
+          role="alert"
+          className="absolute left-3 right-3 top-3 z-20 rounded-lg border border-warning/40 bg-[#141414]/95 px-3 py-2 text-xs text-warning shadow-xl backdrop-blur"
+        >
+          {error}
+        </div>
+      ) : null}
+      {engine === 'vite' && disclosure && !disclosureDismissed && url ? (
+        <div
+          role="status"
+          className="absolute bottom-3 left-3 right-3 z-20 flex items-start gap-2 rounded-lg border border-primary/30 bg-[#141414]/95 px-3 py-2 text-xs text-foreground-secondary shadow-xl backdrop-blur"
+        >
+          <p className="flex-1 leading-relaxed">{disclosure}</p>
+          <button
+            type="button"
+            className="shrink-0 rounded-md p-0.5 text-foreground-muted hover:text-foreground"
+            aria-label="Dismiss preview warning"
+            onClick={() => {
+              setDisclosureDismissed(true);
+              try {
+                window.sessionStorage.setItem(DISCLOSURE_DISMISSED_KEY, '1');
+              } catch {
+                // Private mode can block sessionStorage.
+              }
+            }}
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ) : null}
       {isEditMode && !selectedPreviewElement && url && (
         <div className="pointer-events-none absolute left-1/2 top-3 z-20 -translate-x-1/2 rounded-full border border-primary/40 bg-[#141414]/95 px-3 py-1.5 text-xs font-medium text-white shadow-xl backdrop-blur">
           Click an element to target it
