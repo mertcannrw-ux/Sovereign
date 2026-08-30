@@ -1,5 +1,8 @@
-const EDITOR_SCRIPT_PATH = '/.sovereign-edit.js';
-const AXE_SCRIPT_PATH = '/.sovereign/axe.js';
+const EDITOR_SCRIPT_PATH = '/__sovereign_edit.js';
+const AXE_SCRIPT_PATH = '/__sovereign_axe.js';
+export const A11Y_MESSAGE_SOURCE = 'sovereign-a11y';
+export const A11Y_MAX_ISSUES = 25;
+export const A11Y_MAX_CHARS = 4000;
 
 function overlayScriptTag(src: string): string {
   return `<script src="${src}"></script>`;
@@ -242,6 +245,13 @@ function visualEditorRuntime() {
   window.parent.postMessage({ source: MESSAGE_SOURCE, type: 'ready' }, getParentOrigin());
 }
 
+export function capA11yViolations(violations: unknown[]): { violations: unknown[]; serialized: string } {
+  const capped = violations.slice(0, A11Y_MAX_ISSUES);
+  let serialized = JSON.stringify(capped);
+  if (serialized.length > A11Y_MAX_CHARS) serialized = serialized.slice(0, A11Y_MAX_CHARS);
+  return { violations: capped, serialized };
+}
+
 function axeRuntime() {
   const MESSAGE_SOURCE = 'sovereign-a11y';
   const getParentOrigin = () => {
@@ -253,11 +263,8 @@ function axeRuntime() {
     }
   };
 
-  function report(violations: unknown[]) {
-    window.parent.postMessage(
-      { source: MESSAGE_SOURCE, type: 'violations', violations: violations.slice(0, 25) },
-      getParentOrigin(),
-    );
+  function report(payload: Record<string, unknown>) {
+    window.parent.postMessage({ source: MESSAGE_SOURCE, ...payload }, getParentOrigin());
   }
 
   function run() {
@@ -266,12 +273,17 @@ function axeRuntime() {
         axe?: { run: (context: unknown, options: unknown, callback: (error: unknown, results: { violations?: unknown[] }) => void) => void };
       }
     ).axe;
+    // Full axe-core min is not vendored here (bundle size). This collector is a real
+    // served file; it only reports violations when window.axe is actually present.
     if (!axe || typeof axe.run !== 'function') {
-      report([]);
+      report({
+        type: 'skipped',
+        reason: 'axe-core is not vendored in this preview overlay',
+      });
       return;
     }
     void axe.run(document, { resultTypes: ['violations'] }, (_error: unknown, results: { violations?: unknown[] }) => {
-      report(results?.violations ?? []);
+      report({ type: 'violations', violations: (results?.violations ?? []).slice(0, 25) });
     });
   }
 

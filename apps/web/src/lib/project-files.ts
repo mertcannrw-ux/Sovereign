@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Prisma, PrismaClient } from '@prisma-generated/prisma/client';
 import type { GeneratedFile } from '@/lib/generation-protocol';
+import { isSovereignOverlayPath } from '@/lib/preview-startup';
 
 export type DbClient = PrismaClient | Prisma.TransactionClient;
 
@@ -10,6 +11,7 @@ export async function persistProjectFiles(
   files: GeneratedFile[],
 ): Promise<void> {
   for (const file of files) {
+    if (isSovereignOverlayPath(file.path)) continue;
     const contentHash = createHash('sha256').update(file.content).digest('hex');
     await db.projectFile.upsert({
       where: { projectId_path: { projectId, path: file.path } },

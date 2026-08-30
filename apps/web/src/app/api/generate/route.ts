@@ -19,6 +19,7 @@ import type { ToolCall } from '@app-builder/ai-gateway';
 import { trimMessagesForContext, type AgentMessage } from '@/lib/context-window';
 import { createVersion, type VersionDiffEntry } from '@/lib/versioning';
 import { checkRateLimit } from '@/server/rate-limit';
+import { isSovereignOverlayPath } from '@/lib/preview-startup';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -379,7 +380,20 @@ export async function POST(request: NextRequest) {
       const flushPendingBatch = async () => {
         if (pendingBatch.length === 0) return;
         const batch = pendingBatch.splice(0);
-        const changes = batch.map((b) => b.change);
+        const persistable = batch.filter((b) => !isSovereignOverlayPath(b.change.file));
+        if (persistable.length === 0) {
+          const completedAt = new Date();
+          for (const { step } of batch) {
+            emitStep({
+              ...step,
+              status: 'complete',
+              completedAt: completedAt.toISOString(),
+              durationMs: completedAt.getTime() - new Date(step.startedAt).getTime(),
+            });
+          }
+          return;
+        }
+        const changes = persistable.map((b) => b.change);
         const version = await db.$transaction(async (tx) => {
           for (const ch of changes) {
             if (ch.operation === 'delete') {
@@ -401,7 +415,7 @@ export async function POST(request: NextRequest) {
         for (const { step } of batch) {
           emitStep({ ...step, status: 'complete', completedAt: completedAt.toISOString(), durationMs: completedAt.getTime() - new Date(step.startedAt).getTime() });
         }
-        for (const { change } of batch) {
+        for (const { change } of persistable) {
           send('file-operation', {
             operation: change.operation,
             path: change.file,

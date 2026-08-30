@@ -8,6 +8,7 @@ import {
   isVitePreviewEnabled,
   overlayPreviewFiles,
   PREVIEW_JS_DISCLOSURE,
+  scheduleViteReadyFallback,
   shouldBootVite,
   startPreviewProcess,
   subscribePreviewDiagnostics,
@@ -82,12 +83,23 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
     disclosure: null,
   });
   const serverRef = useRef<PreviewProcess | null>(null);
+  const pendingProcessRef = useRef<PreviewProcess | null>(null);
+  const cancelViteWatchRef = useRef<(() => void) | null>(null);
   const bootedRef = useRef(false);
   const writeQueueRef = useRef(Promise.resolve());
   const viteAttemptedRef = useRef(false);
   const engineRef = useRef<PreviewEngine>('static');
   const overlayEnabledRef = useRef(overlayEnabled);
   overlayEnabledRef.current = overlayEnabled;
+
+  const enqueue = useCallback((op: () => Promise<void>) => {
+    const next = writeQueueRef.current.then(op, op);
+    writeQueueRef.current = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  }, []);
 
   const appendLog = useCallback((line: string) => {
     setState((current) => ({ ...current, logs: [...current.logs.slice(-80), line] }));
@@ -115,8 +127,9 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
   }, []);
 
   const attachServer = useCallback((process: PreviewProcess, engine: PreviewEngine, fallbackError?: string) => {
-    killProcess(previousBootServer);
-    previousBootServer = process;
+    cancelViteWatchRef.current?.();
+    cancelViteWatchRef.current = null;
+    pendingProcessRef.current = process;
     serverRef.current = process;
     engineRef.current = engine;
     setState((current) => ({
@@ -128,7 +141,41 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
         ? `Vite preview failed: ${fallbackError}. Using the static file server instead.`
         : current.error,
     }));
-  }, []);
+    if (engine === 'vite') {
+      cancelViteWatchRef.current = scheduleViteReadyFallback(process, {
+        isCurrent: () => pendingProcessRef.current === process,
+        onLog: appendLog,
+        onFallback: () => {
+          void enqueue(async () => {
+            if (previousBootServer && previousBootServer !== process) {
+              pendingProcessRef.current = null;
+              engineRef.current = 'static';
+              setState((current) => ({
+                ...current,
+                engine: 'static',
+                error: 'Vite preview failed before it was ready. Keeping the static file server.',
+              }));
+              return;
+            }
+            const container = await getContainer();
+            const started = await startPreviewProcess(
+              { spawn: (command, args) => container.spawn(command, args) },
+              { mode: 'static', onLog: appendLog },
+            );
+            pendingProcessRef.current = started.process;
+            serverRef.current = started.process;
+            engineRef.current = 'static';
+            setState((current) => ({
+              ...current,
+              status: 'starting',
+              engine: 'static',
+              error: `Vite preview failed: process died before ready. Using the static file server instead.`,
+            }));
+          });
+        },
+      });
+    }
+  }, [appendLog, enqueue]);
 
   const bootPreview = useCallback(
     async (mode: PreviewEngine) => {
@@ -173,7 +220,7 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
   );
 
   const replaceFiles = useCallback((previousFiles: PreviewFile[], nextFiles: PreviewFile[]) => {
-    writeQueueRef.current = writeQueueRef.current.then(async () => {
+    return enqueue(async () => {
       const container = await getContainer();
       const nextPaths = new Set(nextFiles.map((file) => file.path));
       await Promise.all(
@@ -184,64 +231,83 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
       await writeFilesToContainer(nextFiles);
       await maybeSwitchToVite(nextFiles);
     });
-    return writeQueueRef.current;
-  }, [maybeSwitchToVite, writeFilesToContainer]);
+  }, [enqueue, maybeSwitchToVite, writeFilesToContainer]);
 
   const boot = useCallback(async () => {
     if (bootedRef.current) return;
     bootedRef.current = true;
 
-    killProcess(previousBootServer);
-    previousBootServer = null;
-
-    try {
-      setState((current) => ({ ...current, status: 'booting', error: null }));
-      const container = await getContainer();
-      container.on('server-ready', (_port, url) => {
-        setState((current) => ({ ...current, status: 'ready', url }));
-      });
-      diagnosticsLog = appendLog;
-      diagnosticsError = (message) => {
-        setState((current) => ({ ...current, status: 'error', error: message }));
-      };
-      if (!diagnosticsAttached) {
-        diagnosticsAttached = true;
-        subscribePreviewDiagnostics(container, (line) => diagnosticsLog(line), (message) => {
-          diagnosticsError(message);
+    await enqueue(async () => {
+      try {
+        setState((current) => ({ ...current, status: 'booting', error: null }));
+        const container = await getContainer();
+        container.on('server-ready', (_port, url) => {
+          const pending = pendingProcessRef.current;
+          if (pending && previousBootServer && previousBootServer !== pending) {
+            killProcess(previousBootServer);
+          }
+          if (pending) {
+            previousBootServer = pending;
+            serverRef.current = pending;
+            pendingProcessRef.current = null;
+          }
+          cancelViteWatchRef.current?.();
+          cancelViteWatchRef.current = null;
+          setState((current) => ({
+            ...current,
+            status: 'ready',
+            url,
+            engine: engineRef.current,
+            disclosure: engineRef.current === 'vite' ? PREVIEW_JS_DISCLOSURE : current.disclosure,
+          }));
         });
+        diagnosticsLog = appendLog;
+        diagnosticsError = (message) => {
+          setState((current) => ({ ...current, status: 'error', error: message }));
+        };
+        if (!diagnosticsAttached) {
+          diagnosticsAttached = true;
+          subscribePreviewDiagnostics(container, (line) => diagnosticsLog(line), (message) => {
+            diagnosticsError(message);
+          });
+        }
+
+        const seedFiles = initialFiles.some((file) => isIndexHtmlPath(file.path))
+          ? initialFiles
+          : [...initialFiles, { path: 'index.html', content: PLACEHOLDER_INDEX_HTML }];
+
+        await writeFilesToContainer(seedFiles);
+        await writeFilesToContainer(getPreviewOverlayFiles());
+
+        const mode: PreviewEngine = shouldBootVite(seedFiles) ? 'vite' : 'static';
+        if (mode === 'vite') viteAttemptedRef.current = true;
+        await bootPreview(mode);
+      } catch (error) {
+        setState((current) => ({
+          ...current,
+          status: 'error',
+          error: error instanceof Error ? error.message : 'Sandbox failed',
+        }));
       }
-
-      const seedFiles = initialFiles.some((file) => isIndexHtmlPath(file.path))
-        ? initialFiles
-        : [...initialFiles, { path: 'index.html', content: PLACEHOLDER_INDEX_HTML }];
-
-      await writeFilesToContainer(seedFiles);
-      await writeFilesToContainer(getPreviewOverlayFiles());
-
-      const mode: PreviewEngine = shouldBootVite(seedFiles) ? 'vite' : 'static';
-      if (mode === 'vite') viteAttemptedRef.current = true;
-      await bootPreview(mode);
-    } catch (error) {
-      setState((current) => ({
-        ...current,
-        status: 'error',
-        error: error instanceof Error ? error.message : 'Sandbox failed',
-      }));
-    }
-  }, [appendLog, bootPreview, initialFiles, writeFilesToContainer]);
+    });
+  }, [appendLog, bootPreview, enqueue, initialFiles, writeFilesToContainer]);
 
   const writeFilesAndMaybeVite = useCallback((files: PreviewFile[]) => {
-    writeQueueRef.current = writeQueueRef.current.then(async () => {
+    return enqueue(async () => {
       await writeFilesToContainer(files);
       await maybeSwitchToVite(files);
     });
-    return writeQueueRef.current;
-  }, [maybeSwitchToVite, writeFilesToContainer]);
+  }, [enqueue, maybeSwitchToVite, writeFilesToContainer]);
 
   useEffect(() => {
     return () => {
+      cancelViteWatchRef.current?.();
+      cancelViteWatchRef.current = null;
+      killProcess(pendingProcessRef.current);
+      pendingProcessRef.current = null;
       killProcess(serverRef.current);
       serverRef.current = null;
+      killProcess(previousBootServer);
       previousBootServer = null;
     };
   }, []);

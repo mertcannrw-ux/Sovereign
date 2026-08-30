@@ -7,6 +7,11 @@ const prismaGenerated = path.resolve(repoRoot, 'prisma/generated/prisma');
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  env: {
+    // RFC flag is SOVEREIGN_VITE_PREVIEW; Next only inlines NEXT_PUBLIC_* into client hooks.
+    NEXT_PUBLIC_SOVEREIGN_VITE_PREVIEW:
+      process.env.NEXT_PUBLIC_SOVEREIGN_VITE_PREVIEW || process.env.SOVEREIGN_VITE_PREVIEW || '',
+  },
   transpilePackages: [
     '@app-builder/ui',
     '@app-builder/shared',

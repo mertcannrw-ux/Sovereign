@@ -2,8 +2,10 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  A11Y_MESSAGE_SOURCE,
   AXE_RUNTIME_SCRIPT,
   AXE_SCRIPT_PATH,
+  capA11yViolations,
   EDITOR_SCRIPT_PATH,
   VISUAL_EDITOR_SCRIPT,
   instrumentPreviewHtml,
@@ -66,7 +68,7 @@ describe('visual editor', () => {
     postMessage.mockRestore();
   });
 
-  it('posts empty axe violations when axe-core is not loaded', () => {
+  it('posts skipped when axe-core is not loaded instead of fake empty violations', () => {
     vi.useFakeTimers();
     const idle = window.requestIdleCallback;
     // Force the timeout path so fake timers control scheduling.
@@ -77,11 +79,26 @@ describe('visual editor', () => {
     window.dispatchEvent(new Event('load'));
     vi.advanceTimersByTime(1500);
     expect(postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ source: 'sovereign-a11y', type: 'violations', violations: [] }),
+      expect.objectContaining({
+        source: A11Y_MESSAGE_SOURCE,
+        type: 'skipped',
+        reason: expect.stringContaining('axe-core is not vendored'),
+      }),
       window.location.origin,
+    );
+    expect(postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'violations', violations: [] }),
+      expect.anything(),
     );
     postMessage.mockRestore();
     if (idle) window.requestIdleCallback = idle;
     vi.useRealTimers();
+  });
+
+  it('caps a11y payloads at 25 issues and 4k chars', () => {
+    const many = Array.from({ length: 40 }, (_, i) => ({ id: `rule-${i}`, help: 'x'.repeat(300) }));
+    const capped = capA11yViolations(many);
+    expect(capped.violations).toHaveLength(25);
+    expect(capped.serialized.length).toBeLessThanOrEqual(4000);
   });
 });

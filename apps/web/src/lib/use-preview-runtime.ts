@@ -54,7 +54,7 @@ export interface UsePreviewRuntimeResult {
   applyImmediateWrite: (files: PreviewFile[]) => Promise<void>;
   setLiveFiles: (files: PreviewFile[]) => void;
   flushPendingWrites: () => Promise<void>;
-  /** No-op until overlay injection exists. */
+  /** Runtime-request overlay (PR 6). HTML/script overlay is applied via overlayPreviewFiles. */
   applyOverlay: (payload?: unknown) => void;
   /** No-op until runtime-request waiter exists. */
   handleRuntimeRequest: (payload: RuntimeRequestPayload) => Promise<void>;
@@ -205,7 +205,7 @@ export function usePreviewRuntime({
   }, []);
 
   const applyOverlay = useCallback((_payload?: unknown) => {
-    // No-op until overlay injection exists.
+    // HTML overlay is applied in overlayPreviewFiles / WC writes. This is the PR 6 runtime overlay.
   }, []);
 
   const handleRuntimeRequest = useCallback(async (_payload: RuntimeRequestPayload) => {

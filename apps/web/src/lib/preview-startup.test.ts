@@ -15,6 +15,7 @@ import {
   overlayPreviewFiles,
   PREVIEW_JS_DISCLOSURE,
   replacePreviewAssetUrls,
+  scheduleViteReadyFallback,
   shouldBootVite,
   startPreviewProcess,
   subscribePreviewDiagnostics,
@@ -115,21 +116,28 @@ describe('SOVEREIGN_VITE_PREVIEW flag', () => {
     expect(hasPackageJson([{ path: './package.json' }])).toBe(true);
   });
 
-  it('also accepts NEXT_PUBLIC_SOVEREIGN_VITE_PREVIEW', () => {
+  it('treats NEXT_PUBLIC_SOVEREIGN_VITE_PREVIEW as the client-visible flag', () => {
     expect(isVitePreviewEnabled({ NEXT_PUBLIC_SOVEREIGN_VITE_PREVIEW: '1' })).toBe(true);
+    expect(isVitePreviewEnabled({ SOVEREIGN_VITE_PREVIEW: '1' })).toBe(true);
   });
 });
 
 describe('preview overlay', () => {
-  it('writes WC-only overlay files and never uses ProjectFile-looking paths without .sovereign', () => {
+  it('writes WC-only overlay files at non-dot URLs Vite can serve', () => {
     const files = getPreviewOverlayFiles();
     expect(files.map((file) => file.path)).toEqual([
-      '.sovereign-edit.js',
-      '.sovereign/axe.js',
+      '__sovereign_edit.js',
+      'public/__sovereign_edit.js',
+      '__sovereign_axe.js',
+      'public/__sovereign_axe.js',
       '.sovereign-preview.mjs',
     ]);
     expect(files.every((file) => isSovereignOverlayPath(file.path))).toBe(true);
+    expect(isSovereignOverlayPath('src/App.tsx')).toBe(false);
     expect(PREVIEW_JS_DISCLOSURE).toContain('isolated iframe');
+    expect(files.find((file) => file.path.endsWith('__sovereign_axe.js'))?.content).toContain(
+      'axe-core is not vendored',
+    );
   });
 
   it('re-patches index.html with editor and axe tags without mutating other files', () => {
@@ -241,6 +249,57 @@ describe('startPreviewProcess', () => {
     expect(result.engine).toBe('static');
     expect(result.fallbackError).toMatch(/Vite exited with code 1/);
     expect(spawns.at(-1)).toEqual({ command: 'node', args: ['.sovereign-preview.mjs'] });
+  });
+});
+
+describe('scheduleViteReadyFallback', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('falls back when Vite exits before ready', async () => {
+    vi.useFakeTimers();
+    const process = mockProcess(Promise.resolve(1));
+    const onFallback = vi.fn();
+    scheduleViteReadyFallback(process, {
+      timeoutMs: 30_000,
+      isCurrent: () => true,
+      onLog: () => {},
+      onFallback,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onFallback).toHaveBeenCalledOnce();
+  });
+
+  it('falls back when Vite never becomes ready', async () => {
+    vi.useFakeTimers();
+    const process = mockProcess(new Promise(() => {}));
+    const onFallback = vi.fn();
+    scheduleViteReadyFallback(process, {
+      timeoutMs: 30_000,
+      isCurrent: () => true,
+      onLog: () => {},
+      onFallback,
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(onFallback).toHaveBeenCalledOnce();
+    expect(process.kill).toHaveBeenCalled();
+  });
+
+  it('does not fall back after cancel (server-ready)', async () => {
+    vi.useFakeTimers();
+    const process = mockProcess(new Promise(() => {}));
+    const onFallback = vi.fn();
+    const cancel = scheduleViteReadyFallback(process, {
+      timeoutMs: 30_000,
+      isCurrent: () => true,
+      onLog: () => {},
+      onFallback,
+    });
+    cancel();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(onFallback).not.toHaveBeenCalled();
   });
 });
 

@@ -6,6 +6,7 @@ import { AlertCircle, Loader2, MousePointer2, X } from 'lucide-react';
 import type { PreviewCursorTarget } from '@/lib/use-smooth-cursor';
 import type { SelectedPreviewElement } from '@/components/project/types';
 import type { PreviewEngine } from '@/lib/preview-startup';
+import { A11Y_MESSAGE_SOURCE, capA11yViolations } from '@/lib/visual-editor';
 
 const DISCLOSURE_DISMISSED_KEY = 'sovereign.previewJsDisclosure.dismissed';
 
@@ -57,6 +58,7 @@ export function PreviewPane({
   ]);
   const visiblePreviewSlotRef = useRef<0 | 1>(0);
   const previewFramesRef = useRef<Array<HTMLIFrameElement | null>>([]);
+  const [a11yReport, setA11yReport] = useState<{ type: string; detail: string } | null>(null);
 
   const setPreviewEditMode = useCallback(
     (enabled: boolean) => {
@@ -94,11 +96,29 @@ export function PreviewPane({
 
   useEffect(() => {
     const handlePreviewMessage = (event: MessageEvent) => {
-      if (!event.data || event.data.source !== VISUAL_EDITOR_SOURCE) return;
+      if (!event.data) return;
       const fromPreview = previewFramesRef.current.some(
         (frame) => frame?.contentWindow === event.source,
       );
       if (!fromPreview) return;
+
+      if (event.data.source === A11Y_MESSAGE_SOURCE) {
+        if (event.data.type === 'violations' && Array.isArray(event.data.violations)) {
+          const capped = capA11yViolations(event.data.violations);
+          setA11yReport({
+            type: 'violations',
+            detail: `${capped.violations.length} issues ${capped.serialized}`,
+          });
+        } else if (event.data.type === 'skipped') {
+          setA11yReport({
+            type: 'skipped',
+            detail: typeof event.data.reason === 'string' ? event.data.reason : 'axe skipped',
+          });
+        }
+        return;
+      }
+
+      if (event.data.source !== VISUAL_EDITOR_SOURCE) return;
 
       if (event.data.type === 'ready') {
         const replyOrigin =
@@ -173,11 +193,16 @@ export function PreviewPane({
               {error ?? 'Starting secure preview sandbox'}
             </p>
             <p className="mt-1 text-xs text-foreground-muted">
-              {logs.at(-1) ?? 'Booting browser-based Node.js runtime…'}
+              {a11yReport?.detail ?? logs.at(-1) ?? 'Booting browser-based Node.js runtime…'}
             </p>
           </div>
         </div>
       )}
+      {a11yReport ? (
+        <div role="status" className="sr-only">
+          Preview accessibility {a11yReport.type}: {a11yReport.detail}
+        </div>
+      ) : null}
       {error && url ? (
         <div
           role="alert"

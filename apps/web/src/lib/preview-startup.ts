@@ -80,6 +80,7 @@ export const PREVIEW_JS_DISCLOSURE =
   'Preview runs project JavaScript — including `npm` packages — on this machine, inside an isolated iframe. Do not open projects you do not trust.';
 
 export const NPM_INSTALL_TIMEOUT_MS = 60_000;
+export const VITE_READY_TIMEOUT_MS = 30_000;
 
 export const STATIC_PREVIEW_COMMAND = { command: 'node', args: ['.sovereign-preview.mjs'] } as const;
 export const VITE_INSTALL_COMMAND = { command: 'npm', args: ['install', '--ignore-scripts'] } as const;
@@ -105,14 +106,19 @@ export interface PreviewEventSource {
   ): unknown;
 }
 
-/** Flag defaults off. Only `'1'` enables Vite-in-WebContainer. */
+/**
+ * Flag defaults off. Only `'1'` enables Vite-in-WebContainer.
+ * `next.config.mjs` copies `SOVEREIGN_VITE_PREVIEW` onto `NEXT_PUBLIC_SOVEREIGN_VITE_PREVIEW`
+ * so the client bundle (WC hooks) sees the RFC flag. A server-only env var is not enough
+ * without that mapping.
+ */
 export function isVitePreviewEnabled(
   env: Record<string, string | undefined> = {
     SOVEREIGN_VITE_PREVIEW: process.env.SOVEREIGN_VITE_PREVIEW,
     NEXT_PUBLIC_SOVEREIGN_VITE_PREVIEW: process.env.NEXT_PUBLIC_SOVEREIGN_VITE_PREVIEW,
   },
 ): boolean {
-  return env.SOVEREIGN_VITE_PREVIEW === '1' || env.NEXT_PUBLIC_SOVEREIGN_VITE_PREVIEW === '1';
+  return env.NEXT_PUBLIC_SOVEREIGN_VITE_PREVIEW === '1' || env.SOVEREIGN_VITE_PREVIEW === '1';
 }
 
 export function hasPackageJson(files: { path: string }[]): boolean {
@@ -138,10 +144,15 @@ export function isIndexHtmlPath(path: string): boolean {
 export function isSovereignOverlayPath(path: string): boolean {
   const normalized = path.replace(/^\.?\//, '');
   return (
+    normalized === '__sovereign_edit.js' ||
+    normalized === '__sovereign_axe.js' ||
+    normalized === 'public/__sovereign_edit.js' ||
+    normalized === 'public/__sovereign_axe.js' ||
     normalized === '.sovereign-edit.js' ||
     normalized === '.sovereign-preview.mjs' ||
     normalized.startsWith('.sovereign/') ||
-    normalized.startsWith('public/.sovereign')
+    normalized.startsWith('public/.sovereign') ||
+    normalized.startsWith('public/__sovereign')
   );
 }
 
@@ -182,8 +193,8 @@ function startServer(port) {
         const ext = extname(fullPath).toLowerCase();
         const contentType = MIME[ext] ?? 'application/octet-stream';
           const html = body.toString('utf8');
-          const editScript = '<script src="/.sovereign-edit.js"></script>';
-          const instrumented = html.includes('/.sovereign-edit.js')
+          const editScript = '<script src="/__sovereign_edit.js"></script>';
+          const instrumented = html.includes('/__sovereign_edit.js')
             ? html
             : html.includes('</body>')
             ? html.replace('</body>', editScript + '</body>')
@@ -215,9 +226,15 @@ function startServer(port) {
 startServer(4173);`;
 
 export function getPreviewOverlayFiles(): PreviewSourceFile[] {
+  // Non-dot paths so Vite/sirv will serve them. Root copy is for the static
+  // fallback server; public/ copy is Vite's static asset root (`/__sovereign_*`).
+  // `__sovereign_axe.js` is a real collector file, not axe-core min (too large
+  // to vendor here). It reports `skipped` unless window.axe is present.
   return [
-    { path: '.sovereign-edit.js', content: VISUAL_EDITOR_SCRIPT },
-    { path: '.sovereign/axe.js', content: AXE_RUNTIME_SCRIPT },
+    { path: '__sovereign_edit.js', content: VISUAL_EDITOR_SCRIPT },
+    { path: 'public/__sovereign_edit.js', content: VISUAL_EDITOR_SCRIPT },
+    { path: '__sovereign_axe.js', content: AXE_RUNTIME_SCRIPT },
+    { path: 'public/__sovereign_axe.js', content: AXE_RUNTIME_SCRIPT },
     { path: '.sovereign-preview.mjs', content: STATIC_PREVIEW_SERVER_SOURCE },
   ];
 }
@@ -274,6 +291,54 @@ async function rejectIfAlreadyExited(process: PreviewProcess, label: string): Pr
   if (exitCode !== 'pending' && exitCode !== 0) {
     throw new Error(`${label} exited with code ${exitCode}`);
   }
+}
+
+/** Watch a spawned Vite process until it is promoted, dies, or times out. */
+export function scheduleViteReadyFallback(
+  process: PreviewProcess,
+  options: {
+    timeoutMs?: number;
+    isCurrent: () => boolean;
+    onLog: (line: string) => void;
+    onFallback: () => void;
+  },
+): () => void {
+  let settled = false;
+  const timeoutMs = options.timeoutMs ?? VITE_READY_TIMEOUT_MS;
+
+  const finish = (reason: string, kill: boolean) => {
+    if (settled || !options.isCurrent()) return;
+    settled = true;
+    clearTimeout(timer);
+    if (kill) {
+      try {
+        process.kill();
+      } catch {
+        // Already exited.
+      }
+    }
+    options.onLog(reason);
+    options.onFallback();
+  };
+
+  const timer = setTimeout(() => {
+    finish(
+      'Vite did not become ready in time. Falling back to the static file server.',
+      true,
+    );
+  }, timeoutMs);
+
+  void process.exit.then((code) => {
+    finish(
+      `Vite exited with code ${code} before preview was ready. Falling back to the static file server.`,
+      false,
+    );
+  });
+
+  return () => {
+    settled = true;
+    clearTimeout(timer);
+  };
 }
 
 export interface StartPreviewProcessResult {
