@@ -126,7 +126,49 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
     fetch(base + '/__sovereign_hmr/refresh', { method: 'POST', mode: 'cors' }).catch(() => {});
   }, []);
 
-  const attachServer = useCallback((process: PreviewProcess, engine: PreviewEngine, fallbackError?: string) => {
+  const restoreLiveStatic = useCallback((
+    failedProcess: PreviewProcess | null,
+    error: string,
+    liveCandidate?: PreviewProcess | null,
+  ) => {
+    const live =
+      (liveCandidate && liveCandidate !== failedProcess ? liveCandidate : null) ??
+      (previousBootServer && previousBootServer !== failedProcess ? previousBootServer : null);
+    if (!live) return false;
+    if (failedProcess && failedProcess !== live) killProcess(failedProcess);
+    cancelViteWatchRef.current?.();
+    cancelViteWatchRef.current = null;
+    pendingProcessRef.current = null;
+    serverRef.current = live;
+    engineRef.current = 'static';
+    setState((current) => ({
+      ...current,
+      status: 'ready',
+      engine: 'static',
+      error,
+    }));
+    return true;
+  }, []);
+
+  const attachServer = useCallback((
+    process: PreviewProcess,
+    engine: PreviewEngine,
+    fallbackError?: string,
+    reusedExisting?: boolean,
+  ) => {
+    const fallbackMessage = fallbackError
+      ? `Vite preview failed: ${fallbackError}. Using the static file server instead.`
+      : undefined;
+    if (
+      reusedExisting &&
+      restoreLiveStatic(
+        pendingProcessRef.current === process ? null : pendingProcessRef.current,
+        fallbackMessage ?? 'Vite preview failed. Keeping the static file server.',
+        process,
+      )
+    ) {
+      return;
+    }
     cancelViteWatchRef.current?.();
     cancelViteWatchRef.current = null;
     pendingProcessRef.current = process;
@@ -137,9 +179,7 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
       status: 'starting',
       engine,
       disclosure: engine === 'vite' ? PREVIEW_JS_DISCLOSURE : current.disclosure,
-      error: fallbackError
-        ? `Vite preview failed: ${fallbackError}. Using the static file server instead.`
-        : current.error,
+      error: fallbackMessage ?? current.error,
     }));
     if (engine === 'vite') {
       cancelViteWatchRef.current = scheduleViteReadyFallback(process, {
@@ -147,14 +187,12 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
         onLog: appendLog,
         onFallback: () => {
           void enqueue(async () => {
-            if (previousBootServer && previousBootServer !== process) {
-              pendingProcessRef.current = null;
-              engineRef.current = 'static';
-              setState((current) => ({
-                ...current,
-                engine: 'static',
-                error: 'Vite preview failed before it was ready. Keeping the static file server.',
-              }));
+            if (
+              restoreLiveStatic(
+                process,
+                'Vite preview failed before it was ready. Keeping the static file server.',
+              )
+            ) {
               return;
             }
             const container = await getContainer();
@@ -175,7 +213,7 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
         },
       });
     }
-  }, [appendLog, enqueue]);
+  }, [appendLog, enqueue, restoreLiveStatic]);
 
   const bootPreview = useCallback(
     async (mode: PreviewEngine) => {
@@ -185,14 +223,18 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
       } else {
         setState((current) => ({ ...current, status: 'starting' }));
       }
+      const liveStatic =
+        previousBootServer ??
+        (engineRef.current === 'static' ? (pendingProcessRef.current ?? serverRef.current) : null);
       const started = await startPreviewProcess(
         { spawn: (command, args) => container.spawn(command, args) },
         {
           mode,
           onLog: appendLog,
+          existingStatic: liveStatic,
         },
       );
-      attachServer(started.process, started.engine, started.fallbackError);
+      attachServer(started.process, started.engine, started.fallbackError, started.reusedExisting);
     },
     [appendLog, attachServer],
   );

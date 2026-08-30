@@ -250,6 +250,40 @@ describe('startPreviewProcess', () => {
     expect(result.fallbackError).toMatch(/Vite exited with code 1/);
     expect(spawns.at(-1)).toEqual({ command: 'node', args: ['.sovereign-preview.mjs'] });
   });
+
+  it('reuses the live static server when npm install fails instead of spawning a second one', async () => {
+    const existing = mockProcess();
+    const { host, spawns } = mockHost({ installExit: 1 });
+    const logs: string[] = [];
+    const result = await startPreviewProcess(host, {
+      mode: 'vite',
+      onLog: (line) => logs.push(line),
+      existingStatic: existing,
+    });
+
+    expect(result.engine).toBe('static');
+    expect(result.reusedExisting).toBe(true);
+    expect(result.process).toBe(existing);
+    expect(spawns).toEqual([{ command: 'npm', args: ['install', '--ignore-scripts'] }]);
+    expect(logs.at(-1)).toMatch(/Keeping the static file server/);
+  });
+
+  it('reuses the live static server when Vite spawn throws', async () => {
+    const existing = mockProcess();
+    const { host, spawns } = mockHost({ viteSpawnError: new Error('vite not found') });
+    const result = await startPreviewProcess(host, {
+      mode: 'vite',
+      onLog: () => {},
+      existingStatic: existing,
+    });
+
+    expect(result.process).toBe(existing);
+    expect(result.reusedExisting).toBe(true);
+    expect(spawns).toEqual([
+      { command: 'npm', args: ['install', '--ignore-scripts'] },
+      { command: 'npx', args: ['vite', '--host'] },
+    ]);
+  });
 });
 
 describe('scheduleViteReadyFallback', () => {

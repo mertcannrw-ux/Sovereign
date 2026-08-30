@@ -345,6 +345,8 @@ export interface StartPreviewProcessResult {
   process: PreviewProcess;
   engine: PreviewEngine;
   fallbackError?: string;
+  /** True when Vite failed and we reused a static server that was already serving. */
+  reusedExisting?: boolean;
 }
 
 async function startStaticPreview(
@@ -393,6 +395,8 @@ export async function startPreviewProcess(
     mode: PreviewEngine;
     onLog: (line: string) => void;
     installTimeoutMs?: number;
+    /** Live static server already serving — reuse instead of spawning a second one. */
+    existingStatic?: PreviewProcess | null;
   },
 ): Promise<StartPreviewProcessResult> {
   if (options.mode !== 'vite') {
@@ -408,6 +412,17 @@ export async function startPreviewProcess(
     return { process, engine: 'vite' };
   } catch (error) {
     const fallbackError = error instanceof Error ? error.message : 'Vite boot failed';
+    if (options.existingStatic) {
+      options.onLog(
+        `Vite preview failed: ${fallbackError}. Keeping the static file server.`,
+      );
+      return {
+        process: options.existingStatic,
+        engine: 'static',
+        fallbackError,
+        reusedExisting: true,
+      };
+    }
     options.onLog(
       `Vite preview failed: ${fallbackError}. Falling back to the static file server.`,
     );
