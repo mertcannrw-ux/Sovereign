@@ -1,5 +1,4 @@
 import { NextAuthOptions } from 'next-auth';
-import { PrismaAdapter } from '@auth/prisma-adapter';
 import GoogleProvider from 'next-auth/providers/google';
 import GitHubProvider from 'next-auth/providers/github';
 import CredentialsProvider from 'next-auth/providers/credentials';
@@ -8,49 +7,35 @@ import { isIP } from 'node:net';
 import { getDb } from './db';
 import { checkRateLimit, hashIp } from '@/server/rate-limit';
 
-/**
- * Resolve the caller's real IP for sign-in rate limiting. Only meaningful when
- * `TRUSTED_PROXY` is set; otherwise returns null so callers keep their existing
- * keying (per-email) instead of collapsing onto a single global bucket.
- */
-function trustedProxyClientIp(req: unknown): string | null {
-  if (process.env.TRUSTED_PROXY !== 'true') return null;
-  const headers = (req as { headers?: Headers })?.headers;
-  if (!headers || typeof headers.get !== 'function') return null;
-
-  const realIp = headers.get('x-real-ip')?.trim();
-  if (realIp && isIP(realIp)) return realIp;
-
-  const forwarded = headers.get('x-forwarded-for');
-  if (forwarded) {
-    const entries = forwarded
-      .split(',')
-      .map((entry) => entry.trim())
-      .filter(Boolean);
-    // Right-most entry is appended by our trusted proxy.
-    const last = entries[entries.length - 1];
-    if (last && isIP(last)) return last;
-  }
-  return null;
+export function oauthProvidersEnabled(): { google: boolean; github: boolean } {
+  return {
+    google: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+    github: Boolean(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET),
+  };
 }
-export const authOptions: NextAuthOptions = {
-  get adapter() { return PrismaAdapter(getDb() as unknown as Parameters<typeof PrismaAdapter>[0]) as NextAuthOptions['adapter']; },
-  session: {
-    strategy: 'jwt',
-    maxAge: 30 * 24 * 60 * 60, // 30 days
-  },
-  pages: {
-    signIn: '/auth/signin',
-  },
-  providers: [
-    GoogleProvider({
-      clientId: process.env.GOOGLE_CLIENT_ID || '',
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
-    }),
-    GitHubProvider({
-      clientId: process.env.GITHUB_CLIENT_ID || '',
-      clientSecret: process.env.GITHUB_CLIENT_SECRET || '',
-    }),
+
+function buildProviders(): NextAuthOptions['providers'] {
+  const enabled = oauthProvidersEnabled();
+  const providers: NextAuthOptions['providers'] = [];
+  if (enabled.google) {
+    providers.push(
+      GoogleProvider({
+        clientId: process.env.GOOGLE_CLIENT_ID!,
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+        allowDangerousEmailAccountLinking: true,
+      }),
+    );
+  }
+  if (enabled.github) {
+    providers.push(
+      GitHubProvider({
+        clientId: process.env.GITHUB_CLIENT_ID!,
+        clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+        allowDangerousEmailAccountLinking: true,
+      }),
+    );
+  }
+  providers.push(
     CredentialsProvider({
       id: 'credentials',
       name: 'Email & Password',
@@ -78,7 +63,6 @@ export const authOptions: NextAuthOptions = {
         });
 
         if (!user) return null;
-        // Password hash is stored directly on the User record
         if (!user.passwordHash) return null;
 
         const isValid = await bcrypt.compare(credentials.password, user.passwordHash);
@@ -92,8 +76,82 @@ export const authOptions: NextAuthOptions = {
         };
       },
     }),
-  ],
+  );
+  return providers;
+}
+
+/**
+ * Resolve the caller's real IP for sign-in rate limiting. Only meaningful when
+ * `TRUSTED_PROXY` is set; otherwise returns null so callers keep their existing
+ * keying (per-email) instead of collapsing onto a single global bucket.
+ */
+function trustedProxyClientIp(req: unknown): string | null {
+  if (process.env.TRUSTED_PROXY !== 'true') return null;
+  const headers = (req as { headers?: Headers })?.headers;
+  if (!headers || typeof headers.get !== 'function') return null;
+
+  const realIp = headers.get('x-real-ip')?.trim();
+  if (realIp && isIP(realIp)) return realIp;
+
+  const forwarded = headers.get('x-forwarded-for');
+  if (forwarded) {
+    const entries = forwarded
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    // Right-most entry is appended by our trusted proxy.
+    const last = entries[entries.length - 1];
+    if (last && isIP(last)) return last;
+  }
+  return null;
+}
+
+export const authOptions: NextAuthOptions = {
+  session: {
+    strategy: 'jwt',
+    maxAge: 30 * 24 * 60 * 60, // 30 days
+  },
+  pages: {
+    signIn: '/auth/signin',
+  },
+  providers: buildProviders(),
   callbacks: {
+    async signIn({ user, account }) {
+      if (!account || account.provider === 'credentials') return true;
+      const email = user.email?.trim().toLowerCase();
+      if (!email) return false;
+
+      const db = getDb();
+      const existing = await db.user.findFirst({
+        where: { email: { equals: email, mode: 'insensitive' } },
+      });
+      if (existing) {
+        user.id = existing.id;
+        user.email = existing.email;
+        if (user.name && user.name !== existing.name) {
+          await db.user.update({
+            where: { id: existing.id },
+            data: {
+              name: existing.name ?? user.name,
+              avatarUrl: existing.avatarUrl ?? user.image ?? undefined,
+            },
+          });
+        }
+        return true;
+      }
+
+      const created = await db.user.create({
+        data: {
+          email,
+          name: user.name ?? null,
+          avatarUrl: user.image ?? null,
+          emailVerified: true,
+        },
+      });
+      user.id = created.id;
+      user.email = created.email;
+      return true;
+    },
     async session({ session, token }) {
       if (session.user && token.sub) {
         session.user.id = token.sub;

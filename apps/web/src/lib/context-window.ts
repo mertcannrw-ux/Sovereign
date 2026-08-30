@@ -1,7 +1,15 @@
-export type AgentMessage = {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-};
+import type { GatewayMessage } from '@app-builder/ai-gateway';
+
+export type AgentMessage = GatewayMessage;
+
+function messageSize(message: AgentMessage): number {
+  if (message.role === 'tool') return message.content.length + message.toolCallId.length;
+  if (message.role === 'assistant') {
+    const tools = message.toolCalls ? JSON.stringify(message.toolCalls).length : 0;
+    return message.content.length + tools;
+  }
+  return message.content.length;
+}
 
 /**
  * Character budget for the serialized conversation sent to the provider.
@@ -25,18 +33,20 @@ export function trimMessagesForContext(
   const system = messages[0];
   if (!system || system.role !== 'system') return messages;
 
-  let remaining = Math.max(0, budget - system.content.length);
+  let remaining = Math.max(0, budget - messageSize(system));
   const newest = messages[messages.length - 1];
   if (!newest) return [system];
 
   const selected: AgentMessage[] = [newest];
-  remaining -= newest.content.length;
+  remaining -= messageSize(newest);
 
   for (let index = messages.length - 2; index >= 1; index -= 1) {
     const message = messages[index];
-    if (!message || message.content.length > remaining) continue;
+    if (!message) continue;
+    const size = messageSize(message);
+    if (size > remaining) continue;
     selected.push(message);
-    remaining -= message.content.length;
+    remaining -= size;
   }
 
   selected.reverse();

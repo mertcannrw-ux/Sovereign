@@ -4,9 +4,10 @@ import { useState, type FormEvent } from 'react';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Check, Command, GitBranch, Loader2, Mail, ShieldCheck, Sparkles } from 'lucide-react';
+import { ArrowLeft, Check, Command, GitBranch, Loader2, ShieldCheck, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { trpc } from '@/lib/trpc/client';
 
 export default function SignInPage() {
   const router = useRouter();
@@ -16,7 +17,7 @@ export default function SignInPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [isGithubLoading, setIsGithubLoading] = useState(false);
-  const [isMagicLinkLoading, setIsMagicLinkLoading] = useState(false);
+  const oauth = trpc.auth.providers.useQuery();
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault(); setError('');
@@ -32,16 +33,6 @@ export default function SignInPage() {
     if (provider === 'google') setIsGoogleLoading(true);
     if (provider === 'github') setIsGithubLoading(true);
     await signIn(provider, { callbackUrl: '/dashboard' });
-  }
-
-  async function handleMagicLink() {
-    setError('');
-    if (!email) { setError('Enter your email address first.'); return; }
-    setIsMagicLinkLoading(true);
-    try {
-      const result = await signIn('email', { email, redirect: false });
-      if (!result?.ok) setError(result?.error ?? 'Failed to send magic link.');
-    } catch { setError('An unexpected error occurred. Please try again.'); } finally { setIsMagicLinkLoading(false); }
   }
 
   return (
@@ -71,9 +62,23 @@ export default function SignInPage() {
             {error && <div role="alert" className="rounded-lg border border-error/20 bg-error/10 px-3.5 py-3 text-sm text-error">{error}</div>}
             <Button type="submit" size="lg" className="w-full" disabled={isLoading}>{isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{isLoading ? 'Signing in…' : 'Sign in'}</Button>
           </form>
-          <div className="my-7 flex items-center gap-4"><span className="h-px flex-1 bg-border" /><span className="text-[11px] uppercase tracking-[0.14em] text-foreground-muted">or continue with</span><span className="h-px flex-1 bg-border" /></div>
-          <div className="grid grid-cols-2 gap-3"><Button variant="outline" onClick={() => handleOAuthSignIn('google')} disabled={isGoogleLoading || isGithubLoading}><span className="mr-2 font-semibold">G</span>Google</Button><Button variant="outline" onClick={() => handleOAuthSignIn('github')} disabled={isGoogleLoading || isGithubLoading}><GitBranch className="mr-2 h-4 w-4" />GitHub</Button></div>
-          <Button variant="ghost" className="mt-3 w-full text-foreground-muted" onClick={handleMagicLink} disabled={isMagicLinkLoading}>{isMagicLinkLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Mail className="mr-2 h-4 w-4" />}Email me a secure sign-in link</Button>
+          {(oauth.data?.google || oauth.data?.github) && (
+            <>
+              <div className="my-7 flex items-center gap-4"><span className="h-px flex-1 bg-border" /><span className="text-[11px] uppercase tracking-[0.14em] text-foreground-muted">or continue with</span><span className="h-px flex-1 bg-border" /></div>
+              <div className="grid grid-cols-2 gap-3">
+                {oauth.data.google && (
+                  <Button variant="outline" onClick={() => handleOAuthSignIn('google')} disabled={isGoogleLoading || isGithubLoading}>
+                    <span className="mr-2 font-semibold">G</span>Google
+                  </Button>
+                )}
+                {oauth.data.github && (
+                  <Button variant="outline" onClick={() => handleOAuthSignIn('github')} disabled={isGoogleLoading || isGithubLoading}>
+                    <GitBranch className="mr-2 h-4 w-4" />GitHub
+                  </Button>
+                )}
+              </div>
+            </>
+          )}
           <p className="mt-8 text-center text-sm text-foreground-muted">New to Sovereign? <Link href="/auth/signup" className="font-semibold text-foreground hover:text-primary">Create an account</Link></p>
         </div>
       </section>

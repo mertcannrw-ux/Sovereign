@@ -7,19 +7,12 @@ function generateNonce(): string {
   return btoa(String.fromCharCode(...array));
 }
 
-export function middleware(_request: NextRequest) {
+export function middleware(request: NextRequest) {
   const nonce = generateNonce();
-  const response = NextResponse.next();
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set('x-nonce', nonce);
 
-  // Client-side navigation preserves the current document's isolation state.
-  // Every app entry point must therefore be isolated before it can navigate to
-  // a project and boot WebContainer workers that transfer SharedArrayBuffer.
-  response.headers.set('Cross-Origin-Embedder-Policy', 'require-corp');
-  response.headers.set('Cross-Origin-Opener-Policy', 'same-origin');
-
-  // Content Security Policy
   const isDev = process.env.NODE_ENV === 'development';
-
   const cspDirectives = [
     `default-src 'self'`,
     isDev
@@ -36,6 +29,18 @@ export function middleware(_request: NextRequest) {
     ...(isDev ? [] : [`upgrade-insecure-requests`]),
   ].join('; ');
 
+  // Next.js reads CSP + nonce from the *request* so it can stamp framework scripts.
+  requestHeaders.set('Content-Security-Policy', cspDirectives);
+
+  const response = NextResponse.next({
+    request: { headers: requestHeaders },
+  });
+
+  // Client-side navigation preserves the current document's isolation state.
+  // Every app entry point must therefore be isolated before it can navigate to
+  // a project and boot WebContainer workers that transfer SharedArrayBuffer.
+  response.headers.set('Cross-Origin-Embedder-Policy', 'require-corp');
+  response.headers.set('Cross-Origin-Opener-Policy', 'same-origin');
   response.headers.set('Content-Security-Policy', cspDirectives);
   response.headers.set('X-Content-Type-Options', 'nosniff');
   response.headers.set('X-Frame-Options', 'DENY');
@@ -46,8 +51,6 @@ export function middleware(_request: NextRequest) {
   );
   response.headers.set('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
   response.headers.set('X-XSS-Protection', '0');
-
-  // Pass nonce to the application
   response.headers.set('X-Nonce', nonce);
 
   return response;

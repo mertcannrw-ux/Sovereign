@@ -86,6 +86,8 @@ export interface AgentToolResult {
 const MAX_PATH_LENGTH = 240;
 const MAX_READ_FILES = 12;
 const MAX_FILE_BYTES = 1024 * 1024;
+export const MAX_IMAGES_PER_ACTION = 8;
+export const MAX_IMAGES_PER_RUN = 16;
 
 export function isSafeAgentPath(path: string): boolean {
   return (
@@ -305,6 +307,9 @@ export function parseAgentAction(raw: string): AgentAction {
     const rawImages = Array.isArray(action.images) ? action.images : [];
     if (rawImages.length === 0) {
       throw new Error('generate_images action must contain at least one image specification.');
+    }
+    if (rawImages.length > MAX_IMAGES_PER_ACTION) {
+      throw new Error(`generate_images action may contain at most ${MAX_IMAGES_PER_ACTION} image specifications.`);
     }
     const images: ImageJobSpec[] = rawImages.map((item, idx) => {
       if (!item || typeof item !== 'object') {

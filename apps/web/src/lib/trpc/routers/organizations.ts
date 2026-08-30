@@ -192,17 +192,14 @@ export const organizationsRouter = router({
         });
       }
 
-      await ctx.db.organization.delete({ where: { id: input.id } });
-
-      await createAuditEvent(
-        ctx.db,
-        ctx.user.id,
-        ctx.ipHash,
-        input.id,
-        'organization.deleted',
-        'organization',
-        input.id,
-      );
+      await ctx.db.$transaction(async (tx) => {
+        await tx.auditEvent.deleteMany({ where: { organizationId: input.id } });
+        await tx.usageLedger.deleteMany({ where: { organizationId: input.id } });
+        await tx.subscription.deleteMany({ where: { organizationId: input.id } });
+        await tx.entitlement.deleteMany({ where: { organizationId: input.id } });
+        await tx.backgroundJob.deleteMany({ where: { organizationId: input.id } });
+        await tx.organization.delete({ where: { id: input.id } });
+      });
 
       return { success: true as const };
     }),
@@ -318,6 +315,33 @@ export const organizationsRouter = router({
     }),
 
   /**
+   * List pending invitations for an organization.
+   * Requires ADMIN or OWNER role.
+   */
+  listInvites: protectedProcedure
+    .input(z.object({ organizationId: z.string().uuid() }))
+    .query(async ({ ctx, input }) => {
+      await requireOrganizationRole(ctx, input.organizationId, 'ADMIN');
+
+      return ctx.db.organizationInvite.findMany({
+        where: {
+          organizationId: input.organizationId,
+          acceptedAt: null,
+          revokedAt: null,
+          expiresAt: { gt: new Date() },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          email: true,
+          role: true,
+          expiresAt: true,
+          createdAt: true,
+        },
+      });
+    }),
+
+  /**
    * Invite a user to join the organization.
    * Generates a single-use token for the invitation link.
    * Requires ADMIN or OWNER role.
@@ -327,7 +351,7 @@ export const organizationsRouter = router({
       z.object({
         organizationId: z.string().uuid(),
         email: z.string().email(),
-        role: OrganizationRole.default('MEMBER'),
+        role: z.enum(['ADMIN', 'MEMBER']).default('MEMBER'),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -437,7 +461,8 @@ export const organizationsRouter = router({
         });
       }
 
-      if (invite.email !== ctx.user.email) {
+      const sessionEmail = (ctx.user.email ?? '').trim().toLowerCase();
+      if (invite.email !== sessionEmail) {
         throw new TRPCError({
           code: 'FORBIDDEN',
           message: 'This invitation was sent to a different email address.',
@@ -464,11 +489,12 @@ export const organizationsRouter = router({
       }
 
       await ctx.db.$transaction(async (tx) => {
+        const role = invite.role === 'OWNER' ? 'MEMBER' : invite.role;
         await tx.organizationMember.create({
           data: {
             organizationId: invite.organizationId,
             userId: ctx.user.id,
-            role: invite.role,
+            role,
           },
         });
 

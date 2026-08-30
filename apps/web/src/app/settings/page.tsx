@@ -153,7 +153,17 @@ export default function SettingsPage() {
         <div className="min-w-0 flex-1">
           {activeTab === 'profile' && <Placeholder title="Profile" desc="Manage your account identity and personal preferences." />}
           {activeTab === 'providers' && <AIProvidersTab />}
-          {activeTab === 'teams' && <Placeholder title="Teams" desc="Invite collaborators and manage workspace permissions." />}
+          {activeTab === 'teams' && (
+            <Card className="border-border bg-background-subtle">
+              <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+                <h2 className="text-xl font-semibold text-foreground">Teams</h2>
+                <p className="mt-2 text-sm text-foreground-muted">Invite collaborators and manage workspace permissions.</p>
+                <Button className="mt-6" asChild>
+                  <a href="/dashboard/team">Open team page</a>
+                </Button>
+              </CardContent>
+            </Card>
+          )}
           {activeTab === 'billing' && <Placeholder title="Billing" desc="Review your plan, invoices, and payment method." />}
           {activeTab === 'api-keys' && <Placeholder title="API Keys" desc="Create and revoke platform access credentials." />}
         </div>
@@ -562,11 +572,16 @@ function AIProvidersTab() {
                     placeholder={
                       editingProvider === 'custom'
                         ? 'https://api.example.com/v1'
-                        : 'Custom endpoint URL'
+                        : 'http://localhost:11434'
                     }
                     value={editBaseUrl}
                     onChange={(event) => setEditBaseUrl(event.target.value)}
                   />
+                  <p className="text-xs leading-5 text-foreground-muted">
+                    Remote OpenAI-compatible APIs must use HTTPS. Local servers
+                    (Ollama, vLLM, LM Studio) can use http://127.0.0.1 or
+                    http://localhost on any port.
+                  </p>
                 </div>
               )}
             {editingProvider &&

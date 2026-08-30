@@ -4,7 +4,8 @@ import { Prisma } from '@prisma-generated/prisma/client';
 import { protectedProcedure, router } from '../trpc';
 import { requireProjectRole } from '@/server/authz';
 import { checkRateLimit } from '@/server/rate-limit';
-import { isSafeDefault, sanitizeSqlForTenant } from '@/server/db-browser';
+import { isSafeDefault, quotePgIdent, sanitizeSqlForTenant } from '@/server/db-browser';
+import { requireAppDatabase } from '@/server/app-database';
 
 /**
  * Schema for a single column definition.
@@ -46,14 +47,7 @@ export const databaseRouter = router({
     .query(async ({ ctx, input }) => {
       await requireProjectRole(ctx, input.projectId, 'VIEWER');
 
-      const appDb = await ctx.db.appDatabase.findFirst({ where: { projectId: input.projectId } });
-
-      if (!appDb) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: 'No database configured for this project',
-        });
-      }
+      const appDb = await requireAppDatabase(ctx.db, input.projectId);
 
       const tables = await ctx.db.$queryRawUnsafe<
         { tablename: string; tableowner: string; tablespace: string | null }[]
@@ -81,14 +75,7 @@ export const databaseRouter = router({
     .query(async ({ ctx, input }) => {
       await requireProjectRole(ctx, input.projectId, 'VIEWER');
 
-      const appDb = await ctx.db.appDatabase.findFirst({ where: { projectId: input.projectId } });
-
-      if (!appDb) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: 'No database configured for this project',
-        });
-      }
+      const appDb = await requireAppDatabase(ctx.db, input.projectId);
 
       const columns = await ctx.db.$queryRawUnsafe<
         {
@@ -149,14 +136,7 @@ export const databaseRouter = router({
     .mutation(async ({ ctx, input }) => {
       await requireProjectRole(ctx, input.projectId, 'EDITOR');
 
-      const appDb = await ctx.db.appDatabase.findFirst({ where: { projectId: input.projectId } });
-
-      if (!appDb) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: 'No database configured for this project',
-        });
-      }
+      const appDb = await requireAppDatabase(ctx.db, input.projectId);
 
       const columnDefs = input.columns
         .map((col) => {
@@ -176,7 +156,7 @@ export const databaseRouter = router({
         })
         .join(', ');
 
-      const sql = `CREATE TABLE "${appDb.schemaName}"."${input.tableName}" (${columnDefs})`;
+      const sql = `CREATE TABLE ${quotePgIdent(appDb.schemaName)}.${quotePgIdent(input.tableName)} (${columnDefs})`;
 
       try {
         await ctx.db.$executeRawUnsafe(sql);
@@ -200,16 +180,9 @@ export const databaseRouter = router({
     .mutation(async ({ ctx, input }) => {
       await requireProjectRole(ctx, input.projectId, 'EDITOR');
 
-      const appDb = await ctx.db.appDatabase.findFirst({ where: { projectId: input.projectId } });
+      const appDb = await requireAppDatabase(ctx.db, input.projectId);
 
-      if (!appDb) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: 'No database configured for this project',
-        });
-      }
-
-      const sql = `DROP TABLE IF EXISTS "${appDb.schemaName}"."${input.tableName}"`;
+      const sql = `DROP TABLE IF EXISTS ${quotePgIdent(appDb.schemaName)}.${quotePgIdent(input.tableName)}`;
 
       try {
         await ctx.db.$executeRawUnsafe(sql);
@@ -240,14 +213,7 @@ export const databaseRouter = router({
         });
       }
 
-      const appDb = await ctx.db.appDatabase.findFirst({ where: { projectId: input.projectId } });
-
-      if (!appDb) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: 'No database configured for this project',
-        });
-      }
+      const appDb = await requireAppDatabase(ctx.db, input.projectId);
 
       const statement = sanitizeSqlForTenant(input.sql, appDb.schemaName);
       if (!statement) {
@@ -264,7 +230,7 @@ export const databaseRouter = router({
           await tx.$executeRaw(Prisma.sql`SET TRANSACTION READ ONLY`);
           await tx.$executeRaw(Prisma.sql`SET LOCAL statement_timeout = '10s'`);
           await tx.$executeRaw(
-            Prisma.sql`SET LOCAL search_path TO ${Prisma.raw('"' + appDb.schemaName.replaceAll('"', '""') + '"')}`,
+            Prisma.sql`SET LOCAL search_path TO ${Prisma.raw(quotePgIdent(appDb.schemaName))}`,
           );
           return tx.$queryRawUnsafe<Record<string, unknown>[]>(
             `SELECT * FROM (${statement}) AS _q LIMIT 501`,

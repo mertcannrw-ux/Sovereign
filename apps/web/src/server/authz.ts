@@ -91,15 +91,31 @@ export async function requireProjectRole(
     },
   });
 
-  if (!collaborator) {
-    throw new TRPCError({ code: 'NOT_FOUND' });
+  if (collaborator) {
+    if (!hasMinimumProjectRole(collaborator.role, minimumRole)) {
+      throw new TRPCError({ code: 'FORBIDDEN' });
+    }
+    return { role: collaborator.role, organizationId: project.organizationId };
   }
 
-  if (!hasMinimumProjectRole(collaborator.role, minimumRole)) {
-    throw new TRPCError({ code: 'FORBIDDEN' });
+  // Org OWNER/ADMIN may administer every project in the organization.
+  const membership = await ctx.db.organizationMember.findUnique({
+    where: {
+      organizationId_userId: {
+        organizationId: project.organizationId,
+        userId: ctx.user.id,
+      },
+    },
+  });
+  if (membership && hasMinimumOrgRole(membership.role, 'ADMIN')) {
+    const mappedRole: ProjectRole = membership.role === 'OWNER' ? 'OWNER' : 'EDITOR';
+    if (!hasMinimumProjectRole(mappedRole, minimumRole)) {
+      throw new TRPCError({ code: 'FORBIDDEN' });
+    }
+    return { role: mappedRole, organizationId: project.organizationId };
   }
 
-  return { role: collaborator.role, organizationId: project.organizationId };
+  throw new TRPCError({ code: 'NOT_FOUND' });
 }
 
 // ─── Convenience wrappers ─────────────────────────────────

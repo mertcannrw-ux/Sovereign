@@ -98,7 +98,7 @@ export async function uploadToR2(opts: {
     const fullPath = path.join(LOCAL_ASSET_ROOT, relativePath);
     await fs.promises.mkdir(path.dirname(fullPath), { recursive: true });
     await fs.promises.writeFile(fullPath, opts.bytes);
-    return `${hostUrl}/api/assets/${relativePath}`;
+    return `${hostUrl}/api/assets/${relativePath}?${signAssetUrl(relativePath)}`;
   }
 
   const client = getR2Client();

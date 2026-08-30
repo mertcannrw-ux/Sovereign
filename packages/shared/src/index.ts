@@ -362,10 +362,24 @@ export type SendChatInput = z.infer<typeof SendChatInput>;
 
 // ─── AI Gateway Types ───────────────────────────────────
 
+export interface AIToolCall {
+  id: string;
+  type: 'function';
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
+export type AIGatewayMessage =
+  | { role: 'system' | 'user'; content: string }
+  | { role: 'assistant'; content: string; toolCalls?: AIToolCall[] }
+  | { role: 'tool'; toolCallId: string; content: string };
+
 export interface AICompletionRequest {
   provider: AIProvider;
   model: string;
-  messages: { role: 'user' | 'assistant' | 'system'; content: string }[];
+  messages: AIGatewayMessage[];
   apiKey: string;
   baseUrl?: string;
   temperature?: number;
@@ -378,12 +392,14 @@ export interface AICompletionRequest {
       parameters: Record<string, unknown>;
     };
   }[];
+  toolChoice?: 'auto' | 'none' | 'required';
 }
 
 export interface AIStreamChunk {
   content: string;
   reasoning?: string;
   finishReason?: string;
+  toolCalls?: AIToolCall[];
   usage?: {
     promptTokens: number;
     completionTokens: number;
@@ -395,6 +411,7 @@ export interface AICompletionResponse {
   content: string;
   reasoning?: string;
   finishReason: string;
+  toolCalls?: AIToolCall[];
   usage: {
     promptTokens: number;
     completionTokens: number;

@@ -5,11 +5,17 @@ import { Toaster } from 'react-hot-toast';
 import { ThemeProvider } from 'next-themes';
 import { TRPCProvider } from '@/lib/trpc/react';
 
-export function Providers({ children }: { children: React.ReactNode }) {
+export function Providers({
+  children,
+  nonce,
+}: {
+  children: React.ReactNode;
+  nonce?: string;
+}) {
   return (
     <SessionProvider>
       <TRPCProvider>
-        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
+        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} nonce={nonce}>
           {children}
           <Toaster
             position="bottom-right"

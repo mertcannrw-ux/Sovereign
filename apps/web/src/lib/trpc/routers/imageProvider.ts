@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
-import { normalizeImageEndpoint, ssrfFetch } from '@app-builder/ai-gateway';
+import { normalizeImageEndpoint, ssrfFetch, SsrfError, validateUrl } from '@app-builder/ai-gateway';
 import { protectedProcedure, router } from '../trpc';
 import { encryptApiKey, decryptApiKey, maskApiKey } from '@/lib/crypto';
 import { checkRateLimit } from '@/server/rate-limit';
@@ -55,13 +55,15 @@ export const imageProviderRouter = router({
       if (!normalizedBaseUrl.startsWith('http://') && !normalizedBaseUrl.startsWith('https://')) {
         normalizedBaseUrl = `https://${normalizedBaseUrl}`;
       }
-      // Validate endpoint structure
       try {
-        new URL(normalizedBaseUrl);
-      } catch {
+        validateUrl(normalizedBaseUrl);
+      } catch (error) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
-          message: 'Invalid base URL provided',
+          message:
+            error instanceof SsrfError
+              ? error.message
+              : 'Invalid base URL provided',
         });
       }
 

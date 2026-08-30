@@ -1,20 +1,27 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { getServerSession } from 'next-auth';
 import { NextRequest } from 'next/server';
-import { getProvider } from '@app-builder/ai-gateway';
-import { generateImage } from '@app-builder/ai-gateway';
+import { getProvider, generateImage, ProviderError } from '@app-builder/ai-gateway';
 import { uploadProjectAsset } from '@/server/assets/project-assets';
 import { getR2ConfigStatus } from '@/server/assets/r2';
 import { AIProvider } from '@app-builder/shared';
 import { authOptions } from '@/lib/auth';
 import { decryptApiKey } from '@/lib/crypto';
 import { getDb } from '@/lib/db';
-import { applyAgentEdit, getAgentFileMutationPaths, getDesignDirectionActionError, getStreamingFileAction, getStreamingThought, parseAgentAction, type AgentAction, type AgentReadRequest, type AgentStep } from '@/lib/agent-protocol';
+import { applyAgentEdit, getAgentFileMutationPaths, getDesignDirectionActionError, getStreamingFileAction, getStreamingThought, parseAgentAction, MAX_IMAGES_PER_RUN, type AgentAction, type AgentReadRequest, type AgentStep } from '@/lib/agent-protocol';
+import {
+  SOVEREIGN_TOOLS,
+  actionsFromToolCalls,
+  getStreamingFileFromToolCalls,
+  nativeToolsEnabled,
+} from '@/lib/agent-tools';
+import type { ToolCall } from '@app-builder/ai-gateway';
 import { trimMessagesForContext, type AgentMessage } from '@/lib/context-window';
 import { createVersion, type VersionDiffEntry } from '@/lib/versioning';
 import { checkRateLimit } from '@/server/rate-limit';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 300;
 
 interface GenerateBody {
   projectId?: string;
@@ -40,6 +47,16 @@ const MAX_ITERATIONS = 40;
 const MAX_ATTACHMENT_BYTES = 512 * 1024;
 const MAX_READ_RESULT_CHARS = 60_000;
 const IMAGE_GENERATION_CONCURRENCY = 3;
+
+function isRetryableImageError(error: unknown): boolean {
+  if (error instanceof ProviderError) {
+    if (error.code === 'request_timeout') return true;
+    if (error.status === 429) return true;
+    if (error.status >= 500) return true;
+    return false;
+  }
+  return true;
+}
 
 async function mapWithConcurrency<T, R>(
   items: readonly T[],
@@ -123,11 +140,33 @@ Rules:
 - Do not emit source code anywhere except write_file content or edit_file search/replace.
 - Keep thinking concise and safe to show directly to the user.
 - "propose_design_directions" is only valid for an empty project. When files already exist, never propose a new visual direction or rebuild unrelated files; inspect and edit the existing application while preserving its current design unless the user explicitly requests a redesign. When proposing directions for an empty project, emit EXACTLY 3 distinct concepts and do NOT mutate project files in the same turn.
-- When generating images, first inspect enough of the request and existing files to determine the complete visual asset inventory. Then issue one generate_images action containing one specification for every distinct image the website actually needs (hero, section, card, avatar, illustration, background, and so on); do not default to a fixed count or stop at three. Reuse existing or selected-direction assets when suitable, wait for all image results before writing or editing files, and use only successful absolute asset URLs in source files. If a later pass discovers a genuinely new required asset, request only that asset in another generate_images action. Never write placeholder tokens for failed images.
+- When generating images, first inspect enough of the request and existing files to determine the complete visual asset inventory. Then issue one generate_images action containing one specification for every distinct image the website actually needs, at most 8 images per action and 16 per run. Reuse existing or selected-direction assets when suitable, wait for all image results before writing or editing files, and use only successful absolute asset URLs in source files. If a later pass discovers a genuinely new required asset, request only that asset in another generate_images action. Never write placeholder tokens for failed images.
 - If request context indicates imageGeneration is unavailable, do not call image actions. Use CSS/neutral SVG placeholders instead.
 - Use a direct plain-text response whenever no tool is needed. Finish only after a filesystem task is complete.
 - If the user's message is a greeting, conversational query, or general question (such as "hii", "hello", "who are you?", "what can you do?"), DO NOT create or edit files or build an application. Use "respond" (or plain text) to reply conversationally and ask what application they would like to build.
 - Only create, write, or modify project files when the user explicitly requests to build, generate, or modify an application or web page.`;
+
+const NATIVE_TOOLS_SYSTEM_PROMPT = `You are a senior product engineer operating an app-builder filesystem through native tools.
+
+Default stack: React 19, TypeScript, Vite, and CSS animations. Build polished, responsive, animated, and accessible applications. A new project must include package.json, index.html, tsconfig.json with "jsx": "react-jsx", src/main.tsx, src/App.tsx, and src/index.css. If you omit vite.config.ts, the tsconfig JSX setting is mandatory. Use semantic HTML, landmarks, labels, and alt text. Do not use global prefers-reduced-motion rules with animation-duration: 0.01ms !important on * as it freezes watch hands and canvas loops.
+
+Call tools to read and change files. Reply with plain assistant text when no filesystem work is needed, or when the task is finished. Do not emit JSON tool syntax in the assistant message.
+
+Rules:
+- Never claim to have read or changed a file unless the corresponding tool result confirms it.
+- read_files accepts at most 12 file requests. Results include line numbers.
+- write_file always contains the complete final file.
+- edit_file search text must occur exactly once.
+- Paths are relative; never use .., leading slashes, backslashes, or NUL bytes.
+- propose_design_directions is only valid for an empty project and must not mix with file mutations.
+- generate_images: at most 8 images per call and 16 per run.
+- If image generation is unavailable, use CSS/SVG placeholders.
+- Greetings and general questions must not create files.`;
+
+function buildAgentSystemPrompt(toolsOffered: boolean): string {
+  return toolsOffered ? NATIVE_TOOLS_SYSTEM_PROMPT : AGENT_SYSTEM_PROMPT;
+}
+
 function parseProvider(value: string): AIProvider {
   const parsed = AIProvider.safeParse(value);
   if (!parsed.success) throw new Error(`Unsupported AI provider: ${value}`);
@@ -296,8 +335,9 @@ export async function POST(request: NextRequest) {
       };
       const files = new Map(project.files.map((file) => [file.path, file.content]));
       const provider = getProvider(providerName);
+      const toolsOffered = nativeToolsEnabled(providerName);
       const messages: AgentMessage[] = [
-        { role: 'system', content: AGENT_SYSTEM_PROMPT },
+        { role: 'system', content: buildAgentSystemPrompt(toolsOffered) },
         ...history.reverse().map((message) => ({
           role: message.role === 'assistant' ? 'assistant' as const : 'user' as const,
           content: message.content,
@@ -320,6 +360,7 @@ export async function POST(request: NextRequest) {
       let finalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
       const runSteps: AgentStep[] = [];
       let consecutiveProtocolFailures = 0;
+      let imagesGeneratedThisRun = 0;
       // Tracks how many consecutive turns made no filesystem progress. Prevents a
       // model that emits `think`/`respond` (or any valid non-mutating action)
       // forever from running the loop to MAX_ITERATIONS and burning tokens.
@@ -378,6 +419,7 @@ export async function POST(request: NextRequest) {
           const thinkingStepId = randomUUID();
           let responseContent = '';
           let reasoningContent = '';
+          let streamedToolCalls: ToolCall[] = [];
           let lastThinkingEmit = 0;
           let lastFilePreviewEmit = 0;
           let previewSignature = '';
@@ -400,12 +442,18 @@ export async function POST(request: NextRequest) {
             temperature: 0.2,
             reasoningEffort: body.reasoningEffort,
             signal: abortController.signal,
+            ...(toolsOffered
+              ? { tools: SOVEREIGN_TOOLS, toolChoice: 'auto' as const }
+              : {}),
           });
           while (true) {
             const next = await generator.next();
             if (next.done) {
               responseContent = next.value.content || responseContent;
               if (next.value.reasoning) reasoningContent = next.value.reasoning;
+              if (next.value.toolCalls && next.value.toolCalls.length > 0) {
+                streamedToolCalls = next.value.toolCalls;
+              }
               finalUsage = {
                 promptTokens: finalUsage.promptTokens + next.value.usage.promptTokens,
                 completionTokens: finalUsage.completionTokens + next.value.usage.completionTokens,
@@ -415,6 +463,9 @@ export async function POST(request: NextRequest) {
             }
             responseContent += next.value.content;
             if (next.value.reasoning) reasoningContent += next.value.reasoning;
+            if (next.value.toolCalls && next.value.toolCalls.length > 0) {
+              streamedToolCalls = next.value.toolCalls;
+            }
             const streamedThought = reasoningContent || getStreamingThought(responseContent);
             if (streamedThought) {
               const now = Date.now();
@@ -424,7 +475,8 @@ export async function POST(request: NextRequest) {
                 send('thinking', { content: streamedThought });
               }
             }
-            const streamedFile = getStreamingFileAction(responseContent);
+            const streamedFile =
+              getStreamingFileFromToolCalls(streamedToolCalls) ?? getStreamingFileAction(responseContent);
             if (streamedFile) {
               const now = Date.now();
               const provisionalKey = `${streamedFile.type}:${streamedFile.path}`;
@@ -468,8 +520,24 @@ export async function POST(request: NextRequest) {
             }
           }
           let action: AgentAction;
+          const usedNativeToolCalls = toolsOffered && streamedToolCalls.length > 0;
           try {
-            action = parseAgentAction(responseContent);
+            if (usedNativeToolCalls) {
+              action = actionsFromToolCalls(streamedToolCalls);
+            } else if (toolsOffered) {
+              const text = responseContent.trim();
+              if (!text) {
+                action = { type: 'finish', summary: reasoningContent.trim() || 'Done.' };
+              } else {
+                try {
+                  action = parseAgentAction(text);
+                } catch {
+                  action = { type: 'respond', message: text };
+                }
+              }
+            } else {
+              action = parseAgentAction(responseContent);
+            }
             const mutationPaths = getAgentFileMutationPaths(action);
             for (const path of provisionalOriginals.keys()) {
               if (!mutationPaths.has(path)) {
@@ -502,7 +570,11 @@ export async function POST(request: NextRequest) {
             if (consecutiveProtocolFailures >= 3) throw new Error('The selected model could not produce a valid agent action after three retries.');
             continue;
           }
-          messages.push({ role: 'assistant', content: responseContent });
+          messages.push(
+            usedNativeToolCalls
+              ? { role: 'assistant', content: responseContent, toolCalls: streamedToolCalls }
+              : { role: 'assistant', content: responseContent },
+          );
           const startedAt = iterationStartedAt;
 
           if (action.type === 'think') {
@@ -659,6 +731,13 @@ export async function POST(request: NextRequest) {
               toolResults.push(`delete_file result: deleted ${currentAction.path}.`);
             }
             if (currentAction.type === 'generate_images') {
+              if (imagesGeneratedThisRun + currentAction.images.length > MAX_IMAGES_PER_RUN) {
+                toolResults.push(
+                  `generate_images error: this run already used ${imagesGeneratedThisRun} of ${MAX_IMAGES_PER_RUN} images. Do not request more images.`,
+                );
+                continue;
+              }
+              imagesGeneratedThisRun += currentAction.images.length;
               const imageResults = await mapWithConcurrency(
                 currentAction.images,
                 IMAGE_GENERATION_CONCURRENCY,
@@ -724,6 +803,7 @@ export async function POST(request: NextRequest) {
                       } catch (error) {
                         lastError = error;
                         if (abortController.signal.aborted) throw error;
+                        if (!isRetryableImageError(error)) break;
                       }
                     }
                     throw lastError;
@@ -906,7 +986,17 @@ export async function POST(request: NextRequest) {
           }
 
           if (handledFilesystemAction) {
-            messages.push({ role: 'user', content: toolResults.join('\n\n') });
+            if (usedNativeToolCalls) {
+              streamedToolCalls.forEach((call, index) => {
+                messages.push({
+                  role: 'tool',
+                  toolCallId: call.id || `call_${index}`,
+                  content: toolResults[index] ?? toolResults.join('\n\n'),
+                });
+              });
+            } else {
+              messages.push({ role: 'user', content: toolResults.join('\n\n') });
+            }
             if (!askQuestionsAction && !respondAction && !finishAction) {
               continue;
             }

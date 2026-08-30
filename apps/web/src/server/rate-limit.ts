@@ -75,27 +75,47 @@ async function upstashSlidingWindow(
     ['EXPIRE', key, config.windowSeconds.toString()],
   ];
 
-  const response = await fetch(`${url}/pipeline`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(pipeline.map((cmd) => ({ cmd }))),
-  });
+  const denied: RateLimitResult = {
+    allowed: false,
+    remaining: 0,
+    resetAt: now * 1000 + config.windowSeconds * 1000,
+  };
 
-  if (!response.ok) {
-    // Fail open — allow the request if Redis is down
-    return {
-      allowed: true,
-      remaining: config.limit,
-      resetAt: now * 1000 + config.windowSeconds * 1000,
-    };
+  let response: Response;
+  try {
+    response = await fetch(`${url}/pipeline`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(pipeline),
+    });
+  } catch {
+    return process.env.NODE_ENV === 'production' ? denied : devSlidingWindow(key, config);
   }
 
-  const results = await response.json();
-  const count = (results[2]?.result as number) ?? 0;
+  if (!response.ok) {
+    return process.env.NODE_ENV === 'production' ? denied : devSlidingWindow(key, config);
+  }
 
+  let results: unknown;
+  try {
+    results = await response.json();
+  } catch {
+    return process.env.NODE_ENV === 'production' ? denied : devSlidingWindow(key, config);
+  }
+
+  if (!Array.isArray(results) || results.length < 4) {
+    return process.env.NODE_ENV === 'production' ? denied : devSlidingWindow(key, config);
+  }
+
+  const card = results[2] as { result?: unknown; error?: unknown };
+  if (card.error != null || typeof card.result !== 'number') {
+    return process.env.NODE_ENV === 'production' ? denied : devSlidingWindow(key, config);
+  }
+
+  const count = card.result;
   return {
     allowed: count <= config.limit,
     remaining: Math.max(0, config.limit - count),

@@ -176,6 +176,17 @@ describe('agent protocol', () => {
     ).toThrow('at least one image specification');
   });
 
+  it('rejects generate_images actions above the per-action cap', () => {
+    const images = Array.from({ length: 9 }, (_, index) => ({
+      prompt: `Image ${index + 1}`,
+      semanticUse: `section-${index + 1}`,
+      placeholderToken: `__SECTION_${index + 1}_IMG__`,
+    }));
+    expect(() =>
+      parseAgentAction(JSON.stringify({ type: 'generate_images', images })),
+    ).toThrow('at most 8 image specifications');
+  });
+
   it('parses valid propose_design_directions action with exactly 3 concepts', () => {
     const action = parseAgentAction(
       JSON.stringify({

@@ -29,7 +29,7 @@ async function main() {
   // Credentials come from the environment: refusing to seed a hardcoded
   // password (or run at all outside development) keeps the default-credential
   // footgun out of production.
-  const adminEmail = process.env.SEED_ADMIN_EMAIL;
+  const adminEmail = process.env.SEED_ADMIN_EMAIL?.trim().toLowerCase();
   const adminPassword = process.env.SEED_ADMIN_PASSWORD;
   if (!adminEmail || !adminPassword || adminPassword.length < 12) {
     throw new Error('SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD (min 12 chars) must be set when seeding');

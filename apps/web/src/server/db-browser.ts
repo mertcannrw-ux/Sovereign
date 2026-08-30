@@ -22,6 +22,14 @@ const identifierSchema = z
     'Invalid identifier: must start with a lowercase letter and contain only lowercase letters, digits, and underscores',
   );
 
+export function quotePgIdent(ident: string): string {
+  const parsed = identifierSchema.safeParse(ident);
+  if (!parsed.success) {
+    throw new Error('Invalid SQL identifier');
+  }
+  return `"${ident.replaceAll('"', '""')}"`;
+}
+
 const sortDirectionSchema = z.enum(['asc', 'desc']);
 
 const filterSchema = z.object({

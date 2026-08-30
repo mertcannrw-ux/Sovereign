@@ -71,9 +71,9 @@ export async function GET(
   if (!asset) return new NextResponse('Asset not found', { status: 404 });
 
   // Only serve the exact object key recorded in the DB. Content type comes from a
-  // strict allowlist of the media types uploads are restricted to (magic-byte
-  // verified in uploadProjectAsset); anything else is served as octet-stream and
-  // never as HTML/SVG to avoid any stored-XSS surface.
+  // strict allowlist of the media types uploads are restricted to (magic bytes
+  // are verified in uploadProjectAsset); anything else is served as octet-stream
+  // and never as HTML/SVG to avoid any stored-XSS surface.
   const fullPath = resolved;
   try {
     const fileBuffer = await fs.promises.readFile(fullPath);

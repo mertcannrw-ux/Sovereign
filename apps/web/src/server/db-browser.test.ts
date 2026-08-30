@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
-import { stripSqlLiterals, sanitizeSqlForTenant } from '@/server/db-browser';
+import { stripSqlLiterals, sanitizeSqlForTenant, quotePgIdent } from '@/server/db-browser';
 
 describe('stripSqlLiterals', () => {
   it('strips single-quoted string literals', () => {
@@ -84,5 +84,16 @@ describe('sanitizeSqlForTenant', () => {
   it('allows WITH (CTE) statements', () => {
     const sql = 'WITH cte AS (SELECT * FROM users) SELECT * FROM cte';
     expect(sanitizeSqlForTenant(sql, 'tenant_123')).toBe(sql);
+  });
+});
+
+describe('quotePgIdent', () => {
+  it('quotes a safe identifier', () => {
+    expect(quotePgIdent('p_abc123')).toBe('"p_abc123"');
+  });
+
+  it('rejects unsafe identifiers', () => {
+    expect(() => quotePgIdent('public"; drop table users; --')).toThrow('Invalid SQL identifier');
+    expect(() => quotePgIdent('Public')).toThrow('Invalid SQL identifier');
   });
 });

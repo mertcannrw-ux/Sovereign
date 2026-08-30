@@ -39,6 +39,7 @@ export class Gateway {
       maxTokens: request.maxTokens,
       temperature: request.temperature,
       tools: request.tools,
+      toolChoice: request.toolChoice,
     });
   }
 
@@ -83,6 +84,7 @@ export class Gateway {
       maxTokens: request.maxTokens,
       temperature: request.temperature,
       tools: request.tools,
+      toolChoice: request.toolChoice,
     });
 
     return result;

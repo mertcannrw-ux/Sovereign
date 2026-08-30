@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { protectedProcedure, router } from '../trpc';
 import { requireOrganizationRole, requireProjectRole } from '@/server/authz';
+import { provisionAppDatabase } from '@/server/app-database';
 
 function generateSlug(name: string): string {
   return (
@@ -20,7 +21,17 @@ export const projectsRouter = router({
   list: protectedProcedure.query(async ({ ctx }) => {
     const projects = await ctx.db.project.findMany({
       where: {
-        OR: [{ ownerId: ctx.user.id }, { collaborators: { some: { userId: ctx.user.id } } }],
+        OR: [
+          { ownerId: ctx.user.id },
+          { collaborators: { some: { userId: ctx.user.id } } },
+          {
+            organization: {
+              members: {
+                some: { userId: ctx.user.id, role: { in: ['OWNER', 'ADMIN'] } },
+              },
+            },
+          },
+        ],
       },
       orderBy: { updatedAt: 'desc' },
       include: {
@@ -57,16 +68,20 @@ export const projectsRouter = router({
         slug = `${slug}-${Date.now().toString(36)}`;
       }
 
-      const project = await ctx.db.project.create({
-        data: {
-          ownerId: ctx.user.id,
-          organizationId: input.organizationId,
-          name: input.name,
-          description: input.description ?? null,
-          slug,
-          ...(input.modelProvider !== undefined && { modelProvider: input.modelProvider }),
-          ...(input.modelName !== undefined && { modelName: input.modelName }),
-        },
+      const project = await ctx.db.$transaction(async (tx) => {
+        const created = await tx.project.create({
+          data: {
+            ownerId: ctx.user.id,
+            organizationId: input.organizationId,
+            name: input.name,
+            description: input.description ?? null,
+            slug,
+            ...(input.modelProvider !== undefined && { modelProvider: input.modelProvider }),
+            ...(input.modelName !== undefined && { modelName: input.modelName }),
+          },
+        });
+        await provisionAppDatabase(tx, created.id);
+        return created;
       });
 
       return project;

@@ -76,16 +76,13 @@ export const deploymentsRouter = router({
             });
 
             const nextVersion = (latestDeployment?.version ?? 0) + 1;
-            const deploymentUrl = `https://${project.slug}-v${nextVersion}.app.example.com`;
+            const deploymentUrl = `https://stub.localhost/${project.slug}/v${nextVersion}`;
             const now = new Date();
 
             const buildSteps = [
-              `[${now.toISOString()}] Starting build for version ${nextVersion}...`,
-              `[${now.toISOString()}] Installing dependencies...`,
-              `[${now.toISOString()}] Running build...`,
-              `[${now.toISOString()}] Build successful`,
-              `[${now.toISOString()}] Deploying to ${deploymentUrl}`,
-              `[${now.toISOString()}] Deployment complete`,
+              `[${now.toISOString()}] Local stub — Vercel deploy is not connected.`,
+              `[${now.toISOString()}] Recorded placeholder deployment v${nextVersion}.`,
+              `[${now.toISOString()}] URL ${deploymentUrl} is not a live host.`,
             ];
 
             const deployment = await tx.deployment.create({
@@ -104,7 +101,7 @@ export const deploymentsRouter = router({
               data: { publishedAt: now, status: 'PUBLISHED' },
             });
 
-            return deployment;
+            return { ...deployment, stub: true as const };
           });
         } catch (err) {
           if (

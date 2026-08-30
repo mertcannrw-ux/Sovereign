@@ -1,5 +1,11 @@
 import type { AIProvider, AIStreamChunk, AICompletionResponse } from '@app-builder/shared';
 import { ProviderError, type ProviderCompleteOptions } from './types';
+import type { GatewayMessage, ToolCall } from './tool-calls';
+import {
+  applyOpenAIToolCallDeltas,
+  mapGatewayMessagesToOpenAI,
+  parseOpenAIToolCalls,
+} from './tool-calls';
 import { SsrfError, validateOutboundUrl } from './ssrf';
 import type { Dispatcher } from 'undici';
 
@@ -175,7 +181,7 @@ export interface Provider {
   /** Non-streaming completion. */
   complete(
     model: string,
-    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    messages: GatewayMessage[],
     apiKey: string,
     options?: ProviderCompleteOptions,
   ): Promise<AICompletionResponse>;
@@ -187,7 +193,7 @@ export interface Provider {
    */
   stream(
     model: string,
-    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    messages: GatewayMessage[],
     apiKey: string,
     options?: ProviderCompleteOptions,
   ): AsyncGenerator<AIStreamChunk, AICompletionResponse>;
@@ -319,7 +325,7 @@ abstract class OpenAICompatibleProvider implements Provider {
 
   async complete(
     model: string,
-    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    messages: GatewayMessage[],
     apiKey: string,
     options?: ProviderCompleteOptions,
   ): Promise<AICompletionResponse> {
@@ -360,7 +366,7 @@ abstract class OpenAICompatibleProvider implements Provider {
 
   async *stream(
     model: string,
-    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    messages: GatewayMessage[],
     apiKey: string,
     options?: ProviderCompleteOptions,
   ): AsyncGenerator<AIStreamChunk, AICompletionResponse> {
@@ -394,6 +400,7 @@ abstract class OpenAICompatibleProvider implements Provider {
 
     let accumulatedContent = '';
     let accumulatedReasoning = '';
+    let accumulatedToolCalls: ToolCall[] = [];
     let finishReason: string = 'stop';
     let finalUsage: AICompletionResponse['usage'] = {
       promptTokens: 0,
@@ -443,6 +450,14 @@ abstract class OpenAICompatibleProvider implements Provider {
           finishReason = rawFinish;
         }
 
+        const toolDeltas = delta['tool_calls'];
+        let toolCallsUpdated = false;
+        if (Array.isArray(toolDeltas) && toolDeltas.length > 0) {
+          accumulatedToolCalls = applyOpenAIToolCallDeltas(accumulatedToolCalls, toolDeltas);
+          toolCallsUpdated = true;
+          if (finishReason === 'stop') finishReason = 'tool_calls';
+        }
+
         // Yield reasoning content if present (won't overlap with text)
         if (reasoningContent) {
           yield { content: '', reasoning: reasoningContent };
@@ -454,6 +469,12 @@ abstract class OpenAICompatibleProvider implements Provider {
           const chunk: AIStreamChunk = { content };
           if (finishReason !== 'stop') chunk.finishReason = finishReason;
           yield chunk;
+        } else if (toolCallsUpdated) {
+          yield {
+            content: '',
+            finishReason,
+            toolCalls: accumulatedToolCalls,
+          };
         }
       }
     }
@@ -462,6 +483,7 @@ abstract class OpenAICompatibleProvider implements Provider {
       content: accumulatedContent,
       reasoning: accumulatedReasoning || undefined,
       finishReason,
+      toolCalls: accumulatedToolCalls.length > 0 ? accumulatedToolCalls : undefined,
       usage: finalUsage,
     };
 }
@@ -477,13 +499,13 @@ abstract class OpenAICompatibleProvider implements Provider {
 
   protected buildPayload(
     model: string,
-    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    messages: GatewayMessage[],
     options?: ProviderCompleteOptions,
     stream?: boolean,
   ): Record<string, unknown> {
     const body: Record<string, unknown> = {
       model,
-      messages,
+      messages: mapGatewayMessagesToOpenAI(messages),
       stream: stream ?? false,
     };
     if (options?.maxTokens !== undefined) {
@@ -496,6 +518,9 @@ abstract class OpenAICompatibleProvider implements Provider {
     }
     if (options?.tools !== undefined && options.tools.length > 0) {
       body['tools'] = options.tools;
+    }
+    if (options?.toolChoice !== undefined) {
+      body['tool_choice'] = options.toolChoice;
     }
     if (stream) {
       body['stream_options'] = { include_usage: true };
@@ -550,6 +575,7 @@ abstract class OpenAICompatibleProvider implements Provider {
       if (isString(reasoning)) content = reasoning;
     }
     const finishReason: string = safeString(choice['finish_reason']) || 'stop';
+    const toolCalls = parseOpenAIToolCalls(message['tool_calls']);
 
     const rawUsage = data['usage'];
     const usage: AICompletionResponse['usage'] = isObject(rawUsage)
@@ -560,7 +586,12 @@ abstract class OpenAICompatibleProvider implements Provider {
         }
       : { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
-    return { content, finishReason, usage };
+    return {
+      content,
+      finishReason: toolCalls.length > 0 && finishReason === 'stop' ? 'tool_calls' : finishReason,
+      toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+      usage,
+    };
   }
 
   async listModels(apiKey: string, baseUrl?: string, signal?: AbortSignal): Promise<string[]> {
@@ -638,7 +669,7 @@ export class AnthropicProvider implements Provider {
 
   async complete(
     model: string,
-    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    messages: GatewayMessage[],
     apiKey: string,
     options?: ProviderCompleteOptions,
   ): Promise<AICompletionResponse> {
@@ -677,7 +708,7 @@ export class AnthropicProvider implements Provider {
 
   async *stream(
     model: string,
-    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    messages: GatewayMessage[],
     apiKey: string,
     options?: ProviderCompleteOptions,
   ): AsyncGenerator<AIStreamChunk, AICompletionResponse> {
@@ -810,7 +841,7 @@ export class AnthropicProvider implements Provider {
 
   private buildPayload(
     model: string,
-    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    messages: GatewayMessage[],
     options?: ProviderCompleteOptions,
     stream?: boolean,
   ): Record<string, unknown> {
@@ -903,7 +934,7 @@ export class GoogleProvider implements Provider {
 
   async complete(
     model: string,
-    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    messages: GatewayMessage[],
     apiKey: string,
     options?: ProviderCompleteOptions,
   ): Promise<AICompletionResponse> {
@@ -943,7 +974,7 @@ export class GoogleProvider implements Provider {
 
   async *stream(
     model: string,
-    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    messages: GatewayMessage[],
     apiKey: string,
     options?: ProviderCompleteOptions,
   ): AsyncGenerator<AIStreamChunk, AICompletionResponse> {
@@ -1044,7 +1075,7 @@ export class GoogleProvider implements Provider {
   }
 
   private buildPayload(
-    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    messages: GatewayMessage[],
     options?: ProviderCompleteOptions,
   ): Record<string, unknown> {
     // Google uses "contents" array with role mapping
@@ -1186,7 +1217,7 @@ export class OllamaProvider implements Provider {
 
   async complete(
     model: string,
-    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    messages: GatewayMessage[],
     _apiKey: string,
     options?: ProviderCompleteOptions,
   ): Promise<AICompletionResponse> {
@@ -1215,7 +1246,7 @@ export class OllamaProvider implements Provider {
 
   async *stream(
     model: string,
-    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    messages: GatewayMessage[],
     _apiKey: string,
     options?: ProviderCompleteOptions,
   ): AsyncGenerator<AIStreamChunk, AICompletionResponse> {
@@ -1282,7 +1313,7 @@ export class OllamaProvider implements Provider {
 
   private buildPayload(
     model: string,
-    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    messages: GatewayMessage[],
     options?: ProviderCompleteOptions,
     stream?: boolean,
   ): Record<string, unknown> {
@@ -1360,9 +1391,12 @@ export class CustomProvider extends OpenAICompatibleProvider {
   readonly name: AIProvider = 'custom';
 
   protected getDefaultBaseUrl(): string {
-    // Custom providers MUST supply a baseUrl via the stored API key.
-    // The Gateway passes it through options.baseUrl.
-    return '';
+    throw new ProviderError(
+      this.name,
+      0,
+      'missing_base_url',
+      'Custom providers require a base URL.',
+    );
   }
 }
 

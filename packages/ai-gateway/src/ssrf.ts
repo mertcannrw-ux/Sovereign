@@ -1,8 +1,10 @@
 /**
  * SSRF protection for outbound AI provider HTTP requests.
  *
- * Validates URLs before making requests: requires HTTPS, blocks credentials/
- * fragments/non-default ports, resolves DNS, and rejects private/metadata IPs.
+ * Public custom providers must be HTTPS (any port). HTTP is allowed only for
+ * literal loopback so local OpenAI-compatible servers (Ollama, vLLM, LM Studio)
+ * still work. Credentials and fragments are rejected. Non-loopback hosts are
+ * DNS-resolved and private/metadata IPs are blocked.
  */
 import { promises as dns } from 'dns';
 
@@ -90,6 +92,32 @@ function isPrivateIP(ip: string): boolean {
   return true; // Unknown format – block
 }
 
+function isLoopbackIPv4(ip: string): boolean {
+  const match = IPV4_RE.exec(ip);
+  if (!match) return false;
+  const octets = [Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4])];
+  if (octets.some((n) => n > 255)) return false;
+  return octets[0] === 127;
+}
+
+/**
+ * True loopback only. A hostname prefix like `127.` is not an IP and can
+ * resolve anywhere (e.g. `127.0.0.1.nip.io`).
+ */
+function unwrapHostname(hostname: string): string {
+  if (hostname.startsWith('[') && hostname.endsWith(']')) {
+    return hostname.slice(1, -1);
+  }
+  return hostname;
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const host = unwrapHostname(hostname).toLowerCase();
+  if (host === 'localhost') return true;
+  if (isLoopbackIPv6(host)) return true;
+  return isLoopbackIPv4(host);
+}
+
 // ─── URL validation ────────────────────────────────────────
 
 export class SsrfError extends Error {
@@ -100,12 +128,11 @@ export class SsrfError extends Error {
 }
 
 /**
- * Synchronous URL validation — checks scheme, credentials, port, fragments.
- * Does NOT perform DNS resolution.
- * F-21: allows http:// for local Ollama (localhost / 127.x.x.x / ::1) and
- * permits the Ollama default port 11434 when explicitly configured via options.
+ * Synchronous URL validation — scheme, credentials, fragments.
+ * Does NOT perform DNS resolution. HTTP is allowed for literal loopback
+ * so custom local providers work. Remote custom providers may use any HTTPS port.
  */
-export function validateUrl(url: string, options?: { allowHttpLocalhost?: boolean }): URL {
+export function validateUrl(url: string): URL {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -113,33 +140,19 @@ export function validateUrl(url: string, options?: { allowHttpLocalhost?: boolea
     throw new SsrfError('Invalid URL');
   }
 
-  const isLocalHost =
-    parsed.hostname === 'localhost' ||
-    parsed.hostname === '127.0.0.1' ||
-    parsed.hostname === '::1' ||
-    parsed.hostname.startsWith('127.');
+  const isLocalHost = isLoopbackHostname(parsed.hostname);
 
-  // F-21: permit http for localhost/loopback or when caller opts in (e.g. Ollama http://localhost:11434)
-  const allowHttp = options?.allowHttpLocalhost ?? isLocalHost;
-  if (parsed.protocol === 'http:' && !allowHttp) {
+  if (parsed.protocol === 'http:' && !isLocalHost) {
     throw new SsrfError('Only HTTPS URLs are allowed');
   }
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
     throw new SsrfError('Only HTTPS URLs are allowed');
   }
 
-  // Reject embedded credentials
   if (parsed.username || parsed.password) {
     throw new SsrfError('URLs with credentials are not allowed');
   }
 
-  // Reject non-default ports — except 11434 (Ollama) and localhost http
-  const allowedPorts = new Set(['', '443', '11434']);
-  if (parsed.port && !allowedPorts.has(parsed.port) && !isLocalHost) {
-    throw new SsrfError('Non-default ports are not allowed');
-  }
-
-  // Reject fragments
   if (parsed.hash) {
     throw new SsrfError('URLs with fragments are not allowed');
   }
@@ -158,21 +171,13 @@ export async function validateOutboundUrl(
   url: string,
 ): Promise<{ url: URL; addresses: string[] }> {
   const parsed = validateUrl(url);
-  // Local/loopback hosts (localhost, 127.*, ::1) are trusted by policy
-  // (F-21 / Ollama) and cannot resolve to an unexpected public IP, so DNS
-  // rebinding is not a concern. Skip resolution + IP pinning for them —
-  // otherwise legitimate local endpoints like http://localhost:11434 would be
-  // blocked (regression N-1).
-  if (isLocalHostname(parsed)) {
+  // Literal loopback cannot rebind to another address, so skip DNS pinning.
+  // Blocking it would reject local custom providers (Ollama, vLLM, etc.).
+  if (isLoopbackHostname(parsed.hostname)) {
     return { url: parsed, addresses: [] };
   }
   const addresses = await resolveHostnameValidated(parsed.hostname);
   return { url: parsed, addresses };
-}
-
-function isLocalHostname(parsed: URL): boolean {
-  const host = parsed.hostname;
-  return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.startsWith('127.');
 }
 
 
