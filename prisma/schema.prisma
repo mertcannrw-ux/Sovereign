@@ -74,6 +74,34 @@ enum FileOperation {
   @@map("file_operation")
 }
 
+enum GenerationMode {
+  PLAN
+  BUILD
+
+  @@map("generation_mode")
+}
+
+enum GenerationRunStatus {
+  RUNNING
+  WAITING_RUNTIME
+  VERIFYING
+  SUCCEEDED
+  FAILED
+  CANCELED
+
+  @@map("generation_run_status")
+}
+
+enum VerifyReportStatus {
+  QUEUED
+  RUNNING
+  PASSED
+  FAILED
+  SKIPPED
+
+  @@map("verify_report_status")
+}
+
 // ─── Users & Authentication ────────────────────────────────
 
 model User {
@@ -103,6 +131,7 @@ model User {
   platformApiKeys       PlatformApiKey[]
   imageProviderConfigs  ImageProviderConfig[]
   createdAssets         ProjectAsset[]
+  generationRuns        GenerationRun[]
 
   @@map("users")
 }
@@ -315,9 +344,10 @@ model Project {
   thumbnailUrl  String?       @map("thumbnail_url")
   modelProvider String        @default("openai") @map("model_provider")
   modelName     String        @default("") @map("model_name")
-  createdAt     DateTime      @default(now()) @map("created_at")
-  updatedAt     DateTime      @updatedAt @map("updated_at")
-  publishedAt   DateTime?     @map("published_at")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+  publishedAt     DateTime?     @map("published_at")
+  vercelProjectId String?       @map("vercel_project_id")
 
   owner         User                  @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   organization  Organization          @relation(fields: [organizationId], references: [id], onDelete: Restrict)
@@ -336,6 +366,9 @@ model Project {
   metrics       ProjectMetric[]
   assets              ProjectAsset[]
   designDirectionSets DesignDirectionSet[]
+  generationRuns      GenerationRun[]
+  agentPlans          AgentPlan[]
+  verifyReports       VerifyReport[]
 
   @@index([ownerId])
   @@index([organizationId])
@@ -882,4 +915,91 @@ model DesignDirection {
   @@unique([setId, orderNumber])
   @@index([setId])
   @@map("design_directions")
+}
+
+// ─── Generation Runs, Plans & Verify ───────────────────────
+
+model GenerationRun {
+  id              String              @id @default(uuid())
+  projectId       String              @map("project_id")
+  userId          String              @map("user_id")
+  mode            GenerationMode      @default(BUILD)
+  status          GenerationRunStatus @default(RUNNING)
+  modelProvider   String              @map("model_provider")
+  modelName       String              @map("model_name")
+  sourceMessageId String?             @map("source_message_id")
+  planId          String?             @map("plan_id")
+  autoFixCount    Int                 @default(0) @map("auto_fix_count")
+  tokenUsage      Json?               @map("token_usage")
+  errorCode       String?             @map("error_code")
+  startedAt       DateTime            @default(now()) @map("started_at")
+  completedAt     DateTime?           @map("completed_at")
+
+  project  Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user     User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  traces   GenerationToolTrace[]
+  report   VerifyReport?
+  plan     AgentPlan?            @relation(fields: [planId], references: [id], onDelete: SetNull)
+
+  @@index([projectId, startedAt])
+  @@index([userId, startedAt])
+  @@map("generation_runs")
+}
+
+model GenerationToolTrace {
+  id            String    @id @default(uuid())
+  runId         String    @map("run_id")
+  toolCallId    String    @map("tool_call_id")
+  name          String
+  arguments     Json?
+  result        Json?
+  status        String
+  requestId     String?   @map("request_id")
+  command       String?
+  timeoutMs     Int?      @map("timeout_ms")
+  expiresAt     DateTime? @map("expires_at")
+  filesRevision String?   @map("files_revision")
+  durationMs    Int?      @map("duration_ms")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  run GenerationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, createdAt])
+  @@index([requestId])
+  @@index([createdAt])
+  @@map("generation_tool_traces")
+}
+
+model AgentPlan {
+  id          String    @id @default(uuid())
+  projectId   String    @map("project_id")
+  steps       Json
+  explanation String?
+  approvedAt  DateTime? @map("approved_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  project Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  runs    GenerationRun[]
+
+  @@index([projectId, createdAt])
+  @@map("agent_plans")
+}
+
+model VerifyReport {
+  id           String             @id @default(uuid())
+  runId        String             @unique @map("run_id")
+  projectId    String             @map("project_id")
+  status       VerifyReportStatus
+  reason       String?
+  channels     Json
+  rawLogsR2Key String?            @map("raw_logs_r2_key")
+  createdAt    DateTime           @default(now()) @map("created_at")
+  updatedAt    DateTime           @updatedAt @map("updated_at")
+
+  run     GenerationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  project Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt])
+  @@map("verify_reports")
 }
