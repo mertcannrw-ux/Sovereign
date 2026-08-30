@@ -169,7 +169,8 @@ export function actionsFromToolCalls(
 ): AgentAction {
   const actions = calls.map((call) => parseToolCallAction(call.function.name, call.function.arguments));
   if (actions.length === 1) return actions[0]!;
-  return { type: 'batch', actions };
+  // Each child comes from a single tool call, so it is never a nested batch.
+  return { type: 'batch', actions: actions as Array<Exclude<AgentAction, { type: 'batch' }>> };
 }
 
 export function getStreamingFileFromToolCalls(

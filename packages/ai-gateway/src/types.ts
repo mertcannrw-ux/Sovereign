@@ -1,5 +1,4 @@
 import type { AIProvider } from '@app-builder/shared';
-import type { GatewayMessage } from './tool-calls';
 
 export type { GatewayMessage, ToolCall } from './tool-calls';
 
