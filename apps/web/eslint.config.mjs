@@ -35,6 +35,11 @@ export default [
       'react-hooks/set-state-in-effect': 'warn',
       'react-hooks/immutability': 'warn',
       'react-hooks/static-components': 'warn',
+      // The ref-mirror pattern (`latestRef.current = value` during render) is
+      // used deliberately in the generation/preview hooks so event callbacks
+      // read fresh values without effect lag. Same rationale as above: warn,
+      // don't break the build, until those hooks are migrated.
+      'react-hooks/refs': 'warn',
       '@typescript-eslint/no-require-imports': 'warn',
       '@typescript-eslint/no-unused-vars': [
         'warn',

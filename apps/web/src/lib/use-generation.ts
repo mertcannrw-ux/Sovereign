@@ -95,6 +95,7 @@ export interface UseGenerationResult {
   send: (
     messageOverride?: string,
     directionResponseOverride?: GenerateDirectionResponse,
+    editTargetOverride?: GenerationEditTarget,
   ) => Promise<void>;
   stop: () => void;
   answerClarification: (answer: string) => void;
@@ -226,13 +227,19 @@ export function useGeneration({
   }, []);
 
   const send = useCallback(
-    async (messageOverride?: string, directionResponseOverride?: GenerateDirectionResponse) => {
+    async (
+      messageOverride?: string,
+      directionResponseOverride?: GenerateDirectionResponse,
+      editTargetOverride?: GenerationEditTarget,
+    ) => {
       const text = messageOverride?.trim() ?? '';
       if ((!text && !directionResponseOverride) || isSending || !selectedModel || !selectedProvider)
         return;
       const abortController = new AbortController();
       abortControllerRef.current = abortController;
-      const currentEditTarget = editTargetRef.current;
+      // An explicit override (in-preview quick edit) wins; otherwise use the
+      // currently selected element (if any) as the edit target.
+      const currentEditTarget = editTargetOverride ?? editTargetRef.current;
       const runtime = previewRef.current;
 
       const optimisticId = crypto.randomUUID();
@@ -246,7 +253,7 @@ export function useGeneration({
 
       setLocalMessages((previous) => [...previous, userMessage]);
       onClearInputRef.current?.();
-      onClearEditTargetRef.current?.();
+      if (!editTargetOverride) onClearEditTargetRef.current?.();
       setIsSending(true);
       setAgentLiveMessage('Agent started');
       setGenerationPhase({ phase: 'planning', label: 'Planning your app' });
@@ -305,7 +312,12 @@ export function useGeneration({
             return;
           }
           if (event.type === 'file-preview') {
-            if (event.data.operation !== 'delete' && event.data.content !== undefined) {
+            if (event.data.operation === 'delete') {
+              // Rollback of a previewed-but-uncommitted file.
+              runtime.applyFilePreview(event.data);
+              return;
+            }
+            if (event.data.content !== undefined) {
               setActiveFile({
                 path: event.data.path,
                 content: event.data.content,

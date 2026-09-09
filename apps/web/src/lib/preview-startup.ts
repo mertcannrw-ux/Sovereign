@@ -91,10 +91,14 @@ export interface PreviewEventSource {
 }
 
 /**
- * Flag defaults off. Only `'1'` enables Vite-in-WebContainer.
- * `next.config.mjs` copies `SOVEREIGN_VITE_PREVIEW` onto `NEXT_PUBLIC_SOVEREIGN_VITE_PREVIEW`
- * so the client bundle (WC hooks) sees the RFC flag. A server-only env var is not enough
- * without that mapping.
+ * Vite-in-WebContainer is ON by default: the agent builds Vite/React projects
+ * (package.json + TSX), and the static file server cannot compile them — it
+ * would serve `.tsx` as an opaque octet-stream and the preview would go blank.
+ * Projects without a package.json still use the static server.
+ *
+ * Opt out with SOVEREIGN_VITE_PREVIEW=0 (or "false") to force the static
+ * engine everywhere. `next.config.mjs` copies the server-side var onto
+ * NEXT_PUBLIC_SOVEREIGN_VITE_PREVIEW so the client bundle (WC hooks) sees it.
  */
 export function isVitePreviewEnabled(
   env: Record<string, string | undefined> = {
@@ -102,7 +106,9 @@ export function isVitePreviewEnabled(
     NEXT_PUBLIC_SOVEREIGN_VITE_PREVIEW: process.env.NEXT_PUBLIC_SOVEREIGN_VITE_PREVIEW,
   },
 ): boolean {
-  return env.NEXT_PUBLIC_SOVEREIGN_VITE_PREVIEW === '1' || env.SOVEREIGN_VITE_PREVIEW === '1';
+  const raw = env.NEXT_PUBLIC_SOVEREIGN_VITE_PREVIEW || env.SOVEREIGN_VITE_PREVIEW;
+  if (raw === '0' || raw === 'false') return false;
+  return true;
 }
 
 export function hasPackageJson(files: { path: string }[]): boolean {

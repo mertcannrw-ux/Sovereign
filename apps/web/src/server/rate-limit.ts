@@ -1,6 +1,7 @@
 /**
  * Rate limiting with Upstash Redis sliding window.
- * Falls through (allows all) when Upstash is not configured.
+ * Falls back to per-instance in-memory limits when Upstash is not configured
+ * or unreachable, so an outage can never brick sign-in/registration.
  */
 
 import { env } from '@/env';
@@ -53,6 +54,20 @@ function devSlidingWindow(key: string, config: RateLimitConfig): RateLimitResult
 
 // ─── Upstash sliding window ──────────────────────────────
 
+// Emitted once per process: an Upstash outage must not lock every user out of
+// sign-in/registration, so we fall back to the in-memory limiter (per-instance,
+// still functional) instead of denying everything in production.
+let warnedUpstashDown = false;
+
+function onUpstashUnavailable(reason: string): void {
+  if (process.env.NODE_ENV === 'production' && !warnedUpstashDown) {
+    warnedUpstashDown = true;
+    console.warn(
+      `[rate-limit] Upstash unreachable (${reason}); falling back to per-instance in-memory limits.`,
+    );
+  }
+}
+
 async function upstashSlidingWindow(
   key: string,
   config: RateLimitConfig,
@@ -75,12 +90,6 @@ async function upstashSlidingWindow(
     ['EXPIRE', key, config.windowSeconds.toString()],
   ];
 
-  const denied: RateLimitResult = {
-    allowed: false,
-    remaining: 0,
-    resetAt: now * 1000 + config.windowSeconds * 1000,
-  };
-
   let response: Response;
   try {
     response = await fetch(`${url}/pipeline`, {
@@ -92,27 +101,32 @@ async function upstashSlidingWindow(
       body: JSON.stringify(pipeline),
     });
   } catch {
-    return process.env.NODE_ENV === 'production' ? denied : devSlidingWindow(key, config);
+    onUpstashUnavailable('network error');
+    return devSlidingWindow(key, config);
   }
 
   if (!response.ok) {
-    return process.env.NODE_ENV === 'production' ? denied : devSlidingWindow(key, config);
+    onUpstashUnavailable(`HTTP ${response.status}`);
+    return devSlidingWindow(key, config);
   }
 
   let results: unknown;
   try {
     results = await response.json();
   } catch {
-    return process.env.NODE_ENV === 'production' ? denied : devSlidingWindow(key, config);
+    onUpstashUnavailable('malformed response');
+    return devSlidingWindow(key, config);
   }
 
   if (!Array.isArray(results) || results.length < 4) {
-    return process.env.NODE_ENV === 'production' ? denied : devSlidingWindow(key, config);
+    onUpstashUnavailable('unexpected pipeline shape');
+    return devSlidingWindow(key, config);
   }
 
   const card = results[2] as { result?: unknown; error?: unknown };
   if (card.error != null || typeof card.result !== 'number') {
-    return process.env.NODE_ENV === 'production' ? denied : devSlidingWindow(key, config);
+    onUpstashUnavailable('ZADD/ZCARD error');
+    return devSlidingWindow(key, config);
   }
 
   const count = card.result;
@@ -139,8 +153,8 @@ export const RATE_LIMITS = {
 
 export type RateLimitKey = keyof typeof RATE_LIMITS;
 
-// Emitted once per process so operators notice pre-auth buckets collapse to a
-// single global key when no trusted proxy header is present.
+// Emitted once per process so operators notice pre-auth buckets are keyed
+// per-email (not per client IP) when no trusted proxy header is present.
 let warnedTrustedProxy = false;
 
 export async function checkRateLimit(
@@ -155,8 +169,8 @@ export async function checkRateLimit(
     warnedTrustedProxy = true;
     console.warn(
       '[rate-limit] TRUSTED_PROXY is not set. Requests are seen as 127.0.0.1, so pre-auth ' +
-        'limits (register/signIn) share one GLOBAL bucket. Set TRUSTED_PROXY=true behind your ' +
-        'proxy so limits are enforced per client IP.',
+        'limits (register/signIn) are keyed per email instead of per client IP. Set ' +
+        'TRUSTED_PROXY=true behind your proxy so limits are enforced per client IP.',
     );
   }
 

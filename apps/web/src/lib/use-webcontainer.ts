@@ -35,6 +35,7 @@ let containerPromise: Promise<WebContainer> | null = null;
 /** Module-level reference so a remount can kill the previous server. */
 let previousBootServer: PreviewProcess | null = null;
 let diagnosticsAttached = false;
+let bootListenerAttached = false;
 let diagnosticsLog: (line: string) => void = () => {};
 let diagnosticsError: (message: string) => void = () => {};
 
@@ -275,6 +276,17 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
     });
   }, [enqueue, maybeSwitchToVite, writeFilesToContainer]);
 
+  const removeFiles = useCallback(
+    (paths: string[]) => {
+      if (paths.length === 0) return Promise.resolve();
+      return enqueue(async () => {
+        const container = await getContainer();
+        await Promise.all(paths.map((path) => container.fs.rm(path, { force: true })));
+      });
+    },
+    [enqueue],
+  );
+
   const boot = useCallback(async () => {
     if (bootedRef.current) return;
     bootedRef.current = true;
@@ -283,26 +295,32 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
       try {
         setState((current) => ({ ...current, status: 'booting', error: null }));
         const container = await getContainer();
-        container.on('server-ready', (_port, url) => {
-          const pending = pendingProcessRef.current;
-          if (pending && previousBootServer && previousBootServer !== pending) {
-            killProcess(previousBootServer);
-          }
-          if (pending) {
-            previousBootServer = pending;
-            serverRef.current = pending;
-            pendingProcessRef.current = null;
-          }
-          cancelViteWatchRef.current?.();
-          cancelViteWatchRef.current = null;
-          setState((current) => ({
-            ...current,
-            status: 'ready',
-            url,
-            engine: engineRef.current,
-            disclosure: engineRef.current === 'vite' ? PREVIEW_JS_DISCLOSURE : current.disclosure,
-          }));
-        });
+        // The container is a module-level singleton, so its server-ready
+        // listener must be attached exactly once — a retried boot must not
+        // stack duplicate listeners.
+        if (!bootListenerAttached) {
+          bootListenerAttached = true;
+          container.on('server-ready', (_port, url) => {
+            const pending = pendingProcessRef.current;
+            if (pending && previousBootServer && previousBootServer !== pending) {
+              killProcess(previousBootServer);
+            }
+            if (pending) {
+              previousBootServer = pending;
+              serverRef.current = pending;
+              pendingProcessRef.current = null;
+            }
+            cancelViteWatchRef.current?.();
+            cancelViteWatchRef.current = null;
+            setState((current) => ({
+              ...current,
+              status: 'ready',
+              url,
+              engine: engineRef.current,
+              disclosure: engineRef.current === 'vite' ? PREVIEW_JS_DISCLOSURE : current.disclosure,
+            }));
+          });
+        }
         diagnosticsLog = appendLog;
         diagnosticsError = (message) => {
           setState((current) => ({ ...current, status: 'error', error: message }));
@@ -325,6 +343,16 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
         if (mode === 'vite') viteAttemptedRef.current = true;
         await bootPreview(mode);
       } catch (error) {
+        // A failed boot must not brick the session: clear the module-level
+        // promise (a rejected WebContainer.boot never recovers) and the
+        // bootedRef latch so a later retry can start over. Kill any half-
+        // started preview process so it cannot keep running orphaned.
+        containerPromise = null;
+        bootedRef.current = false;
+        cancelViteWatchRef.current?.();
+        cancelViteWatchRef.current = null;
+        killProcess(pendingProcessRef.current);
+        pendingProcessRef.current = null;
         setState((current) => ({
           ...current,
           status: 'error',
@@ -340,6 +368,10 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
       await maybeSwitchToVite(files);
     });
   }, [enqueue, maybeSwitchToVite, writeFilesToContainer]);
+
+  const retry = useCallback(() => {
+    void boot();
+  }, [boot]);
 
   useEffect(() => {
     return () => {
@@ -362,6 +394,8 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
     ...state,
     writeFiles: writeFilesAndMaybeVite,
     replaceFiles,
+    removeFiles,
+    retry,
     triggerRefresh: doRefresh,
   };
 }

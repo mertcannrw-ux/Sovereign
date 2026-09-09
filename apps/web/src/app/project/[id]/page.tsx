@@ -165,6 +165,18 @@ export default function ProjectWorkspace() {
     onRestoreInput: (text) => setInput(text),
   });
 
+  const handleQuickEdit = useCallback(
+    (prompt: string, element: SelectedPreviewElement) => {
+      if (generation.isSending) return;
+      // Keep the element highlighted in the preview while the edit runs, and
+      // pass it as an explicit override so the request cannot miss it even if
+      // the send fires before the next render commits the selection state.
+      setSelectedPreviewElement(element);
+      requestAnimationFrame(() => void generation.send(prompt, undefined, element));
+    },
+    [generation],
+  );
+
   const smoothCursor = useSmoothCursor(
     generation.activeFile
       ? { line: generation.activeFile.line, column: generation.activeFile.column }
@@ -488,6 +500,8 @@ export default function ProjectWorkspace() {
               selectedPreviewElement={selectedPreviewElement}
               onSelectedElementChange={setSelectedPreviewElement}
               onElementSelected={() => requestAnimationFrame(() => inputRef.current?.focus())}
+              onQuickEdit={handleQuickEdit}
+              onRetry={preview.retry}
             />
           )}
           {activeTab === 'code' && (

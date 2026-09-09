@@ -2,6 +2,10 @@ import { TRPCError } from '@trpc/server';
 import type { Context } from '@/lib/trpc/context';
 import { OrganizationRole, ProjectRole } from '@app-builder/shared';
 
+/** The subset of the tRPC context these checks need, so raw route handlers
+ * (which have session + db but no full tRPC context) can reuse them too. */
+export type AuthzContext = Pick<Context, 'user' | 'db'>;
+
 // ─── Role hierarchy (higher index = more permissions) ─────
 
 const ORG_ROLE_HIERARCHY: Record<OrganizationRole, number> = {
@@ -27,7 +31,7 @@ function hasMinimumProjectRole(userRole: ProjectRole, minimum: ProjectRole): boo
 // ─── Organization-level authorization ─────────────────────
 
 export async function requireOrganizationRole(
-  ctx: Context,
+  ctx: AuthzContext,
   organizationId: string,
   minimumRole: OrganizationRole,
 ): Promise<{ role: OrganizationRole }> {
@@ -58,7 +62,7 @@ export async function requireOrganizationRole(
 // ─── Project-level authorization ──────────────────────────
 
 export async function requireProjectRole(
-  ctx: Context,
+  ctx: AuthzContext,
   projectId: string,
   minimumRole: ProjectRole,
 ): Promise<{ role: ProjectRole; organizationId: string }> {
@@ -121,7 +125,7 @@ export async function requireProjectRole(
 // ─── Convenience wrappers ─────────────────────────────────
 
 export async function requireProjectOwner(
-  ctx: Context,
+  ctx: AuthzContext,
   projectId: string,
 ): Promise<{ organizationId: string }> {
   const result = await requireProjectRole(ctx, projectId, 'OWNER');
@@ -129,7 +133,7 @@ export async function requireProjectOwner(
 }
 
 export async function requireProjectEditor(
-  ctx: Context,
+  ctx: AuthzContext,
   projectId: string,
 ): Promise<{ organizationId: string }> {
   const result = await requireProjectRole(ctx, projectId, 'EDITOR');
@@ -137,7 +141,7 @@ export async function requireProjectEditor(
 }
 
 export async function requireProjectViewer(
-  ctx: Context,
+  ctx: AuthzContext,
   projectId: string,
 ): Promise<{ organizationId: string }> {
   const result = await requireProjectRole(ctx, projectId, 'VIEWER');

@@ -1,6 +1,8 @@
 'use client';
 
 import { useMemo, useState, type ReactNode, type RefObject } from 'react';
+import ReactMarkdown, { type Components } from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { cn } from '@app-builder/ui/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -30,6 +32,104 @@ import {
 
 function formatTime(date: Date): string {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+/**
+ * Tailwind-styled markdown element overrides. react-markdown does not render
+ * raw HTML by default (no rehype-raw), so model output cannot inject markup.
+ */
+const markdownComponents: Components = {
+  p: ({ node: _node, ...props }) => (
+    <p
+      className="my-1.5 whitespace-pre-wrap text-sm leading-relaxed text-foreground-secondary"
+      {...props}
+    />
+  ),
+  a: ({ node: _node, ...props }) => (
+    <a
+      className="text-primary underline decoration-primary/40 underline-offset-2 transition-colors hover:decoration-primary"
+      target="_blank"
+      rel="noopener noreferrer"
+      {...props}
+    />
+  ),
+  strong: ({ node: _node, ...props }) => (
+    <strong className="font-semibold text-foreground" {...props} />
+  ),
+  em: ({ node: _node, ...props }) => <em className="italic" {...props} />,
+  code: ({ node: _node, ...props }) => (
+    <code
+      className="rounded-md bg-background-muted px-1.5 py-0.5 font-mono text-[0.85em] text-foreground"
+      {...props}
+    />
+  ),
+  pre: ({ node: _node, ...props }) => (
+    <pre
+      className="my-2 overflow-x-auto rounded-lg border border-border/60 bg-background-muted/50 p-3 font-mono text-xs leading-relaxed text-foreground-secondary"
+      {...props}
+    />
+  ),
+  ul: ({ node: _node, ...props }) => (
+    <ul className="my-1.5 list-disc space-y-1 pl-5 text-sm leading-relaxed text-foreground-secondary" {...props} />
+  ),
+  ol: ({ node: _node, ...props }) => (
+    <ol className="my-1.5 list-decimal space-y-1 pl-5 text-sm leading-relaxed text-foreground-secondary" {...props} />
+  ),
+  li: ({ node: _node, ...props }) => <li className="leading-relaxed" {...props} />,
+  input: ({ node: _node, ...props }) => (
+    <input className="mr-1.5 inline-block h-3.5 w-3.5 align-middle accent-primary" disabled {...props} />
+  ),
+  h1: ({ node: _node, ...props }) => (
+    <h1 className="mb-1.5 mt-3 text-base font-semibold text-foreground first:mt-0" {...props} />
+  ),
+  h2: ({ node: _node, ...props }) => (
+    <h2 className="mb-1.5 mt-3 text-[15px] font-semibold text-foreground first:mt-0" {...props} />
+  ),
+  h3: ({ node: _node, ...props }) => (
+    <h3 className="mb-1 mt-2.5 text-sm font-semibold text-foreground first:mt-0" {...props} />
+  ),
+  h4: ({ node: _node, ...props }) => (
+    <h4 className="mb-1 mt-2.5 text-sm font-medium text-foreground first:mt-0" {...props} />
+  ),
+  blockquote: ({ node: _node, ...props }) => (
+    <blockquote
+      className="my-1.5 border-l-2 border-primary/40 pl-3 text-sm italic text-foreground-muted"
+      {...props}
+    />
+  ),
+  hr: ({ node: _node, ...props }) => (
+    <hr className="my-3 border-border" {...props} />
+  ),
+  table: ({ node: _node, ...props }) => (
+    <div className="my-2 overflow-x-auto rounded-lg border border-border/60">
+      <table className="w-full border-collapse text-sm" {...props} />
+    </div>
+  ),
+  thead: ({ node: _node, ...props }) => (
+    <thead className="bg-background-muted/60" {...props} />
+  ),
+  th: ({ node: _node, ...props }) => (
+    <th
+      className="border-b border-border px-2.5 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-foreground-muted"
+      {...props}
+    />
+  ),
+  td: ({ node: _node, ...props }) => (
+    <td className="border-b border-border/50 px-2.5 py-1.5 align-top text-foreground-secondary" {...props} />
+  ),
+  del: ({ node: _node, ...props }) => (
+    <del className="text-foreground-muted" {...props} />
+  ),
+};
+
+function Markdown({ text }: { text: string }) {
+  return (
+    <div className="min-w-0 space-y-0 [&_p:first-child]:mt-0 [&_pre:first-child]:mt-0">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+        {text}
+      </ReactMarkdown>
+    </div>
+  );
 }
 
 function MessageContent({ content, thinking }: { content: string; thinking?: string | null }) {
@@ -81,12 +181,9 @@ function MessageContent({ content, thinking }: { content: string; thinking?: str
           );
         }
         return (
-          <p
-            key={i}
-            className="whitespace-pre-wrap text-sm leading-relaxed text-foreground-secondary"
-          >
-            {part}
-          </p>
+          <div key={i} className="min-w-0">
+            <Markdown text={part} />
+          </div>
         );
       })}
     </div>

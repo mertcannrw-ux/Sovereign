@@ -3,12 +3,14 @@ import { getServerSession } from 'next-auth';
 import { NextRequest } from 'next/server';
 import { getProvider, generateImage, ProviderError } from '@app-builder/ai-gateway';
 import { applyStackContract, isForbiddenEnvPath, type StackContractChange } from '@app-builder/codegen';
+import { TRPCError } from '@trpc/server';
 import { uploadProjectAsset } from '@/server/assets/project-assets';
 import { getR2ConfigStatus } from '@/server/assets/r2';
 import { AIProvider } from '@app-builder/shared';
 import { authOptions } from '@/lib/auth';
 import { decryptApiKey } from '@/lib/crypto';
 import { getDb } from '@/lib/db';
+import { requireProjectRole } from '@/server/authz';
 import { applyAgentEdit, getAgentFileMutationPaths, getDesignDirectionActionError, getStreamingFileAction, getStreamingThought, parseAgentAction, MAX_IMAGES_PER_RUN, type AgentAction, type AgentReadRequest, type AgentStep } from '@/lib/agent-protocol';
 import {
   SOVEREIGN_TOOLS,
@@ -45,7 +47,18 @@ interface GenerateBody {
   };
 }
 
-const MAX_ITERATIONS = 40;
+const MAX_ITERATIONS =
+  Number(process.env.SOVEREIGN_MAX_ITERATIONS) > 0
+    ? Math.floor(Number(process.env.SOVEREIGN_MAX_ITERATIONS))
+    : null;
+const TURN_MAX_TOKENS =
+  Number(process.env.SOVEREIGN_MAX_TOKENS) > 0
+    ? Math.floor(Number(process.env.SOVEREIGN_MAX_TOKENS))
+    : undefined;
+const MAX_NO_PROGRESS_TURNS =
+  Number(process.env.SOVEREIGN_MAX_NO_PROGRESS) > 0
+    ? Math.floor(Number(process.env.SOVEREIGN_MAX_NO_PROGRESS))
+    : 12;
 const MAX_ATTACHMENT_BYTES = 512 * 1024;
 const MAX_READ_RESULT_CHARS = 60_000;
 const IMAGE_GENERATION_CONCURRENCY = 3;
@@ -215,18 +228,27 @@ export async function POST(request: NextRequest) {
   }
 
   const db = getDb();
+  try {
+    // Same authorization as every other project API (authz.ts): project owner,
+    // explicit collaborator with EDITOR+, or org OWNER/ADMIN member (mapped to
+    // project OWNER/EDITOR). The previous inline owner/collaborator check
+    // silently 404'd org OWNER/ADMINs who can edit the same project through
+    // the tRPC routers. All denials map to 404 so project existence stays
+    // hidden from non-members.
+    await requireProjectRole({ user: session.user, db }, projectId, 'EDITOR');
+  } catch (error) {
+    if (error instanceof TRPCError) {
+      return Response.json({ error: 'Project not found' }, { status: 404 });
+    }
+    throw error;
+  }
   const project = await db.project.findUnique({
     where: { id: projectId },
     include: {
-      collaborators: { where: { userId: session.user.id }, select: { role: true } },
       files: { orderBy: { path: 'asc' } },
     },
   });
   if (!project) return Response.json({ error: 'Project not found' }, { status: 404 });
-  const callerRole = project.ownerId === session.user.id ? 'OWNER' : (project.collaborators[0]?.role ?? null);
-  if (callerRole !== 'OWNER' && callerRole !== 'EDITOR') {
-    return Response.json({ error: 'Project not found' }, { status: 404 });
-  }
 
   let providerName: AIProvider;
   try {
@@ -460,15 +482,35 @@ export async function POST(request: NextRequest) {
           });
         }
       };
+      const completeRun = async (content: string) => {
+        const assistantMessage = await db.chatMessage.create({
+          data: {
+            projectId,
+            role: 'assistant',
+            content,
+            model: `${providerName}:${body.modelName}`,
+            tokenUsage: finalUsage,
+            toolCalls: runSteps as never,
+          },
+        });
+        await db.apiKey.update({ where: { id: storedKey.id }, data: { lastUsedAt: new Date() } });
+        send('ready', {
+          userMessage: messageRecord(userMessage),
+          assistantMessage: { ...messageRecord(assistantMessage), tokenUsage: finalUsage },
+          files: [...files].map(([path, content]) => ({ path, content })),
+          versionNumber: latestVersion,
+        });
+      };
       try {
         send('phase', { phase: 'planning', label: 'Starting agent' });
-        for (let iteration = 0; iteration < MAX_ITERATIONS; iteration += 1) {
+        for (let iteration = 0; MAX_ITERATIONS === null || iteration < MAX_ITERATIONS; iteration += 1) {
           if (abortController.signal.aborted) throw new Error('Generation stopped');
           const iterationStartedAt = new Date();
           const thinkingStepId = randomUUID();
           let responseContent = '';
           let reasoningContent = '';
           let streamedToolCalls: ToolCall[] = [];
+          let truncatedThisTurn = false;
           let lastThinkingEmit = 0;
           let lastFilePreviewEmit = 0;
           let previewSignature = '';
@@ -487,7 +529,12 @@ export async function POST(request: NextRequest) {
 
           const generator = provider.stream(body.modelName!, trimMessagesForContext(messages), apiKey, {
             baseUrl: storedKey.baseUrl ?? undefined,
-            maxTokens: 32_000,
+            // No artificial per-turn cap by default ("free" runs): the provider
+            // uses its own maximum output length. Operators can still bound
+            // spend with SOVEREIGN_MAX_TOKENS. Truncated outputs are continued
+            // automatically (finishReason === 'length'), never treated as
+            // failures.
+            ...(TURN_MAX_TOKENS !== undefined ? { maxTokens: TURN_MAX_TOKENS } : {}),
             temperature: 0.2,
             reasoningEffort: body.reasoningEffort,
             signal: abortController.signal,
@@ -500,6 +547,7 @@ export async function POST(request: NextRequest) {
             if (next.done) {
               responseContent = next.value.content || responseContent;
               if (next.value.reasoning) reasoningContent = next.value.reasoning;
+              if (next.value.finishReason === 'length') truncatedThisTurn = true;
               if (next.value.toolCalls && next.value.toolCalls.length > 0) {
                 streamedToolCalls = next.value.toolCalls;
               }
@@ -568,12 +616,33 @@ export async function POST(request: NextRequest) {
               }
             }
           }
+          // The provider cut the completion off at its token ceiling (either
+          // SOVEREIGN_MAX_TOKENS or a provider-imposed limit). Parsing a
+          // truncated action would fail; ask the model to finish the output in
+          // the next turn — never counted as a failure, never aborted.
+          if (truncatedThisTurn && responseContent.trim().length > 0) {
+            messages.push({ role: 'assistant', content: responseContent });
+            messages.push({
+              role: 'user',
+              content:
+                'Your previous output was cut off at the token limit. If you were writing a JSON action, output the COMPLETE valid JSON action now without repeating prose. Otherwise continue your previous message exactly where it stopped.',
+            });
+            emitStep({
+              ...thinkingStep,
+              title: 'Output truncated — continuing',
+              detail: 'The previous completion hit its token ceiling; asking the model to continue.',
+              status: 'complete',
+              completedAt: new Date().toISOString(),
+              durationMs: Date.now() - iterationStartedAt.getTime(),
+            });
+            continue;
+          }
           let action: AgentAction;
           const usedNativeToolCalls = toolsOffered && streamedToolCalls.length > 0;
           try {
             if (usedNativeToolCalls) {
               action = actionsFromToolCalls(streamedToolCalls);
-            } else if (toolsOffered) {
+            } else {
               const text = responseContent.trim();
               if (!text) {
                 action = { type: 'finish', summary: reasoningContent.trim() || 'Done.' };
@@ -581,11 +650,11 @@ export async function POST(request: NextRequest) {
                 try {
                   action = parseAgentAction(text);
                 } catch {
+                  // Free-form output is a valid agent answer — a structured
+                  // action is never required for the run to complete.
                   action = { type: 'respond', message: text };
                 }
               }
-            } else {
-              action = parseAgentAction(responseContent);
             }
             const mutationPaths = getAgentFileMutationPaths(action);
             for (const path of provisionalOriginals.keys()) {
@@ -595,7 +664,6 @@ export async function POST(request: NextRequest) {
             }
             consecutiveProtocolFailures = 0;
           } catch (error) {
-            consecutiveProtocolFailures += 1;
             const completedAt = new Date();
             const message = error instanceof Error ? error.message : 'Invalid action format';
             for (const [path, original] of provisionalOriginals) {
@@ -605,6 +673,52 @@ export async function POST(request: NextRequest) {
             }
             for (const step of provisionalSteps.values()) {
               emitStep({ ...step, status: 'failed', detail: message, completedAt: completedAt.toISOString(), durationMs: completedAt.getTime() - new Date(step.startedAt).getTime() });
+            }
+            if (usedNativeToolCalls && streamedToolCalls.length > 0) {
+              // The model called a tool we cannot execute (unknown name or
+              // malformed arguments). Feed each call back as a tool error —
+              // exactly like a real harness — so the model corrects itself
+              // instead of the run aborting after retries.
+              emitStep({
+                ...thinkingStep,
+                title: 'Tool call rejected',
+                detail: message,
+                status: 'failed',
+                completedAt: completedAt.toISOString(),
+                durationMs: completedAt.getTime() - iterationStartedAt.getTime(),
+              });
+              messages.push({ role: 'assistant', content: responseContent, toolCalls: streamedToolCalls });
+              streamedToolCalls.forEach((call, index) => {
+                messages.push({
+                  role: 'tool',
+                  toolCallId: call.id || `call_${index}`,
+                  content: `error: could not execute "${call.function.name}": ${message}. Only use the tools listed in the system prompt and re-issue the corrected call.`,
+                });
+              });
+              consecutiveProtocolFailures = 0;
+              continue;
+            }
+            consecutiveProtocolFailures += 1;
+            if (consecutiveProtocolFailures >= 3) {
+              // Never hard-fail a run over formatting: surface whatever the
+              // model produced as a normal reply so the user can steer the
+              // next turn.
+              const fallbackText =
+                responseContent.trim() ||
+                'I could not format that step as an action. What should I try instead?';
+              if (responseContent.trim().length > 0) {
+                messages.push({ role: 'assistant', content: responseContent });
+              }
+              emitStep({
+                ...thinkingStep,
+                title: 'Completing with a plain answer',
+                detail: message,
+                status: 'complete',
+                completedAt: completedAt.toISOString(),
+                durationMs: completedAt.getTime() - iterationStartedAt.getTime(),
+              });
+              await completeRun(fallbackText);
+              return;
             }
             emitStep({
               ...thinkingStep,
@@ -616,7 +730,6 @@ export async function POST(request: NextRequest) {
             });
             messages.push({ role: 'assistant', content: responseContent });
             messages.push({ role: 'user', content: `The action could not be parsed: ${message}. Correct the format and continue. Do not explain the formatting error to the user.` });
-            if (consecutiveProtocolFailures >= 3) throw new Error('The selected model could not produce a valid agent action after three retries.');
             continue;
           }
           messages.push(
@@ -640,8 +753,8 @@ export async function POST(request: NextRequest) {
             // `think` makes no filesystem progress — count it so a model stuck
             // emitting only think/respond can't burn MAX_ITERATIONS of tokens.
             consecutiveNoProgressIterations += 1;
-            if (consecutiveNoProgressIterations >= 5) {
-              throw new Error('The agent made no filesystem progress after five turns.');
+            if (consecutiveNoProgressIterations >= MAX_NO_PROGRESS_TURNS) {
+              throw new Error(`The agent made no filesystem progress after ${MAX_NO_PROGRESS_TURNS} turns.`);
             }
             continue;
           }
@@ -686,8 +799,10 @@ export async function POST(request: NextRequest) {
               content: `Action blocked: ${actionGuardError} Continue by reading and editing only the files needed for the user's request.`,
             });
             consecutiveNoProgressIterations += 1;
-            if (consecutiveNoProgressIterations >= 5) {
-              throw new Error('The agent repeatedly attempted an unsafe design-direction action.');
+            if (consecutiveNoProgressIterations >= MAX_NO_PROGRESS_TURNS) {
+              throw new Error(
+                `The agent repeatedly attempted an unsafe design-direction action (${MAX_NO_PROGRESS_TURNS} turns).`,
+              );
             }
             continue;
           }
@@ -1052,8 +1167,8 @@ export async function POST(request: NextRequest) {
             consecutiveNoProgressIterations = 0;
           } else if (!askQuestionsAction && !respondAction && !finishAction) {
             consecutiveNoProgressIterations += 1;
-            if (consecutiveNoProgressIterations >= 5) {
-              throw new Error('The agent made no filesystem progress after five turns.');
+            if (consecutiveNoProgressIterations >= MAX_NO_PROGRESS_TURNS) {
+              throw new Error(`The agent made no filesystem progress after ${MAX_NO_PROGRESS_TURNS} turns.`);
             }
           }
 
@@ -1086,47 +1201,19 @@ export async function POST(request: NextRequest) {
             return;
           }
           if (respondAction) {
-            const assistantMessage = await db.chatMessage.create({
-              data: {
-                projectId,
-                role: 'assistant',
-                content: respondAction.message,
-                model: `${providerName}:${body.modelName}`,
-                tokenUsage: finalUsage,
-                toolCalls: runSteps as never,
-              },
-            });
-            await db.apiKey.update({ where: { id: storedKey.id }, data: { lastUsedAt: new Date() } });
-            send('ready', {
-              userMessage: messageRecord(userMessage),
-              assistantMessage: { ...messageRecord(assistantMessage), tokenUsage: finalUsage },
-              files: [...files].map(([path, content]) => ({ path, content })),
-              versionNumber: latestVersion,
-            });
+            await completeRun(respondAction.message);
             return;
           }
           if (finishAction) {
-            const assistantMessage = await db.chatMessage.create({
-              data: {
-                projectId,
-                role: 'assistant',
-                content: finishAction.summary,
-                model: `${providerName}:${body.modelName}`,
-                tokenUsage: finalUsage,
-                toolCalls: runSteps as never,
-              },
-            });
-            await db.apiKey.update({ where: { id: storedKey.id }, data: { lastUsedAt: new Date() } });
-            send('ready', {
-              userMessage: messageRecord(userMessage),
-              assistantMessage: { ...messageRecord(assistantMessage), tokenUsage: finalUsage },
-              files: [...files].map(([path, content]) => ({ path, content })),
-              versionNumber: latestVersion,
-            });
+            await completeRun(finishAction.summary);
             return;
           }
         }
-        throw new Error(`Agent exceeded ${MAX_ITERATIONS} steps without finishing`);
+        throw new Error(
+          MAX_ITERATIONS === null
+            ? 'Agent ran for an unusually long time without finishing.'
+            : `Agent exceeded ${MAX_ITERATIONS} steps without finishing`,
+        );
       } catch (error) {
         for (const [path, original] of activeProvisionalOriginals) {
           send('file-preview', original === null

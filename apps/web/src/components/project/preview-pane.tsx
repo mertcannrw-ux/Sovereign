@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { cn } from '@app-builder/ui/utils';
-import { AlertCircle, Loader2, MousePointer2, X } from 'lucide-react';
+import { AlertCircle, Loader2, MousePointer2, RefreshCw, X } from 'lucide-react';
 import type { PreviewCursorTarget } from '@/lib/use-smooth-cursor';
 import type { SelectedPreviewElement } from '@/components/project/types';
 import type { PreviewEngine } from '@/lib/preview-startup';
@@ -26,6 +26,10 @@ export interface PreviewPaneProps {
   selectedPreviewElement: SelectedPreviewElement | null;
   onSelectedElementChange: (element: SelectedPreviewElement | null) => void;
   onElementSelected?: () => void;
+  /** In-preview quick edit submitted from the injected visual editor. */
+  onQuickEdit?: (prompt: string, element: SelectedPreviewElement) => void;
+  /** Re-attempts booting the preview sandbox after a failed boot. */
+  onRetry?: () => void;
 }
 
 export function PreviewPane({
@@ -42,6 +46,8 @@ export function PreviewPane({
   selectedPreviewElement,
   onSelectedElementChange,
   onElementSelected,
+  onQuickEdit,
+  onRetry,
 }: PreviewPaneProps) {
   const [disclosureDismissed, setDisclosureDismissed] = useState(() => {
     if (typeof window === 'undefined') return false;
@@ -101,6 +107,17 @@ export function PreviewPane({
         (frame) => frame?.contentWindow === event.source,
       );
       if (!fromPreview) return;
+      // Only trust messages that really come from the preview origin — the
+      // preview iframe runs generated code, which must not be able to forge
+      // selections or edit requests.
+      const expectedOrigin = (() => {
+        try {
+          return url ? new URL(url).origin : null;
+        } catch {
+          return null;
+        }
+      })();
+      if (expectedOrigin && event.origin !== expectedOrigin) return;
 
       if (event.data.source === A11Y_MESSAGE_SOURCE) {
         if (event.data.type === 'violations' && Array.isArray(event.data.violations)) {
@@ -144,12 +161,20 @@ export function PreviewPane({
       if (event.data.type === 'element-selected') {
         onSelectedElementChange(event.data.element as SelectedPreviewElement);
         onElementSelected?.();
+        return;
+      }
+      if (event.data.type === 'edit-request') {
+        const element = event.data.element as SelectedPreviewElement | undefined;
+        const prompt = typeof event.data.prompt === 'string' ? event.data.prompt : '';
+        if (element && prompt && onQuickEdit) {
+          onQuickEdit(prompt, element);
+        }
       }
     };
 
     window.addEventListener('message', handlePreviewMessage);
     return () => window.removeEventListener('message', handlePreviewMessage);
-  }, [isEditMode, onElementSelected, onSelectedElementChange, url]);
+  }, [isEditMode, onElementSelected, onQuickEdit, onSelectedElementChange, url]);
 
   return (
     <div className="relative flex flex-1 overflow-hidden bg-[#0A0A0A]">
@@ -195,6 +220,16 @@ export function PreviewPane({
             <p className="mt-1 text-xs text-foreground-muted">
               {a11yReport?.detail ?? logs.at(-1) ?? 'Booting browser-based Node.js runtime…'}
             </p>
+            {status === 'error' && onRetry ? (
+              <button
+                type="button"
+                onClick={() => onRetry()}
+                className="mt-4 inline-flex items-center gap-1.5 rounded-md border border-border-strong bg-background-subtle px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-primary/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                Retry preview
+              </button>
+            ) : null}
           </div>
         </div>
       )}

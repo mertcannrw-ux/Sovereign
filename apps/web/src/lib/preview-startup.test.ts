@@ -104,19 +104,26 @@ describe('preview asset URL materialization helpers', () => {
 });
 
 describe('SOVEREIGN_VITE_PREVIEW flag', () => {
-  it('defaults off', () => {
-    expect(isVitePreviewEnabled({})).toBe(false);
-    expect(shouldBootVite([{ path: 'package.json' }], {})).toBe(false);
+  it('defaults on: Vite preview is used whenever package.json exists', () => {
+    expect(isVitePreviewEnabled({})).toBe(true);
+    expect(shouldBootVite([{ path: 'package.json' }], {})).toBe(true);
   });
 
-  it('boots Vite only when the flag is on and package.json exists', () => {
-    const env = { SOVEREIGN_VITE_PREVIEW: '1' };
-    expect(shouldBootVite([{ path: 'src/App.tsx' }], env)).toBe(false);
-    expect(shouldBootVite([{ path: 'package.json' }], env)).toBe(true);
+  it('uses the static engine when Vite is opted out or no package.json exists', () => {
+    const envOff = { SOVEREIGN_VITE_PREVIEW: '0' };
+    expect(shouldBootVite([{ path: 'package.json' }], envOff)).toBe(false);
+    expect(shouldBootVite([{ path: 'src/App.tsx' }], {})).toBe(false);
     expect(hasPackageJson([{ path: './package.json' }])).toBe(true);
   });
 
-  it('treats NEXT_PUBLIC_SOVEREIGN_VITE_PREVIEW as the client-visible flag', () => {
+  it('treats "0" and "false" as explicit opt-outs', () => {
+    expect(isVitePreviewEnabled({ SOVEREIGN_VITE_PREVIEW: '0' })).toBe(false);
+    expect(isVitePreviewEnabled({ SOVEREIGN_VITE_PREVIEW: 'false' })).toBe(false);
+    expect(isVitePreviewEnabled({ NEXT_PUBLIC_SOVEREIGN_VITE_PREVIEW: '0' })).toBe(false);
+    expect(isVitePreviewEnabled({ NEXT_PUBLIC_SOVEREIGN_VITE_PREVIEW: 'false' })).toBe(false);
+  });
+
+  it('accepts the legacy "1" flag values as an explicit opt-in', () => {
     expect(isVitePreviewEnabled({ NEXT_PUBLIC_SOVEREIGN_VITE_PREVIEW: '1' })).toBe(true);
     expect(isVitePreviewEnabled({ SOVEREIGN_VITE_PREVIEW: '1' })).toBe(true);
   });

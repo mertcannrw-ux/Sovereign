@@ -3,7 +3,12 @@ import tsParser from '@typescript-eslint/parser';
 
 export default [
   {
-    files: ['src/**/*.{js,mjs,cjs,ts,jsx,tsx}', 'apps/web/src/**/*.{js,mjs,cjs,ts,jsx,tsx}'],
+    // Flat-config `files` patterns are resolved against the config file's own
+    // directory (the repo root), NOT the linting CWD. Package lint scripts run
+    // `eslint .` from inside packages/*, so patterns anchored at the root like
+    // `src/**` matched nothing there and every package lint failed with "all
+    // files ignored". `**/src/**` covers every workspace from any CWD.
+    files: ['**/src/**/*.{js,mjs,cjs,ts,jsx,tsx}'],
     languageOptions: {
       parser: tsParser,
       parserOptions: {

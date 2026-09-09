@@ -9,7 +9,7 @@ vi.mock('@/env', () => ({
   },
 }));
 
-import { checkRateLimit } from './rate-limit';
+import { checkRateLimit, RATE_LIMITS } from './rate-limit';
 
 describe('checkRateLimit Upstash pipeline', () => {
   const originalFetch = globalThis.fetch;
@@ -39,15 +39,22 @@ describe('checkRateLimit Upstash pipeline', () => {
     expect((body[1] as string[])[0]).toBe('ZADD');
   });
 
-  it('denies the request in production when Upstash returns a malformed payload', async () => {
+  it('falls back to in-memory limits (not a hard deny) in production when Upstash returns a malformed payload', async () => {
     vi.stubEnv('NODE_ENV', 'production');
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => [{ cmd: 'not-a-pipeline-result' }],
     }) as unknown as typeof fetch;
 
-    const result = await checkRateLimit('signIn', 'user-2');
-    expect(result.allowed).toBe(false);
+    // An Upstash outage must never brick sign-in/registration platform-wide:
+    // the per-instance fallback limiter still applies the configured window.
+    const limit = RATE_LIMITS.signIn.limit;
+    for (let attempt = 1; attempt <= limit; attempt += 1) {
+      const result = await checkRateLimit('signIn', 'user-2');
+      expect(result.allowed).toBe(true);
+    }
+    const overLimit = await checkRateLimit('signIn', 'user-2');
+    expect(overLimit.allowed).toBe(false);
     vi.unstubAllEnvs();
   });
 });

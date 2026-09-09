@@ -24,7 +24,13 @@ export const authRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const rate = await checkRateLimit('register', ctx.ipHash);
+      const email = input.email.trim().toLowerCase();
+      // Bucket per IP+email so a missing trusted-proxy header (every request
+      // seen as 127.0.0.1) can never collapse registration into ONE global
+      // bucket shared by all users.
+      const identity =
+        process.env.TRUSTED_PROXY === 'true' ? `${ctx.ipHash}:${email}` : email;
+      const rate = await checkRateLimit('register', identity);
       if (!rate.allowed) {
         const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
         throw new TRPCError({
@@ -33,7 +39,6 @@ export const authRouter = router({
         });
       }
 
-      const email = input.email.trim().toLowerCase();
       const existing = await ctx.db.user.findFirst({
         where: { email: { equals: email, mode: 'insensitive' } },
       });
@@ -74,7 +79,12 @@ export const authRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const rate = await checkRateLimit('signIn', ctx.ipHash);
+      const email = input.email.trim().toLowerCase();
+      // Bucket per IP+email (see register): without a trusted proxy header the
+      // fallback is per-email, never one shared global bucket.
+      const identity =
+        process.env.TRUSTED_PROXY === 'true' ? `${ctx.ipHash}:${email}` : email;
+      const rate = await checkRateLimit('signIn', identity);
       if (!rate.allowed) {
         const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
         throw new TRPCError({
@@ -83,7 +93,6 @@ export const authRouter = router({
         });
       }
 
-      const email = input.email.trim().toLowerCase();
       const user = await ctx.db.user.findFirst({
         where: { email: { equals: email, mode: 'insensitive' } },
       });

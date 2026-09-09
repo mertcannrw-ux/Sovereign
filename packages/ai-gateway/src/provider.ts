@@ -37,7 +37,6 @@ function safeNumber(value: unknown, fallback = 0): number {
 function createPinnedIpDispatcher(parsed: URL, pinnedIp: string): Dispatcher {
   // Lazy-load undici so the module works in environments where it is unavailable.
   // undici ships with Node 18+ and is present in this monorepo's root deps.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
   const undici = require('undici') as typeof import('undici');
   const { Agent, buildConnector } = undici;
   const https = parsed.protocol === 'https:';
@@ -845,12 +844,26 @@ export class AnthropicProvider implements Provider {
     options?: ProviderCompleteOptions,
     stream?: boolean,
   ): Record<string, unknown> {
+    // The Anthropic Messages API only accepts `user`/`assistant` roles in
+    // `messages`; system instructions must be sent as the top-level `system`
+    // field. Sending `role: 'system'` inside `messages` is a 400.
+    let system: string | undefined;
+    const rest: GatewayMessage[] = [];
+    for (const msg of messages) {
+      if (msg.role === 'system') {
+        system = msg.content;
+      } else {
+        rest.push(msg);
+      }
+    }
+
     const body: Record<string, unknown> = {
       model,
       max_tokens: options?.maxTokens ?? 16384,
-      messages,
+      messages: rest,
       stream: stream ?? false,
     };
+    if (system !== undefined) body['system'] = system;
     if (options?.temperature !== undefined) body['temperature'] = options.temperature;
     return body;
   }

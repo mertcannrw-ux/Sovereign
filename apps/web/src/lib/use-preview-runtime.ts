@@ -33,6 +33,8 @@ export interface UsePreviewRuntimeResult {
   error: string | null;
   engine: PreviewEngine;
   disclosure: string | null;
+  /** Re-attempts booting the sandbox after a failed boot. */
+  retry: () => void;
   /** Mutable path → content store. Re-read when `filesRevision` changes. */
   files: Map<string, string>;
   filesList: PreviewFile[];
@@ -184,25 +186,58 @@ export function usePreviewRuntime({
     }
   }, [flushPendingWrites]);
 
+  const removeFiles = useCallback(
+    (paths: string[]) => {
+      if (paths.length === 0) return;
+      let changed = false;
+      for (const path of paths) {
+        if (filesRef.current.delete(path)) changed = true;
+        pendingWritesRef.current.delete(path);
+      }
+      if (changed) bumpRevision();
+      // Deletes join the same serialized write chain as preview writes so an
+      // in-flight write for the same path cannot resurrect the file.
+      void enqueueOp(() => sandboxRef.current.removeFiles(paths));
+    },
+    [bumpRevision, enqueueOp],
+  );
+
   const applyFilePreview = useCallback(
     (
       event: Pick<FilePreviewEvent, 'path' | 'content'> & {
         operation?: FilePreviewEvent['operation'];
       },
     ) => {
-      if (event.operation === 'delete' || event.content === undefined) return;
+      if (event.operation === 'delete') {
+        // Rollback of a never-committed (or since-committed-over) file:
+        // remove it from the local mirror and the container.
+        removeFiles([event.path]);
+        return;
+      }
+      if (event.content === undefined) return;
       if (isSovereignOverlayPath(event.path)) return;
       filesRef.current.set(event.path, event.content);
       bumpRevision();
       pendingWritesRef.current.set(event.path, event.content);
       scheduleFlush();
     },
-    [bumpRevision, scheduleFlush],
+    [bumpRevision, removeFiles, scheduleFlush],
   );
 
-  const applyFileOperation = useCallback((_event: FileOperationEvent) => {
-    // No-op until runtime apply/overlay exists.
-  }, []);
+  const applyFileOperation = useCallback(
+    (event: FileOperationEvent) => {
+      if (event.operation === 'delete') {
+        removeFiles([event.path]);
+        return;
+      }
+      if (event.content !== undefined) {
+        // Committed create/update: same mirror + throttled-write path as
+        // streamed previews. Duplicate writes are idempotent.
+        applyFilePreview({ operation: event.operation, path: event.path, content: event.content });
+      }
+    },
+    [applyFilePreview, removeFiles],
+  );
 
   const applyOverlay = useCallback((_payload?: unknown) => {
     // HTML overlay is applied in overlayPreviewFiles / WC writes. This is the PR 6 runtime overlay.
@@ -215,12 +250,23 @@ export function usePreviewRuntime({
   const applyFiles = useCallback(
     async (files: PreviewFile[]) => {
       await flushPendingWrites();
+      const previous = new Set(filesRef.current.keys());
       replaceMap(files);
-      await enqueueWrite(files);
+      // Full-sync event: files absent from the authoritative set (agent
+      // deletions, rollbacks) must be removed from the container too, or the
+      // preview keeps serving files the project no longer contains.
+      const next = new Set(files.map((file) => file.path));
+      const removed = [...previous].filter((path) => !next.has(path));
+      await enqueueOp(async () => {
+        if (removed.length > 0) {
+          await sandboxRef.current.removeFiles(removed);
+        }
+        await sandboxRef.current.writeFiles(toWcFiles(files));
+      });
       lastPreviewRefreshRef.current = performance.now();
       setPreviewKey((key) => key + 1);
     },
-    [enqueueWrite, flushPendingWrites, replaceMap],
+    [enqueueOp, flushPendingWrites, replaceMap, toWcFiles],
   );
 
   const applyImmediateWrite = useCallback(
@@ -286,6 +332,7 @@ export function usePreviewRuntime({
     error: sandbox.error,
     engine: sandbox.engine,
     disclosure: sandbox.disclosure,
+    retry: sandbox.retry,
     files: filesRef.current,
     filesList,
     filesRevision,

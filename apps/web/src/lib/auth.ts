@@ -49,11 +49,16 @@ function buildProviders(): NextAuthOptions['providers'] {
         }
 
         const email = credentials.email.trim().toLowerCase();
-        // Key by the real client IP when a trusted proxy is configured, so an
-        // attacker cannot burn the limit of a known victim's email. Falls back
-        // to per-email keying otherwise (keeps dev/local buckets distinct).
+        // Key by IP+email when a trusted proxy is configured, so an attacker
+        // cannot burn the limit of a known victim's email from their own IP
+        // (and a victim's own sign-ins never share the attacker's bucket).
+        // Falls back to per-email keying otherwise (keeps dev/local buckets
+        // distinct and never collapses onto a single global key).
         const ip = trustedProxyClientIp(req);
-        const rate = await checkRateLimit('signIn', ip ? hashIp(ip) : email);
+        const rate = await checkRateLimit(
+          'signIn',
+          ip ? `${hashIp(ip)}:${email}` : email,
+        );
         if (!rate.allowed) {
           throw new Error('Too many sign-in attempts. Please try again later.');
         }
