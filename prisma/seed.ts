@@ -18,11 +18,27 @@ const prisma = new PrismaClient({ adapter });
 async function main() {
   console.log('🌱 Seeding database...');
 
-  // Refuse to run in production so an automated pipeline that copies the
-  // .env.example placeholder credentials can never provision a known-password
-  // admin. Seeds are for development/staging only.
+  // Refuse to seed anything that is not clearly a local/dev target, so an
+  // automated pipeline or a misconfigured staging box can never provision a
+  // known-password admin from the .env.example placeholders.
+  //
+  // `NODE_ENV=production` is always refused. An unset NODE_ENV (the normal
+  // case for the documented local `npm run db:seed`) is allowed only when the
+  // database is on loopback — pointing at a remote database requires an
+  // explicit NODE_ENV=development.
   if (process.env.NODE_ENV === 'production') {
     throw new Error('Refusing to seed in production. Seeds are for development/staging only.');
+  }
+  if (process.env.NODE_ENV !== 'development' && process.env.NODE_ENV !== 'test') {
+    const isLoopbackDatabase = /@(localhost|127\.0\.0\.1|\[::1\]|host\.docker\.internal)[:/]/i.test(
+      connectionString,
+    );
+    if (!isLoopbackDatabase) {
+      throw new Error(
+        `Refusing to seed a non-local database with NODE_ENV=${process.env.NODE_ENV ?? '(unset)'}. ` +
+          'Set NODE_ENV=development if this really is a development database.',
+      );
+    }
   }
 
   // ── Admin user ──────────────────────────────────
@@ -32,7 +48,9 @@ async function main() {
   const adminEmail = process.env.SEED_ADMIN_EMAIL?.trim().toLowerCase();
   const adminPassword = process.env.SEED_ADMIN_PASSWORD;
   if (!adminEmail || !adminPassword || adminPassword.length < 12) {
-    throw new Error('SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD (min 12 chars) must be set when seeding');
+    throw new Error(
+      'SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD (min 12 chars) must be set when seeding',
+    );
   }
 
   const existingUser = await prisma.user.findUnique({

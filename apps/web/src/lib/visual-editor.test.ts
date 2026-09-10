@@ -13,7 +13,8 @@ import {
 
 describe('visual editor', () => {
   beforeEach(() => {
-    document.documentElement.innerHTML = '<head></head><body><main><h1>Original title</h1></main></body>';
+    document.documentElement.innerHTML =
+      '<head></head><body><main><h1>Original title</h1></main></body>';
   });
 
   it('instruments generated HTML exactly once', () => {
@@ -35,9 +36,11 @@ describe('visual editor', () => {
   it('selects an element and sends a scoped inline edit request', () => {
     const postMessage = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
     Function(VISUAL_EDITOR_SCRIPT)();
-    window.dispatchEvent(new MessageEvent('message', {
-      data: { source: 'sovereign-visual-editor', type: 'set-edit-mode', enabled: true },
-    }));
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { source: 'sovereign-visual-editor', type: 'set-edit-mode', enabled: true },
+      }),
+    );
 
     const heading = document.querySelector('h1');
     heading?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
@@ -53,18 +56,21 @@ describe('visual editor', () => {
     input.dispatchEvent(new Event('input', { bubbles: true }));
     send.click();
 
-    expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
-      source: 'sovereign-visual-editor',
-      type: 'edit-request',
-      prompt: 'Make this headline smaller',
-      element: expect.objectContaining({
-        tagName: 'h1',
-        outerHTML: '<h1>Original title</h1>',
-        selector: 'body > main > h1',
-        sourceFile: 'index.html',
-        text: 'Original title',
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'sovereign-visual-editor',
+        type: 'edit-request',
+        prompt: 'Make this headline smaller',
+        element: expect.objectContaining({
+          tagName: 'h1',
+          outerHTML: '<h1>Original title</h1>',
+          selector: 'body > main > h1',
+          sourceFile: 'index.html',
+          text: 'Original title',
+        }),
       }),
-    }), window.location.origin);
+      window.location.origin,
+    );
     postMessage.mockRestore();
   });
 

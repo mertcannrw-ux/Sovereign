@@ -1,6 +1,5 @@
 import { isIP } from 'node:net';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
+import { getVerifiedSession } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import type { Session } from 'next-auth';
 import { hashIp } from '@/server/rate-limit';
@@ -42,7 +41,10 @@ function getClientIp(req: Request): string {
 }
 
 export const createContext = async (opts: { req: Request }): Promise<Context> => {
-  const session = await getServerSession(authOptions);
+  // Verified (not raw) session: tokens minted before a password reset or a
+  // "sign out everywhere" are rejected here, so every tRPC procedure inherits
+  // revocation for free.
+  const session = await getVerifiedSession();
   const ip = getClientIp(opts.req);
 
   return {

@@ -167,9 +167,7 @@ export function validateUrl(url: string): URL {
  * Returns the validated IP addresses so the caller can pin them for the
  * subsequent fetch, eliminating the DNS-rebinding TOCTOU window.
  */
-export async function validateOutboundUrl(
-  url: string,
-): Promise<{ url: URL; addresses: string[] }> {
+export async function validateOutboundUrl(url: string): Promise<{ url: URL; addresses: string[] }> {
   const parsed = validateUrl(url);
   // Literal loopback cannot rebind to another address, so skip DNS pinning.
   // Blocking it would reject local custom providers (Ollama, vLLM, etc.).
@@ -179,7 +177,6 @@ export async function validateOutboundUrl(
   const addresses = await resolveHostnameValidated(parsed.hostname);
   return { url: parsed, addresses };
 }
-
 
 // ─── DNS resolution ───────────────────────────────────────
 

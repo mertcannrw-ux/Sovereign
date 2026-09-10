@@ -116,8 +116,12 @@ describe('signAssetUrl', () => {
   it('round-trips a valid HMAC token', () => {
     const query = signAssetUrl('projects/p1/assets/a.png');
     const params = new URLSearchParams(query);
-    expect(verifyAssetToken('projects/p1/assets/a.png', params.get('expires')!, params.get('sig')!)).toBe(true);
-    expect(verifyAssetToken('projects/p1/assets/other.png', params.get('expires')!, params.get('sig')!)).toBe(false);
+    expect(
+      verifyAssetToken('projects/p1/assets/a.png', params.get('expires')!, params.get('sig')!),
+    ).toBe(true);
+    expect(
+      verifyAssetToken('projects/p1/assets/other.png', params.get('expires')!, params.get('sig')!),
+    ).toBe(false);
   });
 });
 

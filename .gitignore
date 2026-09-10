@@ -8,6 +8,23 @@ dist/
 trace_output/
 *.tsbuildinfo
 .sst/
+out/
+build/
+
+# Test & coverage artifacts
+coverage/
+*.lcov
+playwright-report/
+test-results/
+blob-report/
+.playwright/
+
+# Deployment platform metadata
+.vercel/
+
+# Caches
+.eslintcache
+*.eslintcache
 
 # Environment & Credentials
 .env

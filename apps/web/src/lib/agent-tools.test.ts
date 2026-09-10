@@ -28,7 +28,10 @@ describe('actionsFromToolCalls', () => {
       },
       {
         id: '2',
-        function: { name: 'read_files', arguments: JSON.stringify({ files: [{ path: 'src/App.tsx' }] }) },
+        function: {
+          name: 'read_files',
+          arguments: JSON.stringify({ files: [{ path: 'src/App.tsx' }] }),
+        },
       },
     ]);
     expect(action.type).toBe('batch');

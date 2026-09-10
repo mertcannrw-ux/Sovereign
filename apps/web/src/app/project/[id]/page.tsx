@@ -410,7 +410,9 @@ export default function ProjectWorkspace() {
                 selectedPreviewElement={selectedPreviewElement}
                 onClearSelectedElement={() => setSelectedPreviewElement(null)}
                 clarifyingLocked={generation.clarifyingQuestions.length > 0}
-                onSend={(message) => void generation.send(message)}
+                onSend={(message, attachments) =>
+                  void generation.send(message, undefined, undefined, attachments)
+                }
                 onStop={generation.stop}
               />
             }

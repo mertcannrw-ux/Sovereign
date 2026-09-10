@@ -8,12 +8,7 @@ const LUCIDE_ALIASES = lucideLock.aliases as Record<string, string>;
 
 const FALLBACK_EXPORT = 'Circle';
 
-const RESERVED_EXPORTS = new Set([
-  'LucideIcon',
-  'LucideProps',
-  'createLucideIcon',
-  'icons',
-]);
+const RESERVED_EXPORTS = new Set(['LucideIcon', 'LucideProps', 'createLucideIcon', 'icons']);
 
 /** Heroicon / FA / MD names this builder sees that are not lucide aliases. */
 const EXTRA_ALIASES: Record<string, string> = {
@@ -63,8 +58,7 @@ const EXTRA_ALIASES: Record<string, string> = {
 const LIB_PREFIX =
   /^(?:HiOutline|HiSolid|HiMini|Io5|Fa6|Fa|Md|Hi|Bs|Bi|Io|Ri|Ti|Gi|Cg|Tb|Fi|Rx|Pi|Sl|Si|Di|Im|Gr|Ai|Go|Lu)/;
 
-const LUCIDE_FROM_RE =
-  /import\s+(?:type\s+)?([\s\S]*?)\s+from\s+(['"])lucide-react\2\s*;?/g;
+const LUCIDE_FROM_RE = /import\s+(?:type\s+)?([\s\S]*?)\s+from\s+(['"])lucide-react\2\s*;?/g;
 
 interface NamedSpecifier {
   imported: string;
@@ -83,7 +77,11 @@ export function resolveLucideExport(name: string): string {
   if (direct) return direct;
 
   let normalized = name;
-  if (normalized.startsWith('Lucide') && normalized.length > 6 && !RESERVED_EXPORTS.has(normalized)) {
+  if (
+    normalized.startsWith('Lucide') &&
+    normalized.length > 6 &&
+    !RESERVED_EXPORTS.has(normalized)
+  ) {
     normalized = normalized.slice(6);
   }
   if (normalized.startsWith('Icon') && normalized.length > 4) normalized = normalized.slice(4);
@@ -133,9 +131,10 @@ function rewriteImportClause(clause: string): string {
     const nextNamed: string[] = [];
     const used = new Set<string>();
     for (const spec of specifiers) {
-      const resolved = spec.isType && RESERVED_EXPORTS.has(spec.imported)
-        ? spec.imported
-        : resolveLucideExport(spec.imported);
+      const resolved =
+        spec.isType && RESERVED_EXPORTS.has(spec.imported)
+          ? spec.imported
+          : resolveLucideExport(spec.imported);
       const rendered = formatSpecifier(spec, resolved);
       if (!used.has(rendered)) {
         nextNamed.push(rendered);
@@ -170,7 +169,10 @@ function formatSpecifier(spec: NamedSpecifier, resolved: string): string {
 
 function parseNamedSpecifiers(inner: string): NamedSpecifier[] {
   const specifiers: NamedSpecifier[] = [];
-  for (const part of inner.split(',').map((token) => token.trim()).filter(Boolean)) {
+  for (const part of inner
+    .split(',')
+    .map((token) => token.trim())
+    .filter(Boolean)) {
     const typedAlias = part.match(/^type\s+(\w+)\s+as\s+(\w+)$/);
     if (typedAlias) {
       specifiers.push({ imported: typedAlias[1]!, local: typedAlias[2]!, isType: true });

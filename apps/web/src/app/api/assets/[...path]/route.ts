@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'node:fs';
 import path from 'node:path';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
+import { getVerifiedSession } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { requireProjectRole } from '@/server/authz';
 import { LOCAL_ASSET_ROOT, verifyAssetToken } from '@/server/assets/r2';
@@ -14,10 +13,7 @@ import type { Context } from '@/lib/trpc/context';
 // project. R2-hosted assets are served directly from the configured public URL and never hit this
 // route.
 
-export async function GET(
-  request: NextRequest,
-  context: { params: Promise<{ path: string[] }> },
-) {
+export async function GET(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
   const { path: segments } = await context.params;
   if (segments.length === 0) return new NextResponse('Asset not found', { status: 404 });
 
@@ -46,12 +42,14 @@ export async function GET(
 
   if (!hasValidPreviewToken) {
     // Auth: the caller must be signed in.
-    const session = await getServerSession(authOptions);
+    const session = await getVerifiedSession();
     if (!session?.user?.id) return new NextResponse('Unauthorized', { status: 401 });
 
     // The asset must exist in the DB (and be for the right project) before we touch disk.
     const dbCheck = getDb();
-    const assetCheck = await dbCheck.projectAsset.findUnique({ where: { objectKey: relativePath } });
+    const assetCheck = await dbCheck.projectAsset.findUnique({
+      where: { objectKey: relativePath },
+    });
     if (!assetCheck) return new NextResponse('Asset not found', { status: 404 });
 
     // Authorization: the caller must be able to view the owning project.
@@ -79,7 +77,8 @@ export async function GET(
     const fileBuffer = await fs.promises.readFile(fullPath);
     let contentType = 'application/octet-stream';
     if (relativePath.endsWith('.png')) contentType = 'image/png';
-    else if (relativePath.endsWith('.jpg') || relativePath.endsWith('.jpeg')) contentType = 'image/jpeg';
+    else if (relativePath.endsWith('.jpg') || relativePath.endsWith('.jpeg'))
+      contentType = 'image/jpeg';
     else if (relativePath.endsWith('.webp')) contentType = 'image/webp';
     else if (relativePath.endsWith('.gif')) contentType = 'image/gif';
 

@@ -7,12 +7,11 @@ import {
 
 describe('applyOpenAIToolCallDeltas', () => {
   it('assembles a single tool call from id, name, then argument fragments', () => {
-    let calls = applyOpenAIToolCallDeltas([], [
-      { index: 0, id: 'call_1', function: { name: 'write_file' } },
-    ]);
-    calls = applyOpenAIToolCallDeltas(calls, [
-      { index: 0, function: { arguments: '{"path":"' } },
-    ]);
+    let calls = applyOpenAIToolCallDeltas(
+      [],
+      [{ index: 0, id: 'call_1', function: { name: 'write_file' } }],
+    );
+    calls = applyOpenAIToolCallDeltas(calls, [{ index: 0, function: { arguments: '{"path":"' } }]);
     calls = applyOpenAIToolCallDeltas(calls, [
       { index: 0, function: { arguments: 'src/App.tsx"}' } },
     ]);
@@ -26,10 +25,13 @@ describe('applyOpenAIToolCallDeltas', () => {
   });
 
   it('assembles parallel tool calls by index', () => {
-    const calls = applyOpenAIToolCallDeltas([], [
-      { index: 1, id: 'b', function: { name: 'delete_file', arguments: '{"path":"a.ts"}' } },
-      { index: 0, id: 'a', function: { name: 'read_files', arguments: '{}' } },
-    ]);
+    const calls = applyOpenAIToolCallDeltas(
+      [],
+      [
+        { index: 1, id: 'b', function: { name: 'delete_file', arguments: '{"path":"a.ts"}' } },
+        { index: 0, id: 'a', function: { name: 'read_files', arguments: '{}' } },
+      ],
+    );
     expect(calls[0]?.id).toBe('a');
     expect(calls[1]?.id).toBe('b');
     expect(calls[0]?.function.name).toBe('read_files');
@@ -47,9 +49,7 @@ describe('parseOpenAIToolCalls', () => {
           function: { name: 'finish', arguments: '{}' },
         },
       ]),
-    ).toEqual([
-      { id: 'call_9', type: 'function', function: { name: 'finish', arguments: '{}' } },
-    ]);
+    ).toEqual([{ id: 'call_9', type: 'function', function: { name: 'finish', arguments: '{}' } }]);
   });
 
   it('skips entries without a function name', () => {

@@ -26,7 +26,6 @@ export const githubRouter = router({
     };
   }),
 
-
   /**
    * Disconnect GitHub by removing the stored account record.
    */

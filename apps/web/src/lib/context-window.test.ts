@@ -47,7 +47,11 @@ describe('trimMessagesForContext', () => {
         role: 'assistant' as const,
         content: '',
         toolCalls: [
-          { id: 'call_1', type: 'function' as const, function: { name: 'write_file', arguments: '{}' } },
+          {
+            id: 'call_1',
+            type: 'function' as const,
+            function: { name: 'write_file', arguments: '{}' },
+          },
         ],
       },
       // The assistant message alone is ~97 chars (it serializes toolCalls) and
@@ -74,8 +78,16 @@ describe('trimMessagesForContext', () => {
         role: 'assistant' as const,
         content: '',
         toolCalls: [
-          { id: 'call_1', type: 'function' as const, function: { name: 'read_files', arguments: '{}' } },
-          { id: 'call_2', type: 'function' as const, function: { name: 'read_files', arguments: '{}' } },
+          {
+            id: 'call_1',
+            type: 'function' as const,
+            function: { name: 'read_files', arguments: '{}' },
+          },
+          {
+            id: 'call_2',
+            type: 'function' as const,
+            function: { name: 'read_files', arguments: '{}' },
+          },
         ],
       },
       { role: 'tool' as const, toolCallId: 'call_1', content: 'result one' },
@@ -107,7 +119,11 @@ describe('trimMessagesForContext', () => {
         role: 'assistant' as const,
         content: '',
         toolCalls: [
-          { id: 'call_0', type: 'function' as const, function: { name: 'write_file', arguments: '{}' } },
+          {
+            id: 'call_0',
+            type: 'function' as const,
+            function: { name: 'write_file', arguments: '{}' },
+          },
         ],
       },
       { role: 'tool' as const, toolCallId: 'call_0', content: 'oldest result' },
@@ -116,7 +132,11 @@ describe('trimMessagesForContext', () => {
         role: 'assistant' as const,
         content: '',
         toolCalls: [
-          { id: 'call_1', type: 'function' as const, function: { name: 'write_file', arguments: '{}' } },
+          {
+            id: 'call_1',
+            type: 'function' as const,
+            function: { name: 'write_file', arguments: '{}' },
+          },
         ],
       },
       { role: 'tool' as const, toolCallId: 'call_1', content: 'result' },

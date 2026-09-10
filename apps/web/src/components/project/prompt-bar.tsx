@@ -24,6 +24,78 @@ import {
   Zap,
 } from 'lucide-react';
 import type { SelectedPreviewElement, ModelGroup } from '@/components/project/types';
+import type { GenerationAttachment } from '@/lib/use-generation';
+
+/** Matches the server's per-attachment cap in `/api/generate` (100 KB). */
+const MAX_ATTACHMENT_BYTES = 100 * 1024;
+/** Matches the server's total attachment budget (512 KB). */
+const MAX_ATTACHMENTS_TOTAL_BYTES = 512 * 1024;
+
+/**
+ * Extensions we can read as UTF-8 text. Binary formats (images, archives) would
+ * be mangled by a text read, so they are rejected up front with a clear reason.
+ */
+const TEXT_ATTACHMENT_EXTENSIONS = [
+  '.txt',
+  '.md',
+  '.markdown',
+  '.json',
+  '.jsonc',
+  '.yaml',
+  '.yml',
+  '.toml',
+  '.ini',
+  '.csv',
+  '.tsv',
+  '.log',
+  '.xml',
+  '.html',
+  '.htm',
+  '.css',
+  '.scss',
+  '.less',
+  '.js',
+  '.jsx',
+  '.mjs',
+  '.cjs',
+  '.ts',
+  '.tsx',
+  '.mts',
+  '.cts',
+  '.py',
+  '.rb',
+  '.go',
+  '.rs',
+  '.java',
+  '.kt',
+  '.swift',
+  '.c',
+  '.h',
+  '.cpp',
+  '.hpp',
+  '.cs',
+  '.php',
+  '.sh',
+  '.bash',
+  '.zsh',
+  '.sql',
+  '.graphql',
+  '.gql',
+  '.env.example',
+];
+
+function isTextAttachment(file: File): boolean {
+  if (file.type.startsWith('text/')) return true;
+  if (file.type === 'application/json' || file.type === 'application/xml') return true;
+  const lower = file.name.toLowerCase();
+  return TEXT_ATTACHMENT_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export const PROVIDER_LABELS: Record<string, string> = {
   openai: 'OpenAI',
@@ -50,6 +122,12 @@ const FOCUSABLE_SELECTOR =
 
 type SubMenu = 'root' | 'models' | 'effort';
 
+export interface PromptBarAttachment {
+  name: string;
+  content: string;
+  byteSize: number;
+}
+
 export interface PromptBarProps {
   input: string;
   onInputChange: (value: string) => void;
@@ -65,7 +143,8 @@ export interface PromptBarProps {
   selectedPreviewElement: SelectedPreviewElement | null;
   onClearSelectedElement: () => void;
   clarifyingLocked: boolean;
-  onSend: (message: string) => void;
+  /** Receives the typed text plus any readable attachments, then clears them. */
+  onSend: (message: string, attachments: GenerationAttachment[]) => void;
   onStop: () => void;
 }
 
@@ -90,7 +169,8 @@ export function PromptBar({
   const [showModelPopover, setShowModelPopover] = useState(false);
   const [activeSubMenu, setActiveSubMenu] = useState<SubMenu>('root');
   const [modelSearchQuery, setModelSearchQuery] = useState('');
-  const [attachedFiles, setAttachedFiles] = useState<Array<{ name: string; file?: File }>>([]);
+  const [attachedFiles, setAttachedFiles] = useState<PromptBarAttachment[]>([]);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [activeOptionIndex, setActiveOptionIndex] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -217,10 +297,62 @@ export function PromptBar({
     }
   };
 
+  const handleAttachFiles = useCallback(
+    async (files: File[]) => {
+      const errors: string[] = [];
+      const accepted: PromptBarAttachment[] = [];
+      let total = attachedFiles.reduce((sum, item) => sum + item.byteSize, 0);
+
+      for (const file of files) {
+        if (!isTextAttachment(file)) {
+          errors.push(`${file.name}: only text-based files can be attached.`);
+          continue;
+        }
+        if (file.size > MAX_ATTACHMENT_BYTES) {
+          errors.push(
+            `${file.name}: ${formatBytes(file.size)} exceeds the ${formatBytes(MAX_ATTACHMENT_BYTES)} per-file limit.`,
+          );
+          continue;
+        }
+        if (total + file.size > MAX_ATTACHMENTS_TOTAL_BYTES) {
+          errors.push(
+            `${file.name}: would exceed the ${formatBytes(MAX_ATTACHMENTS_TOTAL_BYTES)} total attachment limit.`,
+          );
+          continue;
+        }
+        try {
+          const content = await file.text();
+          accepted.push({ name: file.name, content, byteSize: file.size });
+          total += file.size;
+        } catch {
+          errors.push(`${file.name}: could not be read.`);
+        }
+      }
+
+      if (accepted.length > 0) {
+        setAttachedFiles((previous) => [...previous, ...accepted]);
+      }
+      setAttachmentError(errors.length > 0 ? errors.join(' ') : null);
+    },
+    [attachedFiles],
+  );
+
+  const send = useCallback(
+    (message: string) => {
+      onSend(
+        message,
+        attachedFiles.map((file) => ({ path: file.name, content: file.content })),
+      );
+      setAttachedFiles([]);
+      setAttachmentError(null);
+    },
+    [attachedFiles, onSend],
+  );
+
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
-      onSend(input);
+      send(input);
     }
   };
 
@@ -536,6 +668,7 @@ export function PromptBar({
           value={input}
           onChange={(e) => onInputChange(e.target.value)}
           onKeyDown={handleKeyDown}
+          aria-label="Message the agent"
           placeholder={
             selectedPreviewElement
               ? `Describe the change for this ${selectedPreviewElement.tagName}…`
@@ -554,12 +687,9 @@ export function PromptBar({
               multiple
               onChange={(e) => {
                 const files = Array.from(e.target.files ?? []);
-                if (files.length > 0) {
-                  setAttachedFiles((prev) => [
-                    ...prev,
-                    ...files.map((f) => ({ name: f.name, file: f })),
-                  ]);
-                }
+                if (files.length > 0) void handleAttachFiles(files);
+                // Allow re-selecting the same file after removing it.
+                e.target.value = '';
               }}
             />
             <button
@@ -574,16 +704,16 @@ export function PromptBar({
 
             {attachedFiles.map((file, idx) => (
               <div
-                key={idx}
+                key={`${file.name}-${idx}`}
                 className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white"
               >
-                <Paperclip className="h-3 w-3 text-primary" />
+                <Paperclip className="h-3 w-3 text-primary" aria-hidden="true" />
                 <span className="max-w-[120px] truncate">{file.name}</span>
                 <button
                   type="button"
                   onClick={() => setAttachedFiles((prev) => prev.filter((_, i) => i !== idx))}
                   className="text-foreground-muted hover:text-white"
-                  aria-label="Remove attachment"
+                  aria-label={`Remove attachment ${file.name}`}
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -592,6 +722,14 @@ export function PromptBar({
           </div>
 
           <div className="flex items-center gap-3">
+            {attachmentError ? (
+              <p
+                role="alert"
+                className="max-w-[280px] text-right text-[11px] leading-tight text-warning"
+              >
+                {attachmentError}
+              </p>
+            ) : null}
             <button
               ref={triggerRef}
               id={triggerId}
@@ -620,7 +758,7 @@ export function PromptBar({
                 if (isSending) {
                   onStop();
                 } else {
-                  onSend(input);
+                  send(input);
                 }
               }}
               disabled={isSending ? false : !input.trim() || !selectedModel || !selectedProvider}

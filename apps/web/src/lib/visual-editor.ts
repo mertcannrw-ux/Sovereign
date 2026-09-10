@@ -21,7 +21,14 @@ export function instrumentPreviewHtml(content: string): string {
 
 function visualEditorRuntime() {
   const MESSAGE_SOURCE = 'sovereign-visual-editor';
-  const getParentOrigin = () => { try { const o = window.parent.location.origin; return o && o !== 'null' ? o : '*'; } catch { return '*'; } };
+  const getParentOrigin = () => {
+    try {
+      const o = window.parent.location.origin;
+      return o && o !== 'null' ? o : '*';
+    } catch {
+      return '*';
+    }
+  };
   const UI_ID = 'sovereign-editor-ui';
   let enabled = false;
   let hovered: Element | null = null;
@@ -91,7 +98,11 @@ function visualEditorRuntime() {
     editor.removeAttribute('data-open');
     input.value = '';
     sendButton.disabled = true;
-    if (notify) window.parent.postMessage({ source: MESSAGE_SOURCE, type: 'selection-cleared' }, getParentOrigin());
+    if (notify)
+      window.parent.postMessage(
+        { source: MESSAGE_SOURCE, type: 'selection-cleared' },
+        getParentOrigin(),
+      );
   }
 
   function cssPath(element: Element) {
@@ -105,7 +116,9 @@ function visualEditorRuntime() {
         break;
       }
       const siblings = current.parentElement
-        ? Array.from(current.parentElement.children).filter((child) => child.tagName === current?.tagName)
+        ? Array.from(current.parentElement.children).filter(
+            (child) => child.tagName === current?.tagName,
+          )
         : [];
       if (siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(current) + 1})`;
       parts.unshift(part);
@@ -116,8 +129,12 @@ function visualEditorRuntime() {
 
   function describe(element: Element) {
     const htmlElement = element as HTMLElement;
-    const text = (htmlElement.innerText || element.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 240);
-    const sourceFile = location.pathname === '/' ? 'index.html' : location.pathname.replace(/^\//, '');
+    const text = (htmlElement.innerText || element.textContent || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 240);
+    const sourceFile =
+      location.pathname === '/' ? 'index.html' : location.pathname.replace(/^\//, '');
     const cleanClone = element.cloneNode(true) as Element;
     cleanClone.removeAttribute('data-sovereign-hovered');
     cleanClone.removeAttribute('data-sovereign-selected');
@@ -165,18 +182,24 @@ function visualEditorRuntime() {
     editor.setAttribute('data-open', '');
     positionEditor();
     input.focus();
-    window.parent.postMessage({ source: MESSAGE_SOURCE, type: 'element-selected', element: describe(target) }, getParentOrigin());
+    window.parent.postMessage(
+      { source: MESSAGE_SOURCE, type: 'element-selected', element: describe(target) },
+      getParentOrigin(),
+    );
   }
 
   function submit() {
     const prompt = input.value.trim();
     if (!selected || !prompt) return;
-    window.parent.postMessage({
-      source: MESSAGE_SOURCE,
-      type: 'edit-request',
-      element: describe(selected),
-      prompt,
-    }, getParentOrigin());
+    window.parent.postMessage(
+      {
+        source: MESSAGE_SOURCE,
+        type: 'edit-request',
+        element: describe(selected),
+        prompt,
+      },
+      getParentOrigin(),
+    );
     input.value = '';
     sendButton.disabled = true;
   }
@@ -209,32 +232,58 @@ function visualEditorRuntime() {
   });
   sendButton.addEventListener('click', submit);
 
-  document.addEventListener('pointermove', (event) => {
-    if (!enabled) return;
-    const target = event.target instanceof Element ? event.target : null;
-    if (!target || target.closest(`#${UI_ID}`) || target === hovered || target === document.documentElement || target === document.body) return;
-    clearHovered();
-    hovered = target;
-    if (hovered !== selected) hovered.setAttribute('data-sovereign-hovered', '');
-  }, true);
+  document.addEventListener(
+    'pointermove',
+    (event) => {
+      if (!enabled) return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (
+        !target ||
+        target.closest(`#${UI_ID}`) ||
+        target === hovered ||
+        target === document.documentElement ||
+        target === document.body
+      )
+        return;
+      clearHovered();
+      hovered = target;
+      if (hovered !== selected) hovered.setAttribute('data-sovereign-hovered', '');
+    },
+    true,
+  );
   document.addEventListener('pointerleave', clearHovered, true);
-  document.addEventListener('click', (event) => {
-    if (!enabled) return;
-    const target = event.target instanceof Element ? event.target : null;
-    if (!target || target.closest(`#${UI_ID}`) || target === document.documentElement || target === document.body) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    selectElement(target);
-  }, true);
-  document.addEventListener('keydown', (event) => {
-    if (!enabled || event.key !== 'Escape' || editor.contains(event.target as Node)) return;
-    clearHovered();
-    clearSelected(true);
-  }, true);
+  document.addEventListener(
+    'click',
+    (event) => {
+      if (!enabled) return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (
+        !target ||
+        target.closest(`#${UI_ID}`) ||
+        target === document.documentElement ||
+        target === document.body
+      )
+        return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      selectElement(target);
+    },
+    true,
+  );
+  document.addEventListener(
+    'keydown',
+    (event) => {
+      if (!enabled || event.key !== 'Escape' || editor.contains(event.target as Node)) return;
+      clearHovered();
+      clearSelected(true);
+    },
+    true,
+  );
   window.addEventListener('scroll', positionEditor, true);
   window.addEventListener('resize', positionEditor);
   window.addEventListener('message', (event) => {
-    if (!event.data || event.data.source !== MESSAGE_SOURCE || event.data.type !== 'set-edit-mode') return;
+    if (!event.data || event.data.source !== MESSAGE_SOURCE || event.data.type !== 'set-edit-mode')
+      return;
     enabled = Boolean(event.data.enabled);
     document.documentElement.toggleAttribute('data-sovereign-edit-mode', enabled);
     if (!enabled) {
@@ -245,7 +294,10 @@ function visualEditorRuntime() {
   window.parent.postMessage({ source: MESSAGE_SOURCE, type: 'ready' }, getParentOrigin());
 }
 
-export function capA11yViolations(violations: unknown[]): { violations: unknown[]; serialized: string } {
+export function capA11yViolations(violations: unknown[]): {
+  violations: unknown[];
+  serialized: string;
+} {
   const capped = violations.slice(0, A11Y_MAX_ISSUES);
   let serialized = JSON.stringify(capped);
   if (serialized.length > A11Y_MAX_CHARS) serialized = serialized.slice(0, A11Y_MAX_CHARS);
@@ -270,7 +322,13 @@ function axeRuntime() {
   function run() {
     const axe = (
       window as Window & {
-        axe?: { run: (context: unknown, options: unknown, callback: (error: unknown, results: { violations?: unknown[] }) => void) => void };
+        axe?: {
+          run: (
+            context: unknown,
+            options: unknown,
+            callback: (error: unknown, results: { violations?: unknown[] }) => void,
+          ) => void;
+        };
       }
     ).axe;
     // Full axe-core min is not vendored here (bundle size). This collector is a real
@@ -282,9 +340,13 @@ function axeRuntime() {
       });
       return;
     }
-    void axe.run(document, { resultTypes: ['violations'] }, (_error: unknown, results: { violations?: unknown[] }) => {
-      report({ type: 'violations', violations: (results?.violations ?? []).slice(0, 25) });
-    });
+    void axe.run(
+      document,
+      { resultTypes: ['violations'] },
+      (_error: unknown, results: { violations?: unknown[] }) => {
+        report({ type: 'violations', violations: (results?.violations ?? []).slice(0, 25) });
+      },
+    );
   }
 
   function schedule() {

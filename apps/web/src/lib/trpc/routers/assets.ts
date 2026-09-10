@@ -17,25 +17,28 @@ export const assetsRouter = router({
     }),
 
   /**
-   * Check asset & image generation capability status.
+   * Check asset storage & image generation capability status.
+   *
+   * Takes no projectId: the answer depends only on server configuration and the
+   * caller's own image provider, so there is nothing project-scoped to
+   * authorize. The previous optional projectId was accepted and then ignored.
    */
-  getStatus: protectedProcedure
-    .input(z.object({ projectId: z.string().uuid().optional() }).optional())
-    .query(async ({ ctx }) => {
-      const r2Status = getR2ConfigStatus();
+  getStatus: protectedProcedure.query(async ({ ctx }) => {
+    const r2Status = getR2ConfigStatus();
 
-      // Check if current user has an active ImageProviderConfig
-      const imageConfig = await ctx.db.imageProviderConfig.findFirst({
-        where: { userId: ctx.user.id, enabled: true },
-      });
+    // Check if current user has an active ImageProviderConfig
+    const imageConfig = await ctx.db.imageProviderConfig.findFirst({
+      where: { userId: ctx.user.id, enabled: true },
+    });
 
-      return {
-        isR2Configured: r2Status.isConfigured,
-        r2Reason: r2Status.reason,
-        isImageProviderConfigured: Boolean(imageConfig),
-        imageModel: imageConfig?.model ?? null,
-      };
-    }),
+    return {
+      isR2Configured: r2Status.isConfigured,
+      storageMode: r2Status.storageMode,
+      r2Reason: r2Status.reason,
+      isImageProviderConfigured: Boolean(imageConfig),
+      imageModel: imageConfig?.model ?? null,
+    };
+  }),
 
   /**
    * Delete an asset (requires EDITOR role).

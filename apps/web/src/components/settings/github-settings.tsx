@@ -27,8 +27,8 @@ export function GitHubSettings({ className }: GitHubSettingsProps) {
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="rounded-lg border border-border bg-background-subtle px-3.5 py-3 text-sm text-foreground-muted">
-          Repository export and GitHub App install are not wired yet. This panel only
-          reports whether a GitHub OAuth account is linked for sign-in.
+          Repository export and GitHub App install are not wired yet. This panel only reports
+          whether a GitHub OAuth account is linked for sign-in.
         </p>
         <div className="flex items-center justify-between rounded-lg border border-border bg-background-subtle p-4">
           <div className="flex items-center gap-3">

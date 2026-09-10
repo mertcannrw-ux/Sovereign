@@ -47,7 +47,11 @@ function targetLabel(tag: string, attributes: string): string {
  * element currently streaming instead of deriving random-looking coordinates.
  */
 export function getPreviewCursorTarget(content: string): PreviewCursorTarget | null {
-  const candidates = [...content.matchAll(/<(header|nav|main|section|article|aside|footer|form|button|input|textarea|img|h[1-3])\b([^>]*)>/gi)];
+  const candidates = [
+    ...content.matchAll(
+      /<(header|nav|main|section|article|aside|footer|form|button|input|textarea|img|h[1-3])\b([^>]*)>/gi,
+    ),
+  ];
   const match = candidates.at(-1);
   if (!match || match.index === undefined) return null;
 
@@ -55,8 +59,12 @@ export function getPreviewCursorTarget(content: string): PreviewCursorTarget | n
   const line = content.slice(0, match.index).split('\n').length;
   const depth = Math.max(
     0,
-    (content.slice(0, match.index).match(/<(?:header|nav|main|section|article|aside|footer|form)\b/gi)?.length ?? 0) -
-      (content.slice(0, match.index).match(/<\/(?:header|nav|main|section|article|aside|footer|form)>/gi)?.length ?? 0),
+    (content
+      .slice(0, match.index)
+      .match(/<(?:header|nav|main|section|article|aside|footer|form)\b/gi)?.length ?? 0) -
+      (content
+        .slice(0, match.index)
+        .match(/<\/(?:header|nav|main|section|article|aside|footer|form)>/gi)?.length ?? 0),
   );
 
   return {

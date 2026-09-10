@@ -21,7 +21,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <span className="grid h-8 w-8 place-items-center rounded-lg bg-primary text-primary-foreground shadow-sm">
               <Command className="h-4 w-4" strokeWidth={2.5} />
             </span>
-            <span className="text-sm font-bold uppercase tracking-[0.2em] text-foreground">Sovereign</span>
+            <span className="text-sm font-bold uppercase tracking-[0.2em] text-foreground">
+              Sovereign
+            </span>
           </div>
         </div>
 

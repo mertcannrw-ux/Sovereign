@@ -203,8 +203,9 @@ function referencesForeignSchema(stripped: string, tenantSchema?: string): boole
       for (const part of tableList.split(',')) {
         // Accept optional double quotes around each identifier segment so
         // "schema"."table" references are caught as well as schema.table.
-        const q =
-          /^\s*"?([A-Za-z_][A-Za-z0-9_]*)"?\s*\.\s*"?([A-Za-z_][A-Za-z0-9_]*)"?\b/.exec(part);
+        const q = /^\s*"?([A-Za-z_][A-Za-z0-9_]*)"?\s*\.\s*"?([A-Za-z_][A-Za-z0-9_]*)"?\b/.exec(
+          part,
+        );
         if (!q) {
           // Parenthesized subquery or CTE: scan inside for its own FROM/JOIN
           // references instead of giving up on the leading parenthesis.
@@ -231,25 +232,28 @@ export function sanitizeSqlForTenant(sql: string, tenantSchema?: string): string
   // comments removed, so legitimate quoted values are allowed.
   const stripped = stripSqlLiterals(raw).trim();
   if (!/^(SELECT|WITH)\s/i.test(stripped)) return null;
-  // A single statement must not contain an internal statement terminator.
-  if (/;/.test(stripped)) return null;
+  // A single statement must not contain an internal statement terminator. A
+  // trailing semicolon is not a terminator — it ends the same statement, so
+  // strip it before checking rather than rejecting `SELECT 1;`.
+  const withoutTrailingTerminator = stripped.replace(/;+\s*$/, '');
+  if (/;/.test(withoutTrailingTerminator)) return null;
 
-  const upper = stripped.toUpperCase();
+  const upper = withoutTrailingTerminator.toUpperCase();
   for (const kw of FORBIDDEN_SQL_KEYWORDS) {
     const regex = new RegExp(`(?:^|[^A-Z0-9_])${kw}(?:$|[^A-Z0-9_])`);
     if (regex.test(upper)) return null;
   }
 
   for (const pattern of PLATFORM_REFERENCE_PATTERNS) {
-    if (pattern.test(stripped)) return null;
+    if (pattern.test(withoutTrailingTerminator)) return null;
   }
 
   for (const fn of FORBIDDEN_FUNCTIONS) {
     const regex = new RegExp(`(^|[^A-Za-z0-9_])${fn}\\s*\\(`, 'i');
-    if (regex.test(stripped)) return null;
+    if (regex.test(withoutTrailingTerminator)) return null;
   }
 
-  if (referencesForeignSchema(stripped, tenantSchema)) return null;
+  if (referencesForeignSchema(withoutTrailingTerminator, tenantSchema)) return null;
 
   return raw.replace(/;+\s*$/, '');
 }
@@ -335,9 +339,7 @@ export async function browseRows(
 
   // '*' is the only special column clause; any explicit column must be a valid identifier.
   const selectedColumns =
-    options.columns == null
-      ? ['*']
-      : options.columns.map((c) => identifierSchema.parse(c));
+    options.columns == null ? ['*'] : options.columns.map((c) => identifierSchema.parse(c));
   if (selectedColumns.includes('*') && selectedColumns.length > 1) {
     throw new Error('Cannot mix "*" with explicit column names');
   }
@@ -348,7 +350,9 @@ export async function browseRows(
   // Fall back to 'id' only when no sort is specified (preserves existing API
   // contract) but require the caller to opt in via sort for ordered pagination.
   const cursorOrderColumn =
-    options.sort && options.sort.length > 0 ? identifierSchema.parse(options.sort[0]!.column) : 'id';
+    options.sort && options.sort.length > 0
+      ? identifierSchema.parse(options.sort[0]!.column)
+      : 'id';
 
   // Build WHERE clause using Prisma.Sql fragments
   const conditions: Prisma.Sql[] = [];
@@ -431,7 +435,9 @@ export async function browseRows(
   const resultRows = hasMore ? rows.slice(0, limit) : rows;
   const nextCursor =
     hasMore && resultRows.length > 0
-      ? String((resultRows[resultRows.length - 1] as Record<string, unknown>)[cursorOrderColumn] ?? '')
+      ? String(
+          (resultRows[resultRows.length - 1] as Record<string, unknown>)[cursorOrderColumn] ?? '',
+        )
       : undefined;
 
   return {

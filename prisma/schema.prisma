@@ -111,6 +111,11 @@ model User {
   avatarUrl     String?   @map("avatar_url")
   passwordHash  String?   @map("password_hash")
   emailVerified Boolean?  @default(false) @map("email_verified")
+  // Bumped whenever every existing session for this user must stop working
+  // (password reset, "sign out everywhere", suspected compromise). JWTs carry
+  // the value they were minted with; a mismatch invalidates the token even
+  // though the JWT itself is still cryptographically valid.
+  sessionVersion Int      @default(0) @map("session_version")
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
 
@@ -348,6 +353,11 @@ model Project {
   updatedAt       DateTime      @updatedAt @map("updated_at")
   publishedAt     DateTime?     @map("published_at")
   vercelProjectId String?       @map("vercel_project_id")
+  // Lease held for the duration of an agent generation run. Two concurrent runs
+  // on one project would interleave their file writes (last write wins) and
+  // produce a corrupt mixed tree, so a run claims this and releases it when it
+  // finishes. Stale values (crashed runs) are reclaimed after a timeout.
+  generationStartedAt DateTime? @map("generation_started_at")
 
   owner         User                  @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   organization  Organization          @relation(fields: [organizationId], references: [id], onDelete: Restrict)

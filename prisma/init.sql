@@ -39,6 +39,7 @@ CREATE TABLE "users" (
     "avatar_url" TEXT,
     "password_hash" TEXT,
     "email_verified" BOOLEAN DEFAULT false,
+    "session_version" INTEGER NOT NULL DEFAULT 0,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
 
@@ -211,6 +212,7 @@ CREATE TABLE "projects" (
     "updated_at" TIMESTAMP(3) NOT NULL,
     "published_at" TIMESTAMP(3),
     "vercel_project_id" TEXT,
+    "generation_started_at" TIMESTAMP(3),
 
     CONSTRAINT "projects_pkey" PRIMARY KEY ("id")
 );

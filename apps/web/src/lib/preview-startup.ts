@@ -66,8 +66,14 @@ export const PREVIEW_JS_DISCLOSURE =
 export const NPM_INSTALL_TIMEOUT_MS = 60_000;
 export const VITE_READY_TIMEOUT_MS = 30_000;
 
-export const STATIC_PREVIEW_COMMAND = { command: 'node', args: ['.sovereign-preview.mjs'] } as const;
-export const VITE_INSTALL_COMMAND = { command: 'npm', args: ['install', '--ignore-scripts'] } as const;
+export const STATIC_PREVIEW_COMMAND = {
+  command: 'node',
+  args: ['.sovereign-preview.mjs'],
+} as const;
+export const VITE_INSTALL_COMMAND = {
+  command: 'npm',
+  args: ['install', '--ignore-scripts'],
+} as const;
 export const VITE_DEV_COMMAND = { command: 'npx', args: ['vite', '--host'] } as const;
 
 export type PreviewEngine = 'static' | 'vite';
@@ -88,6 +94,15 @@ export interface PreviewEventSource {
     event: 'preview-message',
     listener: (message: { type?: string; message?: string; stack?: string }) => void,
   ): unknown;
+}
+
+/**
+ * Event source that can also deliver `server-ready`. Kept separate from
+ * {@link PreviewEventSource} so existing callers/tests only need the two
+ * diagnostics events they actually consume.
+ */
+export interface PreviewServerEventSource {
+  on(event: 'server-ready', listener: (port: number, url: string) => void): unknown;
 }
 
 /**
@@ -243,18 +258,34 @@ export function formatContainerError(error: { message: string }): string {
   return `[webcontainer] ${error.message}`;
 }
 
+/**
+ * Subscribe to container diagnostics and return an unsubscribe function.
+ *
+ * The returned teardown matters: the WebContainer is a module-level singleton
+ * shared by every mount, so listeners that outlive their hook instance keep
+ * writing into that instance's dead `setState`. Without unsubscribing, a
+ * remount (dashboard → project) leaks listeners and the preview stops
+ * recovering.
+ */
 export function subscribePreviewDiagnostics(
   container: PreviewEventSource,
   onLog: (line: string) => void,
   onContainerError?: (message: string) => void,
-): void {
-  container.on('error', (error) => {
-    onLog(formatContainerError(error));
-    onContainerError?.(error.message);
-  });
-  container.on('preview-message', (message) => {
-    onLog(formatForwardedPreviewError(message));
-  });
+): () => void {
+  const subscriptions = [
+    container.on('error', (error) => {
+      onLog(formatContainerError(error));
+      onContainerError?.(error.message);
+    }),
+    container.on('preview-message', (message) => {
+      onLog(formatForwardedPreviewError(message));
+    }),
+  ];
+  return () => {
+    for (const unsubscribe of subscriptions) {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    }
+  };
 }
 
 export function attachProcessOutput(process: PreviewProcess, onLog: (line: string) => void): void {
@@ -312,10 +343,7 @@ export function scheduleViteReadyFallback(
   };
 
   const timer = setTimeout(() => {
-    finish(
-      'Vite did not become ready in time. Falling back to the static file server.',
-      true,
-    );
+    finish('Vite did not become ready in time. Falling back to the static file server.', true);
   }, timeoutMs);
 
   void process.exit.then((code) => {
@@ -403,9 +431,7 @@ export async function startPreviewProcess(
   } catch (error) {
     const fallbackError = error instanceof Error ? error.message : 'Vite boot failed';
     if (options.existingStatic) {
-      options.onLog(
-        `Vite preview failed: ${fallbackError}. Keeping the static file server.`,
-      );
+      options.onLog(`Vite preview failed: ${fallbackError}. Keeping the static file server.`);
       return {
         process: options.existingStatic,
         engine: 'static',
@@ -413,9 +439,7 @@ export async function startPreviewProcess(
         reusedExisting: true,
       };
     }
-    options.onLog(
-      `Vite preview failed: ${fallbackError}. Falling back to the static file server.`,
-    );
+    options.onLog(`Vite preview failed: ${fallbackError}. Falling back to the static file server.`);
     const process = await startStaticPreview(host, options.onLog);
     return { process, engine: 'static', fallbackError };
   }

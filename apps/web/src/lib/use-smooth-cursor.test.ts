@@ -15,7 +15,9 @@ describe('preview cursor targeting', () => {
 
   it('moves and relabels as a new element is streamed', () => {
     const first = getPreviewCursorTarget('<main>\n<section id="hero">');
-    const second = getPreviewCursorTarget('<main>\n<section id="hero">\n<button aria-label="Start now">');
+    const second = getPreviewCursorTarget(
+      '<main>\n<section id="hero">\n<button aria-label="Start now">',
+    );
 
     expect(first?.label).toBe('Building #hero');
     expect(second?.label).toBe('Building Start now');

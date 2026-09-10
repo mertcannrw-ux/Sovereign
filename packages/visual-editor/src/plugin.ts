@@ -34,7 +34,13 @@ export function visualEditorPlugin(options: VisualEditorOptions = {}): Plugin {
 
       const fileName = id.split('/').pop() || id;
       let localCounter = 0;
-      const transformed = injectStableIds(code, fileName, idPrefix, idAttribute, () => ++localCounter);
+      const transformed = injectStableIds(
+        code,
+        fileName,
+        idPrefix,
+        idAttribute,
+        () => ++localCounter,
+      );
       if (transformed === code) return null;
       return {
         code: transformed,
@@ -70,10 +76,7 @@ function injectStableIds(
     if (ts.isJsxOpeningElement(node)) {
       // Never double-inject if the attribute already exists.
       const alreadyHas = node.attributes.properties.some(
-        (p) =>
-          ts.isJsxAttribute(p) &&
-          ts.isIdentifier(p.name) &&
-          p.name.text === attr,
+        (p) => ts.isJsxAttribute(p) && ts.isIdentifier(p.name) && p.name.text === attr,
       );
       if (!alreadyHas) {
         const id = `${prefix}-${fileName.replace(/\.\w+$/, '')}-${nextId()}`;

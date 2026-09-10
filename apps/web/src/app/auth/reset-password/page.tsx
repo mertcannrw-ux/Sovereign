@@ -38,19 +38,45 @@ function ResetPasswordForm() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-background px-5 py-10">
       <div className="w-full max-w-[430px]">
-        <Link href="/auth/signin" className="mb-12 flex items-center gap-2 text-sm text-foreground-muted transition-colors hover:text-foreground">
-          <ArrowLeft className="h-4 w-4" />Back to sign in
+        <Link
+          href="/auth/signin"
+          className="mb-12 flex items-center gap-2 text-sm text-foreground-muted transition-colors hover:text-foreground"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to sign in
         </Link>
         <div className="mb-9">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Account recovery</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">
+            Account recovery
+          </p>
           <h2 className="mt-3 text-4xl font-semibold tracking-[-0.045em]">Set a new password</h2>
         </div>
         <form onSubmit={handleSubmit} className="space-y-5">
           <div className="space-y-2">
-            <label htmlFor="password" className="text-sm font-medium">New password</label>
-            <Input id="password" type="password" value={password} onChange={(e) => { setPassword(e.target.value); setError(''); }} placeholder="At least 8 characters" autoComplete="new-password" required />
+            <label htmlFor="password" className="text-sm font-medium">
+              New password
+            </label>
+            <Input
+              id="password"
+              type="password"
+              value={password}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                setError('');
+              }}
+              placeholder="At least 8 characters"
+              autoComplete="new-password"
+              required
+            />
           </div>
-          {error && <div role="alert" className="rounded-lg border border-error/20 bg-error/10 px-3.5 py-3 text-sm text-error">{error}</div>}
+          {error && (
+            <div
+              role="alert"
+              className="rounded-lg border border-error/20 bg-error/10 px-3.5 py-3 text-sm text-error"
+            >
+              {error}
+            </div>
+          )}
           <Button type="submit" size="lg" className="w-full" disabled={reset.isPending}>
             {reset.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Update password
@@ -63,7 +89,13 @@ function ResetPasswordForm() {
 
 export default function ResetPasswordPage() {
   return (
-    <Suspense fallback={<div className="grid min-h-screen place-items-center text-sm text-foreground-muted">Loading…</div>}>
+    <Suspense
+      fallback={
+        <div className="grid min-h-screen place-items-center text-sm text-foreground-muted">
+          Loading…
+        </div>
+      }
+    >
       <ResetPasswordForm />
     </Suspense>
   );

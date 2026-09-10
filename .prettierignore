@@ -5,3 +5,12 @@ prisma/generated
 *.tsbuildinfo
 .sst
 package-lock.json
+
+# Generated / vendored data with machine-specific formatting
+packages/codegen/src/lucide-0.487-exports.json
+packages/codegen/src/stack-lock.json
+
+# Test and coverage artifacts
+coverage
+playwright-report
+test-results

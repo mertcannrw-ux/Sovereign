@@ -1,8 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  AXE_SCRIPT_PATH,
-  EDITOR_SCRIPT_PATH,
-} from '@/lib/visual-editor';
+import { AXE_SCRIPT_PATH, EDITOR_SCRIPT_PATH } from '@/lib/visual-editor';
 import {
   formatForwardedPreviewError,
   getPreviewAssetUrls,
@@ -149,7 +146,10 @@ describe('preview overlay', () => {
 
   it('re-patches index.html with editor and axe tags without mutating other files', () => {
     const files = overlayPreviewFiles([
-      { path: 'index.html', content: '<!doctype html><html><body><div id="root"></div></body></html>' },
+      {
+        path: 'index.html',
+        content: '<!doctype html><html><body><div id="root"></div></body></html>',
+      },
       { path: 'src/main.tsx', content: 'createRoot()' },
     ]);
     expect(files[0]?.content).toContain(`<script src="${EDITOR_SCRIPT_PATH}"></script>`);
@@ -175,11 +175,10 @@ function mockProcess(exit: Promise<number> = new Promise(() => {})): PreviewProc
   };
 }
 
-function mockHost(options?: {
-  installExit?: number;
-  viteExit?: number;
-  viteSpawnError?: Error;
-}): { host: PreviewProcessHost; spawns: Array<{ command: string; args: string[] }> } {
+function mockHost(options?: { installExit?: number; viteExit?: number; viteSpawnError?: Error }): {
+  host: PreviewProcessHost;
+  spawns: Array<{ command: string; args: string[] }>;
+} {
   const spawns: Array<{ command: string; args: string[] }> = [];
   const host: PreviewProcessHost = {
     async spawn(command, args) {
@@ -188,7 +187,9 @@ function mockHost(options?: {
       if (command === 'npx') {
         if (options?.viteSpawnError) throw options.viteSpawnError;
         return mockProcess(
-          options?.viteExit === undefined ? new Promise(() => {}) : Promise.resolve(options.viteExit),
+          options?.viteExit === undefined
+            ? new Promise(() => {})
+            : Promise.resolve(options.viteExit),
         );
       }
       return mockProcess(new Promise(() => {}));
@@ -201,7 +202,10 @@ describe('startPreviewProcess', () => {
   it('flag off: spawns the static file server only', async () => {
     const { host, spawns } = mockHost();
     const logs: string[] = [];
-    const result = await startPreviewProcess(host, { mode: 'static', onLog: (line) => logs.push(line) });
+    const result = await startPreviewProcess(host, {
+      mode: 'static',
+      onLog: (line) => logs.push(line),
+    });
 
     expect(result.engine).toBe('static');
     expect(result.fallbackError).toBeUndefined();
@@ -211,7 +215,10 @@ describe('startPreviewProcess', () => {
   it('flag on: npm install --ignore-scripts then npx vite --host', async () => {
     const { host, spawns } = mockHost();
     const logs: string[] = [];
-    const result = await startPreviewProcess(host, { mode: 'vite', onLog: (line) => logs.push(line) });
+    const result = await startPreviewProcess(host, {
+      mode: 'vite',
+      onLog: (line) => logs.push(line),
+    });
 
     expect(result.engine).toBe('vite');
     expect(result.fallbackError).toBeUndefined();
@@ -225,7 +232,10 @@ describe('startPreviewProcess', () => {
   it('falls back to the static server when npm install fails', async () => {
     const { host, spawns } = mockHost({ installExit: 1 });
     const logs: string[] = [];
-    const result = await startPreviewProcess(host, { mode: 'vite', onLog: (line) => logs.push(line) });
+    const result = await startPreviewProcess(host, {
+      mode: 'vite',
+      onLog: (line) => logs.push(line),
+    });
 
     expect(result.engine).toBe('static');
     expect(result.fallbackError).toMatch(/npm install --ignore-scripts failed \(exit 1\)/);

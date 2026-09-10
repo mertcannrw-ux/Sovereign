@@ -52,7 +52,15 @@ const config: Config = {
         },
       },
       fontFamily: {
-        sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'sans-serif'],
+        sans: [
+          'Inter',
+          'ui-sans-serif',
+          'system-ui',
+          '-apple-system',
+          'BlinkMacSystemFont',
+          '"Segoe UI"',
+          'sans-serif',
+        ],
         serif: ['Georgia', '"Times New Roman"', 'serif'],
         mono: ['"SFMono-Regular"', 'Consolas', '"Liberation Mono"', 'monospace'],
       },

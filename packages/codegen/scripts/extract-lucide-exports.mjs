@@ -10,7 +10,10 @@ const exportBlock = text.slice(exportStart);
 const canonical = new Set();
 const aliases = new Map();
 
-for (const part of exportBlock.replace(/^export \{/, '').replace(/};?\s*$/, '').split(',')) {
+for (const part of exportBlock
+  .replace(/^export \{/, '')
+  .replace(/};?\s*$/, '')
+  .split(',')) {
   const token = part.trim();
   if (!token) continue;
   const asMatch = token.match(/^(\w+)\s+as\s+(\w+)$/);
@@ -29,7 +32,9 @@ const outDir = path.join(import.meta.dirname, '..', 'src');
 const payload = {
   exports: [...canonical].sort(),
   aliases: Object.fromEntries(
-    [...aliases.entries()].filter(([alias, from]) => alias !== `${from}Icon`).sort(([a], [b]) => a.localeCompare(b)),
+    [...aliases.entries()]
+      .filter(([alias, from]) => alias !== `${from}Icon`)
+      .sort(([a], [b]) => a.localeCompare(b)),
   ),
 };
 fs.writeFileSync(path.join(outDir, 'lucide-0.487-exports.json'), `${JSON.stringify(payload)}\n`);

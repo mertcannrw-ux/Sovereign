@@ -38,10 +38,7 @@ function parseProvider(provider: string): ProviderId {
   return result.data;
 }
 
-async function fetchModels(
-  key: StoredKeyRecord,
-  signal?: AbortSignal,
-): Promise<string[]> {
+async function fetchModels(key: StoredKeyRecord, signal?: AbortSignal): Promise<string[]> {
   const provider = parseProvider(key.provider);
   const plaintext = decryptApiKey(key.encryptedKey);
   return getProvider(provider).listModels(plaintext, key.baseUrl ?? undefined, signal);
@@ -178,7 +175,7 @@ export const apiKeysRouter = router({
       orderBy: { createdAt: 'asc' },
     });
 
-    const withTimeout = <T,>(promise: Promise<T>, _ms: number, signal: AbortSignal): Promise<T> =>
+    const withTimeout = <T>(promise: Promise<T>, _ms: number, signal: AbortSignal): Promise<T> =>
       Promise.race([
         promise,
         new Promise<T>((_, reject) => {
@@ -197,7 +194,11 @@ export const apiKeysRouter = router({
         const timeout = setTimeout(() => controller.abort(), 10_000);
         const provider = parseProvider(key.provider);
         try {
-          const models = await withTimeout(fetchModels(key, controller.signal), 10_000, controller.signal);
+          const models = await withTimeout(
+            fetchModels(key, controller.signal),
+            10_000,
+            controller.signal,
+          );
           return {
             provider,
             models,

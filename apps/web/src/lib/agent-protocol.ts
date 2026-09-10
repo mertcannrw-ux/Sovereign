@@ -39,7 +39,10 @@ export type AgentAction =
   | { type: 'delete_file'; path: string }
   | { type: 'ask_questions'; questions: ClarifyingQuestion[] }
   | { type: 'generate_images'; images: ImageJobSpec[] }
-  | { type: 'propose_design_directions'; directions: [DesignDirectionConcept, DesignDirectionConcept, DesignDirectionConcept] }
+  | {
+      type: 'propose_design_directions';
+      directions: [DesignDirectionConcept, DesignDirectionConcept, DesignDirectionConcept];
+    }
   | { type: 'respond'; message: string }
   | { type: 'finish'; summary: string };
 
@@ -54,7 +57,8 @@ export function getDesignDirectionActionError(
 ): string | null {
   const containsProposal =
     action.type === 'propose_design_directions' ||
-    (action.type === 'batch' && action.actions.some((item) => item.type === 'propose_design_directions'));
+    (action.type === 'batch' &&
+      action.actions.some((item) => item.type === 'propose_design_directions'));
   if (!containsProposal) return null;
   if (hasExistingFiles) {
     return 'Design directions are only available for an empty project. This project already has files; inspect and edit the existing application instead of redesigning it.';
@@ -65,7 +69,8 @@ export function getDesignDirectionActionError(
   return null;
 }
 
-export type AgentStepKind = 'thinking' | 'read' | 'write' | 'edit' | 'delete' | 'verify' | 'image' | 'direction';
+export type AgentStepKind =
+  'thinking' | 'read' | 'write' | 'edit' | 'delete' | 'verify' | 'image' | 'direction';
 
 export interface AgentStep {
   id: string;
@@ -102,17 +107,22 @@ export function isSafeAgentPath(path: string): boolean {
 
 function parseQuestions(value: unknown): ClarifyingQuestion[] {
   if (!Array.isArray(value)) return [];
-  return value.flatMap((item): ClarifyingQuestion[] => {
-    if (!item || typeof item !== 'object') return [];
-    const record = item as Record<string, unknown>;
-    const question = typeof record.question === 'string' ? record.question.trim() : '';
-    const options = Array.isArray(record.options)
-      ? record.options.filter((option): option is string => typeof option === 'string').map((option) => option.trim()).filter(Boolean)
-      : [];
-    return question && options.length >= 3
-      ? [{ question, options: [options[0]!, options[1]!, options[2]!] }]
-      : [];
-  }).slice(0, 3);
+  return value
+    .flatMap((item): ClarifyingQuestion[] => {
+      if (!item || typeof item !== 'object') return [];
+      const record = item as Record<string, unknown>;
+      const question = typeof record.question === 'string' ? record.question.trim() : '';
+      const options = Array.isArray(record.options)
+        ? record.options
+            .filter((option): option is string => typeof option === 'string')
+            .map((option) => option.trim())
+            .filter(Boolean)
+        : [];
+      return question && options.length >= 3
+        ? [{ question, options: [options[0]!, options[1]!, options[2]!] }]
+        : [];
+    })
+    .slice(0, 3);
 }
 
 function extractJsonObjects(raw: string): unknown[] {
@@ -167,16 +177,21 @@ const FILE_MUTATION_INTENT = /"type"\s*:\s*"(?:write_file|edit_file|delete_file)
 
 export function getAgentFileMutationPaths(action: AgentAction): Set<string> {
   const actions = action.type === 'batch' ? action.actions : [action];
-  return new Set(actions.flatMap((item) =>
-    item.type === 'write_file' || item.type === 'edit_file' || item.type === 'delete_file'
-      ? [item.path]
-      : [],
-  ));
+  return new Set(
+    actions.flatMap((item) =>
+      item.type === 'write_file' || item.type === 'edit_file' || item.type === 'delete_file'
+        ? [item.path]
+        : [],
+    ),
+  );
 }
 
 export function stripEmbeddedJsonToolActions(message: string): string {
   return message
-    .replace(/\{[\s\S]*?"type"\s*:\s*"(?:propose_design_directions|write_file|edit_file|delete_file|generate_images|read_files|think|ask_questions|respond|finish)"[\s\S]*?\}/g, '')
+    .replace(
+      /\{[\s\S]*?"type"\s*:\s*"(?:propose_design_directions|write_file|edit_file|delete_file|generate_images|read_files|think|ask_questions|respond|finish)"[\s\S]*?\}/g,
+      '',
+    )
     .trim();
 }
 
@@ -188,7 +203,6 @@ function parseActionSequence(values: unknown[]): AgentAction {
   if (actions.length === 1) return actions[0]!;
   return { type: 'batch', actions: actions as Array<Exclude<AgentAction, { type: 'batch' }>> };
 }
-
 
 export function parseAgentAction(raw: string): AgentAction {
   const embeddedValues = extractJsonObjects(raw);
@@ -212,9 +226,13 @@ export function parseAgentAction(raw: string): AgentAction {
   if (type === 'think') {
     const summary = typeof action.summary === 'string' ? action.summary.trim() : '';
     const contentCandidates = [action.content, action.message, action.thinking, action.reasoning];
-    const content = contentCandidates.find((candidate): candidate is string => typeof candidate === 'string')?.trim() ?? '';
+    const content =
+      contentCandidates
+        .find((candidate): candidate is string => typeof candidate === 'string')
+        ?.trim() ?? '';
     const resolvedContent = content || summary || 'Considering the next useful step.';
-    const resolvedSummary = summary || resolvedContent.split(/\r?\n|[.!?]\s/)[0]?.slice(0, 80) || 'Thinking';
+    const resolvedSummary =
+      summary || resolvedContent.split(/\r?\n|[.!?]\s/)[0]?.slice(0, 80) || 'Thinking';
     return { type, summary: resolvedSummary, content: resolvedContent };
   }
   if (type === 'read_files') {
@@ -232,16 +250,18 @@ export function parseAgentAction(raw: string): AgentAction {
       }
       const obj = item as Record<string, unknown>;
       const path = typeof obj.path === 'string' ? obj.path.trim() : '';
-      const startLine = obj.startLine === undefined
-        ? undefined
-        : typeof obj.startLine === 'number'
-          ? obj.startLine
-          : null;
-      const endLine = obj.endLine === undefined
-        ? undefined
-        : typeof obj.endLine === 'number'
-          ? obj.endLine
-          : null;
+      const startLine =
+        obj.startLine === undefined
+          ? undefined
+          : typeof obj.startLine === 'number'
+            ? obj.startLine
+            : null;
+      const endLine =
+        obj.endLine === undefined
+          ? undefined
+          : typeof obj.endLine === 'number'
+            ? obj.endLine
+            : null;
       if (!isSafeAgentPath(path)) {
         throw new Error(`Read request at index ${idx} has an invalid path`);
       }
@@ -272,7 +292,8 @@ export function parseAgentAction(raw: string): AgentAction {
     const path = typeof action.path === 'string' ? action.path.trim() : '';
     const content = typeof action.content === 'string' ? action.content : null;
     if (!isSafeAgentPath(path) || content === null) throw new Error('Write action is invalid');
-    if (new TextEncoder().encode(content).length > MAX_FILE_BYTES) throw new Error(`File exceeds ${MAX_FILE_BYTES} byte limit`);
+    if (new TextEncoder().encode(content).length > MAX_FILE_BYTES)
+      throw new Error(`File exceeds ${MAX_FILE_BYTES} byte limit`);
     return { type, path, content };
   }
   if (type === 'edit_file') {
@@ -309,7 +330,9 @@ export function parseAgentAction(raw: string): AgentAction {
       throw new Error('generate_images action must contain at least one image specification.');
     }
     if (rawImages.length > MAX_IMAGES_PER_ACTION) {
-      throw new Error(`generate_images action may contain at most ${MAX_IMAGES_PER_ACTION} image specifications.`);
+      throw new Error(
+        `generate_images action may contain at most ${MAX_IMAGES_PER_ACTION} image specifications.`,
+      );
     }
     const images: ImageJobSpec[] = rawImages.map((item, idx) => {
       if (!item || typeof item !== 'object') {
@@ -318,7 +341,8 @@ export function parseAgentAction(raw: string): AgentAction {
       const obj = item as Record<string, unknown>;
       const prompt = typeof obj.prompt === 'string' ? obj.prompt.trim() : '';
       const semanticUse = typeof obj.semanticUse === 'string' ? obj.semanticUse.trim() : '';
-      const placeholderToken = typeof obj.placeholderToken === 'string' ? obj.placeholderToken.trim() : '';
+      const placeholderToken =
+        typeof obj.placeholderToken === 'string' ? obj.placeholderToken.trim() : '';
       if (!prompt || prompt.length > 500) {
         throw new Error(`Image spec at index ${idx} requires a valid prompt (1-500 chars)`);
       }
@@ -326,7 +350,9 @@ export function parseAgentAction(raw: string): AgentAction {
         throw new Error(`Image spec at index ${idx} requires a valid semanticUse (1-100 chars)`);
       }
       if (!placeholderToken || placeholderToken.length > 200) {
-        throw new Error(`Image spec at index ${idx} requires a valid placeholderToken (1-200 chars)`);
+        throw new Error(
+          `Image spec at index ${idx} requires a valid placeholderToken (1-200 chars)`,
+        );
       }
       return { prompt, semanticUse, placeholderToken };
     });
@@ -347,21 +373,30 @@ export function parseAgentAction(raw: string): AgentAction {
       const imagePrompt = typeof obj.imagePrompt === 'string' ? obj.imagePrompt.trim() : '';
       const layoutNotes = typeof obj.layoutNotes === 'string' ? obj.layoutNotes.trim() : '';
 
-      const paletteObj = (obj.palette && typeof obj.palette === 'object' ? obj.palette : {}) as Record<string, unknown>;
+      const paletteObj = (
+        obj.palette && typeof obj.palette === 'object' ? obj.palette : {}
+      ) as Record<string, unknown>;
       const primary = typeof paletteObj.primary === 'string' ? paletteObj.primary.trim() : '';
       const secondary = typeof paletteObj.secondary === 'string' ? paletteObj.secondary.trim() : '';
-      const background = typeof paletteObj.background === 'string' ? paletteObj.background.trim() : '';
+      const background =
+        typeof paletteObj.background === 'string' ? paletteObj.background.trim() : '';
       const accent = typeof paletteObj.accent === 'string' ? paletteObj.accent.trim() : '';
 
-      const typoObj = (obj.typography && typeof obj.typography === 'object' ? obj.typography : {}) as Record<string, unknown>;
+      const typoObj = (
+        obj.typography && typeof obj.typography === 'object' ? obj.typography : {}
+      ) as Record<string, unknown>;
       const headingFont = typeof typoObj.headingFont === 'string' ? typoObj.headingFont.trim() : '';
       const bodyFont = typeof typoObj.bodyFont === 'string' ? typoObj.bodyFont.trim() : '';
       const styleNotes = typeof typoObj.styleNotes === 'string' ? typoObj.styleNotes.trim() : '';
 
-      if (!title || title.length > 100) throw new Error(`Direction concept at index ${idx} requires title (1-100 chars)`);
-      if (!visualBrief || visualBrief.length > 500) throw new Error(`Direction concept at index ${idx} requires visualBrief (1-500 chars)`);
-      if (!imagePrompt || imagePrompt.length > 500) throw new Error(`Direction concept at index ${idx} requires imagePrompt (1-500 chars)`);
-      if (!layoutNotes || layoutNotes.length > 500) throw new Error(`Direction concept at index ${idx} requires layoutNotes (1-500 chars)`);
+      if (!title || title.length > 100)
+        throw new Error(`Direction concept at index ${idx} requires title (1-100 chars)`);
+      if (!visualBrief || visualBrief.length > 500)
+        throw new Error(`Direction concept at index ${idx} requires visualBrief (1-500 chars)`);
+      if (!imagePrompt || imagePrompt.length > 500)
+        throw new Error(`Direction concept at index ${idx} requires imagePrompt (1-500 chars)`);
+      if (!layoutNotes || layoutNotes.length > 500)
+        throw new Error(`Direction concept at index ${idx} requires layoutNotes (1-500 chars)`);
 
       if (!primary || !secondary || !background || !accent) {
         throw new Error(`Direction concept at index ${idx} requires complete palette`);
@@ -390,7 +425,11 @@ interface StreamingJsonString {
   complete: boolean;
 }
 
-function getStreamingJsonString(raw: string, field: string, fromIndex: number): StreamingJsonString | null {
+function getStreamingJsonString(
+  raw: string,
+  field: string,
+  fromIndex: number,
+): StreamingJsonString | null {
   const matcher = new RegExp(`"${field}"\\s*:\\s*"`, 'g');
   matcher.lastIndex = fromIndex;
   const match = matcher.exec(raw);
@@ -413,7 +452,16 @@ function getStreamingJsonString(raw: string, field: string, fromIndex: number): 
       index += 5;
       continue;
     }
-    const escapes: Record<string, string> = { '"': '"', '\\': '\\', '/': '/', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t' };
+    const escapes: Record<string, string> = {
+      '"': '"',
+      '\\': '\\',
+      '/': '/',
+      b: '\b',
+      f: '\f',
+      n: '\n',
+      r: '\r',
+      t: '\t',
+    };
     value += escapes[escape] ?? escape;
     index += 1;
   }
@@ -495,6 +543,7 @@ export function getStreamingThought(raw: string): string | null {
 
 export function applyAgentEdit(content: string, search: string, replace: string): string {
   const occurrences = content.split(search).length - 1;
-  if (occurrences !== 1) throw new Error(`Edit search must match exactly once; found ${occurrences}`);
+  if (occurrences !== 1)
+    throw new Error(`Edit search must match exactly once; found ${occurrences}`);
   return content.replace(search, replace);
 }

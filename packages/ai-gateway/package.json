@@ -10,7 +10,9 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@app-builder/shared": "*"
+    "@app-builder/shared": "*",
+    "undici": "7.28.0",
+    "zod": "3.25.76"
   },
   "devDependencies": {
     "@app-builder/tsconfig": "*",

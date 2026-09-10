@@ -78,7 +78,9 @@ export default function TeamPage() {
     <div className="min-h-full bg-background">
       <header className="border-b border-border">
         <div className="mx-auto max-w-4xl px-5 py-9 sm:px-8">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">Workspace</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">
+            Workspace
+          </p>
           <h1 className="mt-3 text-3xl font-semibold tracking-[-0.045em]">Team</h1>
           <p className="mt-3 max-w-xl text-sm leading-6 text-foreground-muted">
             Members of your organization. Owners and admins can invite people as members or admins.
@@ -123,7 +125,11 @@ export default function TeamPage() {
                   <option value="ADMIN">Admin</option>
                 </select>
                 <Button onClick={handleInvite} disabled={inviteMutation.isPending}>
-                  {inviteMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UserPlus className="mr-2 h-4 w-4" />}
+                  {inviteMutation.isPending ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <UserPlus className="mr-2 h-4 w-4" />
+                  )}
                   Invite
                 </Button>
               </div>
@@ -135,32 +141,46 @@ export default function TeamPage() {
         <Card>
           <CardContent className="p-0">
             <ul className="divide-y divide-border">
-              {(membersQuery.data ?? []).map((member: { userId: string; role: string; user: { name: string | null; email: string } }) => (
-                <li key={member.userId} className="flex items-center justify-between gap-4 px-5 py-4">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">{member.user.name ?? member.user.email}</p>
-                    <p className="text-xs text-foreground-muted">{member.user.email}</p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs font-semibold uppercase tracking-wider text-foreground-muted">
-                      {member.role}
-                    </span>
-                    {canInvite && member.role !== 'OWNER' && (
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label="Remove member"
-                        onClick={async () => {
-                          await removeMutation.mutateAsync({ organizationId: orgId, userId: member.userId });
-                          await refresh();
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </div>
-                </li>
-              ))}
+              {(membersQuery.data ?? []).map(
+                (member: {
+                  userId: string;
+                  role: string;
+                  user: { name: string | null; email: string };
+                }) => (
+                  <li
+                    key={member.userId}
+                    className="flex items-center justify-between gap-4 px-5 py-4"
+                  >
+                    <div>
+                      <p className="text-sm font-medium text-foreground">
+                        {member.user.name ?? member.user.email}
+                      </p>
+                      <p className="text-xs text-foreground-muted">{member.user.email}</p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-foreground-muted">
+                        {member.role}
+                      </span>
+                      {canInvite && member.role !== 'OWNER' && (
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label="Remove member"
+                          onClick={async () => {
+                            await removeMutation.mutateAsync({
+                              organizationId: orgId,
+                              userId: member.userId,
+                            });
+                            await refresh();
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
+                  </li>
+                ),
+              )}
               {membersQuery.data?.length === 0 && (
                 <li className="px-5 py-8 text-sm text-foreground-muted">No members found.</li>
               )}
@@ -173,24 +193,34 @@ export default function TeamPage() {
             <CardContent className="p-0">
               <p className="px-5 pt-5 text-sm font-medium">Pending invites</p>
               <ul className="divide-y divide-border">
-                {(invitesQuery.data ?? []).map((invite: { id: string; email: string; role: string; expiresAt: Date }) => (
-                  <li key={invite.id} className="flex items-center justify-between gap-4 px-5 py-4">
-                    <div>
-                      <p className="text-sm text-foreground">{invite.email}</p>
-                      <p className="text-xs text-foreground-muted">{invite.role} · expires {new Date(invite.expiresAt).toLocaleDateString()}</p>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={async () => {
-                        await revokeMutation.mutateAsync({ organizationId: orgId, inviteId: invite.id });
-                        await refresh();
-                      }}
+                {(invitesQuery.data ?? []).map(
+                  (invite: { id: string; email: string; role: string; expiresAt: Date }) => (
+                    <li
+                      key={invite.id}
+                      className="flex items-center justify-between gap-4 px-5 py-4"
                     >
-                      Revoke
-                    </Button>
-                  </li>
-                ))}
+                      <div>
+                        <p className="text-sm text-foreground">{invite.email}</p>
+                        <p className="text-xs text-foreground-muted">
+                          {invite.role} · expires {new Date(invite.expiresAt).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={async () => {
+                          await revokeMutation.mutateAsync({
+                            organizationId: orgId,
+                            inviteId: invite.id,
+                          });
+                          await refresh();
+                        }}
+                      >
+                        Revoke
+                      </Button>
+                    </li>
+                  ),
+                )}
               </ul>
             </CardContent>
           </Card>

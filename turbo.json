@@ -20,11 +20,6 @@
     "test": {
       "dependsOn": ["^build"],
       "outputs": []
-    },
-    "test:unit": {
-      "dependsOn": ["^build"],
-      "outputs": []
-    },
-    "format:check": {}
+    }
   }
 }

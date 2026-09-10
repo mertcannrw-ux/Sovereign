@@ -25,11 +25,12 @@ export default defineConfig({
       use: { ...devices['Desktop Safari'] },
     },
   ],
-  webServer: process.env.CI
-    ? undefined
-    : {
-        command: 'npm run dev',
-        port: 3000,
-        reuseExistingServer: !process.env.CI,
-      },
+  webServer: {
+    // CI runs the production build (`next build` + `next start`); locally the
+    // dev server is reused if one is already running.
+    command: process.env.CI ? 'npm run start' : 'npm run dev',
+    url: 'http://localhost:3000',
+    reuseExistingServer: !process.env.CI,
+    timeout: 180_000,
+  },
 });

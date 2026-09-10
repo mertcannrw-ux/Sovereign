@@ -69,7 +69,12 @@ export function completePackageJson(
   options?: { extraDependencies?: Record<string, string> },
 ): CompletePackageJsonResult {
   if (raw === undefined || raw.trim() === '') {
-    return { json: stringifyJson(seedCompleted(options)), repaired: false, completed: true, seeded: true };
+    return {
+      json: stringifyJson(seedCompleted(options)),
+      repaired: false,
+      completed: true,
+      seeded: true,
+    };
   }
 
   const parsed = repairJson(raw);

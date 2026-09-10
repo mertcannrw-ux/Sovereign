@@ -210,11 +210,7 @@ export function validateChanges(
 
     const isExisting = _manifest != null && Object.hasOwn(_manifest, normalizedPath);
     const operation: FileChange['operation'] =
-      change.operation === 'delete'
-        ? 'DELETE'
-        : isExisting
-          ? 'UPDATE'
-          : 'CREATE';
+      change.operation === 'delete' ? 'DELETE' : isExisting ? 'UPDATE' : 'CREATE';
 
     valid.push({
       path: normalizedPath,

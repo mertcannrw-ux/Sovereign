@@ -78,7 +78,9 @@ export function AssetLibrary({ projectId }: AssetLibraryProps) {
             onClick={() => assetsQuery.refetch()}
             disabled={assetsQuery.isFetching}
           >
-            <RefreshCw className={assetsQuery.isFetching ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'} />
+            <RefreshCw
+              className={assetsQuery.isFetching ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'}
+            />
           </Button>
         </div>
       </div>
@@ -108,7 +110,9 @@ export function AssetLibrary({ projectId }: AssetLibraryProps) {
             <ImageIcon className="mb-2 h-10 w-10 opacity-40" />
             <p className="text-sm font-medium">No assets found</p>
             <p className="mt-1 text-xs">
-              {searchQuery ? 'Try another search query' : 'Generated images and uploads will appear here.'}
+              {searchQuery
+                ? 'Try another search query'
+                : 'Generated images and uploads will appear here.'}
             </p>
           </div>
         ) : (
@@ -131,12 +135,12 @@ export function AssetLibrary({ projectId }: AssetLibraryProps) {
                     />
                     <Badge
                       variant="outline"
-                      className="absolute top-2 left-2 bg-background/80 backdrop-blur-sm text-[10px]"
+                      className="absolute left-2 top-2 bg-background/80 text-[10px] backdrop-blur-sm"
                     >
                       {asset.source}
                     </Badge>
                   </div>
-                  <CardContent className="p-3 space-y-2">
+                  <CardContent className="space-y-2 p-3">
                     {asset.prompt && (
                       <p className="line-clamp-2 text-xs text-foreground" title={asset.prompt}>
                         {asset.prompt}
@@ -154,7 +158,11 @@ export function AssetLibrary({ projectId }: AssetLibraryProps) {
                         className="flex-1 gap-1 text-xs"
                         onClick={() => handleCopyUrl(asset.id, asset.publicUrl)}
                       >
-                        {isCopied ? <Check className="h-3.5 w-3.5 text-success" /> : <Copy className="h-3.5 w-3.5" />}
+                        {isCopied ? (
+                          <Check className="h-3.5 w-3.5 text-success" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
                         {isCopied ? 'Copied' : 'Copy URL'}
                       </Button>
                       <Button

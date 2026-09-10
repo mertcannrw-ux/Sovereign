@@ -5,7 +5,9 @@ type AppDatabaseRecord = { id: string; projectId: string; schemaName: string };
 type Db = {
   appDatabase: {
     findFirst: (args: { where: { projectId: string } }) => Promise<AppDatabaseRecord | null>;
-    create: (args: { data: { projectId: string; schemaName: string } }) => Promise<AppDatabaseRecord>;
+    create: (args: {
+      data: { projectId: string; schemaName: string };
+    }) => Promise<AppDatabaseRecord>;
   };
   $executeRawUnsafe: (query: string, ...values: unknown[]) => Promise<unknown>;
 };

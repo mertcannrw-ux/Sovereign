@@ -127,11 +127,16 @@ export default function SettingsPage() {
         <div className="mx-auto max-w-6xl px-5 py-9 sm:px-8">
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">Account</p>
           <h1 className="mt-3 text-3xl font-semibold tracking-[-0.04em] sm:text-4xl">Settings</h1>
-          <p className="mt-2 text-sm text-foreground-muted">Manage your identity, models, team, and subscription.</p>
+          <p className="mt-2 text-sm text-foreground-muted">
+            Manage your identity, models, team, and subscription.
+          </p>
         </div>
       </header>
       <div className="mx-auto flex max-w-6xl flex-col gap-8 px-5 py-8 sm:px-8 md:flex-row md:gap-12">
-        <nav className="flex shrink-0 gap-1 overflow-x-auto pb-2 md:w-56 md:flex-col md:overflow-visible" aria-label="Settings sections">
+        <nav
+          className="flex shrink-0 gap-1 overflow-x-auto pb-2 md:w-56 md:flex-col md:overflow-visible"
+          aria-label="Settings sections"
+        >
           {SETTINGS_TABS.map((tab) => (
             <button
               key={tab.id}
@@ -151,21 +156,32 @@ export default function SettingsPage() {
           ))}
         </nav>
         <div className="min-w-0 flex-1">
-          {activeTab === 'profile' && <Placeholder title="Profile" desc="Manage your account identity and personal preferences." />}
+          {activeTab === 'profile' && (
+            <Placeholder
+              title="Profile"
+              desc="Manage your account identity and personal preferences."
+            />
+          )}
           {activeTab === 'providers' && <AIProvidersTab />}
           {activeTab === 'teams' && (
             <Card className="border-border bg-background-subtle">
               <CardContent className="flex flex-col items-center justify-center py-16 text-center">
                 <h2 className="text-xl font-semibold text-foreground">Teams</h2>
-                <p className="mt-2 text-sm text-foreground-muted">Invite collaborators and manage workspace permissions.</p>
+                <p className="mt-2 text-sm text-foreground-muted">
+                  Invite collaborators and manage workspace permissions.
+                </p>
                 <Button className="mt-6" asChild>
                   <a href="/dashboard/team">Open team page</a>
                 </Button>
               </CardContent>
             </Card>
           )}
-          {activeTab === 'billing' && <Placeholder title="Billing" desc="Review your plan, invoices, and payment method." />}
-          {activeTab === 'api-keys' && <Placeholder title="API Keys" desc="Create and revoke platform access credentials." />}
+          {activeTab === 'billing' && (
+            <Placeholder title="Billing" desc="Review your plan, invoices, and payment method." />
+          )}
+          {activeTab === 'api-keys' && (
+            <Placeholder title="API Keys" desc="Create and revoke platform access credentials." />
+          )}
         </div>
       </div>
     </div>
@@ -214,7 +230,10 @@ function AIProvidersTab() {
   const [imageEndpoint, setImageEndpoint] = useState('');
   const [imageKey, setImageKey] = useState('');
   const [imageModel, setImageModel] = useState('dall-e-3');
-  const [imageTestResult, setImageTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [imageTestResult, setImageTestResult] = useState<{
+    success: boolean;
+    message: string;
+  } | null>(null);
   const [isTestingImageConfig, setIsTestingImageConfig] = useState(false);
 
   const keys = keysQuery.data ?? [];
@@ -304,10 +323,15 @@ function AIProvidersTab() {
   return (
     <div className="space-y-6">
       <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary">Model connections</p>
-        <h2 className="mt-2 text-2xl font-semibold tracking-[-0.035em] text-foreground">AI providers</h2>
+        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary">
+          Model connections
+        </p>
+        <h2 className="mt-2 text-2xl font-semibold tracking-[-0.035em] text-foreground">
+          AI providers
+        </h2>
         <p className="mt-2 max-w-xl text-sm leading-6 text-foreground-muted">
-          Connect the providers you already use. Keys are encrypted, and model access is validated directly with each provider.
+          Connect the providers you already use. Keys are encrypted, and model access is validated
+          directly with each provider.
         </p>
       </div>
       <Separator />
@@ -324,7 +348,10 @@ function AIProvidersTab() {
             const models = providerModels[provider.id] ?? [];
 
             return (
-              <Card key={provider.id} className="border-border bg-background-subtle transition-colors hover:border-border-strong">
+              <Card
+                key={provider.id}
+                className="border-border bg-background-subtle transition-colors hover:border-border-strong"
+              >
                 <CardContent className="p-5">
                   <div className="flex items-center justify-between gap-4">
                     <div className="flex min-w-0 items-center gap-3">
@@ -371,6 +398,7 @@ function AIProvidersTab() {
                             variant="ghost"
                             size="icon-sm"
                             onClick={() => setDeleteConfirm(provider.id)}
+                            aria-label={`Delete ${provider.name} API key`}
                           >
                             <Trash2 className="h-4 w-4 text-error" />
                           </Button>
@@ -404,7 +432,7 @@ function AIProvidersTab() {
             );
           })}
           {/* Image Generation Card */}
-          <Card className="border-border bg-background-subtle transition-colors hover:border-border-strong mt-4">
+          <Card className="mt-4 border-border bg-background-subtle transition-colors hover:border-border-strong">
             <CardContent className="p-5">
               <div className="flex items-center justify-between gap-4">
                 <div className="flex min-w-0 items-center gap-3">
@@ -424,7 +452,8 @@ function AIProvidersTab() {
                         : 'Not configured (Separate OpenAI-compatible image endpoint)'}
                     </p>
                     <p className="mt-1 text-[11px] text-foreground-muted">
-                      Note: Image generation also requires server-side Cloudflare R2 storage to persist generated media assets.
+                      Note: Image generation also requires server-side Cloudflare R2 storage to
+                      persist generated media assets.
                     </p>
                   </div>
                 </div>
@@ -476,6 +505,7 @@ function AIProvidersTab() {
                       <Button
                         variant="ghost"
                         size="icon-sm"
+                        aria-label="Delete image provider configuration"
                         onClick={async () => {
                           if (imageConfigQuery.data) {
                             await imageDeleteMutation.mutateAsync({ id: imageConfigQuery.data.id });
@@ -506,7 +536,9 @@ function AIProvidersTab() {
                 <div
                   className={cn(
                     'mt-3 rounded-md p-3 text-sm',
-                    imageTestResult.success ? 'bg-success/10 text-success' : 'bg-error/10 text-error',
+                    imageTestResult.success
+                      ? 'bg-success/10 text-success'
+                      : 'bg-error/10 text-error',
                   )}
                 >
                   <div className="flex items-center gap-2">
@@ -578,9 +610,8 @@ function AIProvidersTab() {
                     onChange={(event) => setEditBaseUrl(event.target.value)}
                   />
                   <p className="text-xs leading-5 text-foreground-muted">
-                    Remote OpenAI-compatible APIs must use HTTPS. Local servers
-                    (Ollama, vLLM, LM Studio) can use http://127.0.0.1 or
-                    http://localhost on any port.
+                    Remote OpenAI-compatible APIs must use HTTPS. Local servers (Ollama, vLLM, LM
+                    Studio) can use http://127.0.0.1 or http://localhost on any port.
                   </p>
                 </div>
               )}
@@ -651,14 +682,14 @@ function AIProvidersTab() {
               />
             </div>
           </div>
-            {imageTestResult && !imageTestResult.success && (
-              <div className="rounded-md bg-error/10 p-3 text-sm text-error">
-                <div className="flex items-center gap-2">
-                  <XCircle className="h-4 w-4" />
-                  {imageTestResult.message}
-                </div>
+          {imageTestResult && !imageTestResult.success && (
+            <div className="rounded-md bg-error/10 p-3 text-sm text-error">
+              <div className="flex items-center gap-2">
+                <XCircle className="h-4 w-4" />
+                {imageTestResult.message}
               </div>
-            )}
+            </div>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditingImageConfig(false)}>
               Cancel

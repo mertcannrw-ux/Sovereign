@@ -195,6 +195,19 @@ export function PreviewPane({
                 )}
                 aria-hidden={slot !== visiblePreviewSlot}
                 allow="cross-origin-isolated"
+                // Generated code runs here. The frame must not be able to
+                // navigate the workspace or open windows, so no
+                // allow-top-navigation / allow-popups / allow-downloads.
+                //
+                // `allow-same-origin` IS required: the visual editor and the
+                // a11y collector exchange postMessage traffic with a concrete
+                // targetOrigin, and a sandboxed frame without it becomes an
+                // opaque ("null") origin, which silently breaks that handshake.
+                // It is safe because the preview is served from a different
+                // origin than the app, so the frame still cannot read the
+                // workspace's cookies or storage.
+                sandbox="allow-scripts allow-same-origin allow-forms allow-modals"
+                referrerPolicy="no-referrer"
                 onLoad={() => {
                   if (revision !== previewKey || slot === visiblePreviewSlotRef.current) return;
                   const nextSlot = slot as 0 | 1;

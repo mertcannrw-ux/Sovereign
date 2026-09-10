@@ -2,6 +2,19 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { generateImage, normalizeImageEndpoint } from './image-client';
 import { ProviderError } from './types';
 
+// DNS is resolved by the SSRF layer; stub it so unit tests never depend on the
+// network and always exercise the "public address" path.
+vi.mock('./ssrf', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./ssrf')>();
+  return {
+    ...actual,
+    validateOutboundUrl: vi.fn(async (url: string) => ({
+      url: new URL(url),
+      addresses: ['93.184.216.34'],
+    })),
+  };
+});
+
 describe('normalizeImageEndpoint', () => {
   it('normalizes standard v1 base URLs', () => {
     expect(normalizeImageEndpoint('https://api.openai.com/v1')).toBe(
@@ -39,7 +52,8 @@ describe('generateImage', () => {
   });
 
   it('generates an image successfully from b64_json', async () => {
-    const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    const pngBase64 =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
     const mockFetch = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -63,12 +77,13 @@ describe('generateImage', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
     const [url, init] = mockFetch.mock.calls[0]!;
     const headers = init?.headers as Record<string, string>;
-    // SSRF pinning rewrites the hostname to the validated IP, and the original
-    // host is preserved via the Host header so TLS SNI / vhost routing works.
-    const pinnedUrl = new URL(url);
-    expect(pinnedUrl.pathname).toBe('/v1/images/generations');
-    expect(headers['Host']).toBe('api.openai.com');
+    // The URL keeps its original hostname so TLS SNI and vhost routing stay
+    // correct; the validated IP is pinned at the connection layer instead of
+    // rewriting the host (see createPinnedIpDispatcher).
+    expect(url).toBe('https://api.openai.com/v1/images/generations');
+    expect(headers['Host']).toBeUndefined();
     expect(headers['Authorization']).toBe('Bearer test-key');
+    expect((init as { dispatcher?: unknown } | undefined)?.dispatcher).toBeDefined();
   });
 
   it('handles upstream error response gracefully', async () => {

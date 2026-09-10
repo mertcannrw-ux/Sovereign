@@ -11,7 +11,17 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 export const LOCAL_ASSET_ROOT = path.join(process.cwd(), '.private-assets');
 
 export interface R2ConfigStatus {
+  /**
+   * True only when durable object storage (R2/S3) is fully configured.
+   *
+   * The local-disk fallback deliberately reports `false` here: this app runs on
+   * ephemeral filesystems, so assets written to `.private-assets/` disappear on
+   * the next deploy while their database rows survive. Callers that require
+   * durability (image generation) must gate on this flag; callers that only
+   * need to know where bytes land should read `storageMode`.
+   */
   isConfigured: boolean;
+  /** Where uploads will actually be written. */
   storageMode: 'r2' | 'local';
   reason?: string;
 }
@@ -19,23 +29,27 @@ export interface R2ConfigStatus {
 export function getR2ConfigStatus(): R2ConfigStatus {
   const hasAccountId = Boolean(env.R2_ACCOUNT_ID && env.R2_ACCOUNT_ID.trim().length > 0);
   const hasAccessKey = Boolean(env.R2_ACCESS_KEY_ID && env.R2_ACCESS_KEY_ID.trim().length > 0);
-  const hasSecretKey = Boolean(env.R2_SECRET_ACCESS_KEY && env.R2_SECRET_ACCESS_KEY.trim().length > 0);
+  const hasSecretKey = Boolean(
+    env.R2_SECRET_ACCESS_KEY && env.R2_SECRET_ACCESS_KEY.trim().length > 0,
+  );
   const hasBucket = Boolean(env.R2_BUCKET_NAME && env.R2_BUCKET_NAME.trim().length > 0);
   const hasPublicUrl = Boolean(env.R2_PUBLIC_URL && env.R2_PUBLIC_URL.trim().length > 0);
 
-  const count = [hasAccountId, hasAccessKey, hasSecretKey, hasBucket, hasPublicUrl].filter(Boolean).length;
+  const count = [hasAccountId, hasAccessKey, hasSecretKey, hasBucket, hasPublicUrl].filter(
+    Boolean,
+  ).length;
 
   if (count === 5) {
     return { isConfigured: true, storageMode: 'r2' };
   }
 
   return {
-    isConfigured: true,
+    isConfigured: false,
     storageMode: 'local',
-    reason: 'Cloudflare R2 not configured (missing R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME, or R2_PUBLIC_URL). Falling back to local disk storage at .private-assets/.',
+    reason:
+      'Cloudflare R2 not configured (missing R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME, or R2_PUBLIC_URL). Falling back to local disk storage at .private-assets/, which is not durable across deploys.',
   };
 }
-
 
 let r2ClientInstance: S3Client | null = null;
 

@@ -28,8 +28,7 @@ export const authRouter = router({
       // Bucket per IP+email so a missing trusted-proxy header (every request
       // seen as 127.0.0.1) can never collapse registration into ONE global
       // bucket shared by all users.
-      const identity =
-        process.env.TRUSTED_PROXY === 'true' ? `${ctx.ipHash}:${email}` : email;
+      const identity = process.env.TRUSTED_PROXY === 'true' ? `${ctx.ipHash}:${email}` : email;
       const rate = await checkRateLimit('register', identity);
       if (!rate.allowed) {
         const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
@@ -82,8 +81,7 @@ export const authRouter = router({
       const email = input.email.trim().toLowerCase();
       // Bucket per IP+email (see register): without a trusted proxy header the
       // fallback is per-email, never one shared global bucket.
-      const identity =
-        process.env.TRUSTED_PROXY === 'true' ? `${ctx.ipHash}:${email}` : email;
+      const identity = process.env.TRUSTED_PROXY === 'true' ? `${ctx.ipHash}:${email}` : email;
       const rate = await checkRateLimit('signIn', identity);
       if (!rate.allowed) {
         const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
@@ -203,9 +201,11 @@ export const authRouter = router({
 
       const passwordHash = await bcrypt.hash(input.password, 12);
       await ctx.db.$transaction([
+        // Bumping sessionVersion invalidates every JWT issued before this reset,
+        // so a stolen token cannot outlive the password change.
         ctx.db.user.update({
           where: { id: record.userId },
-          data: { passwordHash },
+          data: { passwordHash, sessionVersion: { increment: 1 } },
         }),
         ctx.db.passwordResetToken.update({
           where: { id: record.id },

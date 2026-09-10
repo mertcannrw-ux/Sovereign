@@ -76,9 +76,7 @@ describe('sanitizeSqlForTenant', () => {
   });
 
   it('rejects multi-statement queries', () => {
-    expect(
-      sanitizeSqlForTenant('SELECT * FROM users; DROP TABLE users', 'tenant_123'),
-    ).toBeNull();
+    expect(sanitizeSqlForTenant('SELECT * FROM users; DROP TABLE users', 'tenant_123')).toBeNull();
   });
 
   it('allows WITH (CTE) statements', () => {

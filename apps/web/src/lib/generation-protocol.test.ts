@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { appendGenerationContinuation, applyGeneratedPatches, getActiveGeneratedFile, getGenerationContinuationPrompt, isGenerationArtifactComplete, parseGenerationArtifact, parsePatchArtifact } from '@/lib/generation-protocol';
+import {
+  appendGenerationContinuation,
+  applyGeneratedPatches,
+  getActiveGeneratedFile,
+  getGenerationContinuationPrompt,
+  isGenerationArtifactComplete,
+  parseGenerationArtifact,
+  parsePatchArtifact,
+} from '@/lib/generation-protocol';
 
 describe('generation artifact protocol', () => {
   it('parses a summary and complete project files', () => {
@@ -24,25 +32,33 @@ console.log('ready');
   });
 
   it('parses structured clarification questions with three recommendations', () => {
-    expect(parseGenerationArtifact(`<<<QUESTIONS>>>
+    expect(
+      parseGenerationArtifact(`<<<QUESTIONS>>>
 [{"question":"Who is the primary audience?","options":["Consumers","Small businesses","Enterprise teams"]}]
-<<<END_QUESTIONS>>>`)).toEqual({
+<<<END_QUESTIONS>>>`),
+    ).toEqual({
       message: '',
-      questions: [{
-        question: 'Who is the primary audience?',
-        options: ['Consumers', 'Small businesses', 'Enterprise teams'],
-      }],
+      questions: [
+        {
+          question: 'Who is the primary audience?',
+          options: ['Consumers', 'Small businesses', 'Enterprise teams'],
+        },
+      ],
       files: [],
     });
   });
 
   it('keeps older string-only clarification responses usable', () => {
-    expect(parseGenerationArtifact(`<<<QUESTIONS>>>
+    expect(
+      parseGenerationArtifact(`<<<QUESTIONS>>>
 ["Should users sign in?"]
-<<<END_QUESTIONS>>>`).questions).toEqual([{
-      question: 'Should users sign in?',
-      options: ['Use the recommended approach', 'Keep it simple', 'Make it feature-rich'],
-    }]);
+<<<END_QUESTIONS>>>`).questions,
+    ).toEqual([
+      {
+        question: 'Should users sign in?',
+        options: ['Use the recommended approach', 'Keep it simple', 'Make it feature-rich'],
+      },
+    ]);
   });
 
   it('rejects paths that can escape the sandbox', () => {
@@ -67,11 +83,19 @@ body{}
   });
 
   it('requires an explicit whole-build terminator', () => {
-    expect(isGenerationArtifactComplete('<<<FILE:index.html>>>\n<h1>Done</h1>\n<<<END_FILE>>>')).toBe(false);
-    expect(isGenerationArtifactComplete('<<<FILE:index.html>>>\n<h1>Done</h1>\n<<<END_FILE>>>\n<<<END_BUILD>>>')).toBe(true);
+    expect(
+      isGenerationArtifactComplete('<<<FILE:index.html>>>\n<h1>Done</h1>\n<<<END_FILE>>>'),
+    ).toBe(false);
+    expect(
+      isGenerationArtifactComplete(
+        '<<<FILE:index.html>>>\n<h1>Done</h1>\n<<<END_FILE>>>\n<<<END_BUILD>>>',
+      ),
+    ).toBe(true);
     expect(isGenerationArtifactComplete('<<<FILE:index.html>>>\n<h1>Still writing')).toBe(false);
     expect(isGenerationArtifactComplete('<<<QUESTIONS>>>\n["Which audience?"]')).toBe(false);
-    expect(isGenerationArtifactComplete('<<<QUESTIONS>>>\n["Which audience?"]\n<<<END_QUESTIONS>>>')).toBe(true);
+    expect(
+      isGenerationArtifactComplete('<<<QUESTIONS>>>\n["Which audience?"]\n<<<END_QUESTIONS>>>'),
+    ).toBe(true);
   });
 
   it('resumes inside a truncated file without restarting its marker', () => {
@@ -81,24 +105,29 @@ body{}
   });
 
   it('continues after closed files without re-emitting them', () => {
-    const prompt = getGenerationContinuationPrompt('<<<FILE:index.html>>>\n<h1>Done</h1>\n<<<END_FILE>>>');
+    const prompt = getGenerationContinuationPrompt(
+      '<<<FILE:index.html>>>\n<h1>Done</h1>\n<<<END_FILE>>>',
+    );
     expect(prompt).toContain('Completed files: index.html');
     expect(prompt).toContain('Begin with the next required file marker');
   });
 
   it('merges a repeated current-file marker without duplicating content', () => {
     const partial = '<<<FILE:src/game.js>>>\nfunction update() {';
-    const continuation = '<<<FILE:src/game.js>>>\nfunction update() {\n  render();\n}\n<<<END_FILE>>>\n<<<END_BUILD>>>';
+    const continuation =
+      '<<<FILE:src/game.js>>>\nfunction update() {\n  render();\n}\n<<<END_FILE>>>\n<<<END_BUILD>>>';
     expect(appendGenerationContinuation(partial, continuation)).toBe(
       '<<<FILE:src/game.js>>>\nfunction update() {\n  render();\n}\n<<<END_FILE>>>\n<<<END_BUILD>>>',
     );
   });
 
   it('appends a raw continuation suffix unchanged', () => {
-    expect(appendGenerationContinuation(
-      '<<<FILE:src/game.js>>>\nfunction update() {',
-      '\n  render();\n}\n<<<END_FILE>>>\n<<<END_BUILD>>>',
-    )).toContain('function update() {\n  render();');
+    expect(
+      appendGenerationContinuation(
+        '<<<FILE:src/game.js>>>\nfunction update() {',
+        '\n  render();\n}\n<<<END_FILE>>>\n<<<END_BUILD>>>',
+      ),
+    ).toContain('function update() {\n  render();');
   });
 
   it('deduplicates the same file path keeping the last occurrence', () => {
@@ -136,10 +165,11 @@ Updated the selected heading.
   });
 
   it('rejects a targeted patch when its search text is ambiguous', () => {
-    expect(() => applyGeneratedPatches(
-      [{ path: 'index.html', content: '<span>same</span><span>same</span>' }],
-      [{ path: 'index.html', search: '<span>same</span>', replace: '<span>changed</span>' }],
-    )).toThrow('could not uniquely locate');
+    expect(() =>
+      applyGeneratedPatches(
+        [{ path: 'index.html', content: '<span>same</span><span>same</span>' }],
+        [{ path: 'index.html', search: '<span>same</span>', replace: '<span>changed</span>' }],
+      ),
+    ).toThrow('could not uniquely locate');
   });
-
 });

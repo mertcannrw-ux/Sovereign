@@ -1,13 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import { applyAgentEdit, getAgentFileMutationPaths, getDesignDirectionActionError, getStreamingFileAction, getStreamingThought, isSafeAgentPath, parseAgentAction } from '@/lib/agent-protocol';
+import {
+  applyAgentEdit,
+  getAgentFileMutationPaths,
+  getDesignDirectionActionError,
+  getStreamingFileAction,
+  getStreamingThought,
+  isSafeAgentPath,
+  parseAgentAction,
+} from '@/lib/agent-protocol';
 
 describe('agent protocol', () => {
   it('parses one planned action', () => {
-    expect(parseAgentAction(JSON.stringify({
-      type: 'think',
-      summary: 'Plan the application',
-      content: 'Inspect the existing entry point, then build the requested React experience.',
-    }))).toEqual({
+    expect(
+      parseAgentAction(
+        JSON.stringify({
+          type: 'think',
+          summary: 'Plan the application',
+          content: 'Inspect the existing entry point, then build the requested React experience.',
+        }),
+      ),
+    ).toEqual({
       type: 'think',
       summary: 'Plan the application',
       content: 'Inspect the existing entry point, then build the requested React experience.',
@@ -15,11 +27,15 @@ describe('agent protocol', () => {
   });
 
   it('preserves complete write contents', () => {
-    expect(parseAgentAction(JSON.stringify({
-      type: 'write_file',
-      path: 'src/App.tsx',
-      content: 'export default function App() { return <main />; }',
-    }))).toEqual({
+    expect(
+      parseAgentAction(
+        JSON.stringify({
+          type: 'write_file',
+          path: 'src/App.tsx',
+          content: 'export default function App() { return <main />; }',
+        }),
+      ),
+    ).toEqual({
       type: 'write_file',
       path: 'src/App.tsx',
       content: 'export default function App() { return <main />; }',
@@ -30,7 +46,9 @@ describe('agent protocol', () => {
     expect(isSafeAgentPath('src/App.tsx')).toBe(true);
     expect(isSafeAgentPath('../secret.txt')).toBe(false);
     expect(isSafeAgentPath('/etc/passwd')).toBe(false);
-    expect(() => parseAgentAction('{"type":"delete_file","path":"../secret.txt"}')).toThrow('invalid');
+    expect(() => parseAgentAction('{"type":"delete_file","path":"../secret.txt"}')).toThrow(
+      'invalid',
+    );
   });
 
   it('requires an edit search to match exactly once', () => {
@@ -40,47 +58,69 @@ describe('agent protocol', () => {
   });
 
   it('accepts exactly three useful clarification options', () => {
-    expect(parseAgentAction(JSON.stringify({
-      type: 'ask_questions',
-      questions: [{ question: 'Which audience?', options: ['Consumers', 'Teams', 'Enterprises'] }],
-    }))).toEqual({
+    expect(
+      parseAgentAction(
+        JSON.stringify({
+          type: 'ask_questions',
+          questions: [
+            { question: 'Which audience?', options: ['Consumers', 'Teams', 'Enterprises'] },
+          ],
+        }),
+      ),
+    ).toEqual({
       type: 'ask_questions',
       questions: [{ question: 'Which audience?', options: ['Consumers', 'Teams', 'Enterprises'] }],
     });
   });
 
   it('treats normal text as a direct conversational reply', () => {
-    expect(parseAgentAction('Yes — the preview updates after every completed file write.')).toEqual({
-      type: 'respond',
-      message: 'Yes — the preview updates after every completed file write.',
-    });
+    expect(parseAgentAction('Yes — the preview updates after every completed file write.')).toEqual(
+      {
+        type: 'respond',
+        message: 'Yes — the preview updates after every completed file write.',
+      },
+    );
   });
 
   it('rejects malformed file actions instead of leaking them into chat', () => {
-    expect(() => parseAgentAction('I will update it now.\n{"type":"edit_file","path":"src/App.tsx","search":"old","replace":"new"')).toThrow();
+    expect(() =>
+      parseAgentAction(
+        'I will update it now.\n{"type":"edit_file","path":"src/App.tsx","search":"old","replace":"new"',
+      ),
+    ).toThrow();
   });
 
   it('reports the mutation path for one parsed filesystem action', () => {
-    const action = parseAgentAction('{"type":"edit_file","path":"src/App.tsx","search":"old","replace":"new"}');
+    const action = parseAgentAction(
+      '{"type":"edit_file","path":"src/App.tsx","search":"old","replace":"new"}',
+    );
     expect([...getAgentFileMutationPaths(action)]).toEqual(['src/App.tsx']);
   });
 
   it('parses an explicit conversational response action', () => {
-    expect(parseAgentAction('{"type":"respond","message":"What would you like to adjust?"}')).toEqual({
+    expect(
+      parseAgentAction('{"type":"respond","message":"What would you like to adjust?"}'),
+    ).toEqual({
       type: 'respond',
       message: 'What would you like to adjust?',
     });
   });
 
   it('decodes partial thinking content while JSON is still streaming', () => {
-    expect(getStreamingThought('{"type":"think","summary":"Planning","content":"Inspect the app\\nThen build')).toBe(
-      'Inspect the app\nThen build',
-    );
-    expect(getStreamingThought('{"type":"write_file","path":"src/App.tsx","content":"secret source')).toBeNull();
+    expect(
+      getStreamingThought(
+        '{"type":"think","summary":"Planning","content":"Inspect the app\\nThen build',
+      ),
+    ).toBe('Inspect the app\nThen build');
+    expect(
+      getStreamingThought('{"type":"write_file","path":"src/App.tsx","content":"secret source'),
+    ).toBeNull();
   });
 
   it('extracts multiple tool actions after prose without leaking them as chat', () => {
-    const action = parseAgentAction(`I'll add the remaining files now.\n\n{"type":"write_file","path":"index.html","content":"<main></main>"}\n\n{"type":"write_file","path":"src/main.tsx","content":"render();"}`);
+    const action = parseAgentAction(
+      `I'll add the remaining files now.\n\n{"type":"write_file","path":"index.html","content":"<main></main>"}\n\n{"type":"write_file","path":"src/main.tsx","content":"render();"}`,
+    );
     expect(action).toEqual({
       type: 'batch',
       actions: [
@@ -91,7 +131,11 @@ describe('agent protocol', () => {
   });
 
   it('accepts a JSON array of tool actions', () => {
-    expect(parseAgentAction('[{"type":"delete_file","path":"old.css"},{"type":"read_files","files":[{"path":"src/App.tsx","startLine":120,"endLine":220}]}]')).toEqual({
+    expect(
+      parseAgentAction(
+        '[{"type":"delete_file","path":"old.css"},{"type":"read_files","files":[{"path":"src/App.tsx","startLine":120,"endLine":220}]}]',
+      ),
+    ).toEqual({
       type: 'batch',
       actions: [
         { type: 'delete_file', path: 'old.css' },
@@ -101,7 +145,11 @@ describe('agent protocol', () => {
   });
 
   it('supports full reads and open-ended line ranges', () => {
-    expect(parseAgentAction('{"type":"read_files","files":[{"path":"src/App.tsx"},{"path":"src/index.css","startLine":80},{"path":"package.json","endLine":12}]}')).toEqual({
+    expect(
+      parseAgentAction(
+        '{"type":"read_files","files":[{"path":"src/App.tsx"},{"path":"src/index.css","startLine":80},{"path":"package.json","endLine":12}]}',
+      ),
+    ).toEqual({
       type: 'read_files',
       files: [
         { path: 'src/App.tsx' },
@@ -112,12 +160,20 @@ describe('agent protocol', () => {
   });
 
   it('rejects reversed or non-positive read ranges', () => {
-    expect(() => parseAgentAction('{"type":"read_files","files":[{"path":"src/App.tsx","startLine":20,"endLine":10}]}')).toThrow('reversed line range');
-    expect(() => parseAgentAction('{"type":"read_files","files":[{"path":"src/App.tsx","startLine":0}]}')).toThrow('invalid line bounds');
+    expect(() =>
+      parseAgentAction(
+        '{"type":"read_files","files":[{"path":"src/App.tsx","startLine":20,"endLine":10}]}',
+      ),
+    ).toThrow('reversed line range');
+    expect(() =>
+      parseAgentAction('{"type":"read_files","files":[{"path":"src/App.tsx","startLine":0}]}'),
+    ).toThrow('invalid line bounds');
   });
 
   it('accepts underspecified thinking actions without failing the run', () => {
-    expect(parseAgentAction('{"type":"think","content":"I should inspect the current page."}')).toEqual({
+    expect(
+      parseAgentAction('{"type":"think","content":"I should inspect the current page."}'),
+    ).toEqual({
       type: 'think',
       summary: 'I should inspect the current page.',
       content: 'I should inspect the current page.',
@@ -130,7 +186,11 @@ describe('agent protocol', () => {
   });
 
   it('decodes provisional write contents before the JSON action completes', () => {
-    expect(getStreamingFileAction('{"type": "write_file", "path": "src/App.tsx", "content": "line one\\nline two')).toEqual({
+    expect(
+      getStreamingFileAction(
+        '{"type": "write_file", "path": "src/App.tsx", "content": "line one\\nline two',
+      ),
+    ).toEqual({
       type: 'write_file',
       path: 'src/App.tsx',
       content: 'line one\nline two',
@@ -138,13 +198,19 @@ describe('agent protocol', () => {
   });
 
   it('builds provisional edits only after the exact search text is complete', () => {
-    expect(getStreamingFileAction('{"type":"edit_file","path":"src/App.tsx","search":"old","replace":"new')).toEqual({
+    expect(
+      getStreamingFileAction(
+        '{"type":"edit_file","path":"src/App.tsx","search":"old","replace":"new',
+      ),
+    ).toEqual({
       type: 'edit_file',
       path: 'src/App.tsx',
       search: 'old',
       replace: 'new',
     });
-    expect(getStreamingFileAction('{"type":"edit_file","path":"src/App.tsx","search":"old')).toBeNull();
+    expect(
+      getStreamingFileAction('{"type":"edit_file","path":"src/App.tsx","search":"old'),
+    ).toBeNull();
   });
   it('parses valid generate_images action', () => {
     const action = parseAgentAction(
@@ -171,9 +237,9 @@ describe('agent protocol', () => {
     const action = parseAgentAction(JSON.stringify({ type: 'generate_images', images }));
     expect(action.type).toBe('generate_images');
     if (action.type === 'generate_images') expect(action.images).toHaveLength(6);
-    expect(() =>
-      parseAgentAction(JSON.stringify({ type: 'generate_images', images: [] })),
-    ).toThrow('at least one image specification');
+    expect(() => parseAgentAction(JSON.stringify({ type: 'generate_images', images: [] }))).toThrow(
+      'at least one image specification',
+    );
   });
 
   it('rejects generate_images actions above the per-action cap', () => {
@@ -182,9 +248,9 @@ describe('agent protocol', () => {
       semanticUse: `section-${index + 1}`,
       placeholderToken: `__SECTION_${index + 1}_IMG__`,
     }));
-    expect(() =>
-      parseAgentAction(JSON.stringify({ type: 'generate_images', images })),
-    ).toThrow('at most 8 image specifications');
+    expect(() => parseAgentAction(JSON.stringify({ type: 'generate_images', images }))).toThrow(
+      'at most 8 image specifications',
+    );
   });
 
   it('parses valid propose_design_directions action with exactly 3 concepts', () => {
@@ -241,18 +307,24 @@ describe('agent protocol', () => {
       typography: { headingFont: 'Inter', bodyFont: 'Inter', styleNotes: 'Clean' },
       layoutNotes: 'Layout',
     };
-    const proposal = parseAgentAction(JSON.stringify({
-      type: 'propose_design_directions',
-      directions: [direction, direction, direction],
-    }));
+    const proposal = parseAgentAction(
+      JSON.stringify({
+        type: 'propose_design_directions',
+        directions: [direction, direction, direction],
+      }),
+    );
 
-    expect(getDesignDirectionActionError(proposal, true)).toContain('only available for an empty project');
+    expect(getDesignDirectionActionError(proposal, true)).toContain(
+      'only available for an empty project',
+    );
     expect(getDesignDirectionActionError(proposal, false)).toBeNull();
 
-    const mixed = parseAgentAction(JSON.stringify([
-      { type: 'propose_design_directions', directions: [direction, direction, direction] },
-      { type: 'read_files', files: [{ path: 'src/App.tsx' }] },
-    ]));
+    const mixed = parseAgentAction(
+      JSON.stringify([
+        { type: 'propose_design_directions', directions: [direction, direction, direction] },
+        { type: 'read_files', files: [{ path: 'src/App.tsx' }] },
+      ]),
+    );
     expect(getDesignDirectionActionError(mixed, false)).toContain('only action in their turn');
   });
 });

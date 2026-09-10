@@ -5,13 +5,7 @@ import { Toaster } from 'react-hot-toast';
 import { ThemeProvider } from 'next-themes';
 import { TRPCProvider } from '@/lib/trpc/react';
 
-export function Providers({
-  children,
-  nonce,
-}: {
-  children: React.ReactNode;
-  nonce?: string;
-}) {
+export function Providers({ children, nonce }: { children: React.ReactNode; nonce?: string }) {
   return (
     <SessionProvider>
       <TRPCProvider>

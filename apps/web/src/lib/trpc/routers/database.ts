@@ -219,7 +219,8 @@ export const databaseRouter = router({
       if (!statement) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
-          message: 'Only single SELECT/WITH statements are allowed — platform schemas, system catalogs, other tenant schemas, and multi-statement queries are blocked',
+          message:
+            'Only single SELECT/WITH statements are allowed — platform schemas, system catalogs, other tenant schemas, and multi-statement queries are blocked',
         });
       }
 

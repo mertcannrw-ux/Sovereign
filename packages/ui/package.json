@@ -10,7 +10,7 @@
     "./tokens": "./src/tokens.tsx"
   },
   "scripts": {
-    "lint": "tsc --noEmit",
+    "lint": "node ../../node_modules/eslint/bin/eslint.js src",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

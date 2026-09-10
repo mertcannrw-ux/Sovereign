@@ -60,10 +60,7 @@ export const imageProviderRouter = router({
       } catch (error) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
-          message:
-            error instanceof SsrfError
-              ? error.message
-              : 'Invalid base URL provided',
+          message: error instanceof SsrfError ? error.message : 'Invalid base URL provided',
         });
       }
 

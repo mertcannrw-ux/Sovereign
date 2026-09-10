@@ -10,7 +10,6 @@ export interface GenerateImageOptions {
   timeoutMs?: number;
 }
 
-
 export interface GenerateImageResult {
   bytes: Uint8Array;
   mediaType: string;
@@ -30,10 +29,12 @@ const ImageResponseSchema = z.object({
 });
 
 const ErrorResponseSchema = z.object({
-  error: z.object({
-    message: z.string().optional(),
-    code: z.string().optional(),
-  }).optional(),
+  error: z
+    .object({
+      message: z.string().optional(),
+      code: z.string().optional(),
+    })
+    .optional(),
 });
 
 export function normalizeImageEndpoint(baseUrl?: string): string {
@@ -46,7 +47,13 @@ export function normalizeImageEndpoint(baseUrl?: string): string {
 }
 
 function detectMediaType(bytes: Uint8Array, fallbackHeader?: string): string {
-  if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47
+  ) {
     return 'image/png';
   }
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
@@ -65,7 +72,13 @@ function detectMediaType(bytes: Uint8Array, fallbackHeader?: string): string {
   ) {
     return 'image/webp';
   }
-  if (bytes.length >= 6 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38) {
+  if (
+    bytes.length >= 6 &&
+    bytes[0] === 0x47 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x38
+  ) {
     return 'image/gif';
   }
   if (fallbackHeader && fallbackHeader.startsWith('image/')) {
@@ -151,12 +164,22 @@ export async function generateImage(
 
   const contentLength = Number(response.headers.get('content-length'));
   if (Number.isFinite(contentLength) && contentLength > MAX_IMAGE_RESPONSE_BYTES) {
-    throw new ProviderError('openai', 413, 'response_too_large', 'Image response payload exceeded size limit');
+    throw new ProviderError(
+      'openai',
+      413,
+      'response_too_large',
+      'Image response payload exceeded size limit',
+    );
   }
 
   const rawText = await response.text();
   if (rawText.length > MAX_IMAGE_RESPONSE_BYTES) {
-    throw new ProviderError('openai', 413, 'response_too_large', 'Image response payload exceeded size limit');
+    throw new ProviderError(
+      'openai',
+      413,
+      'response_too_large',
+      'Image response payload exceeded size limit',
+    );
   }
 
   let json: unknown;
@@ -168,7 +191,12 @@ export async function generateImage(
 
   const parseResult = ImageResponseSchema.safeParse(json);
   if (!parseResult.success) {
-    throw new ProviderError('openai', 500, 'invalid_response', 'Image response structure is invalid');
+    throw new ProviderError(
+      'openai',
+      500,
+      'invalid_response',
+      'Image response structure is invalid',
+    );
   }
 
   const item = parseResult.data.data[0]!;
@@ -222,18 +250,33 @@ export async function generateImage(
     // F-19: header pre-check before buffering
     const dlContentLength = Number(imgResponse.headers.get('content-length'));
     if (Number.isFinite(dlContentLength) && dlContentLength > MAX_IMAGE_RESPONSE_BYTES) {
-      throw new ProviderError('openai', 413, 'response_too_large', 'Downloaded image exceeded size limit');
+      throw new ProviderError(
+        'openai',
+        413,
+        'response_too_large',
+        'Downloaded image exceeded size limit',
+      );
     }
 
     const arrayBuffer = await imgResponse.arrayBuffer();
     const bytes = new Uint8Array(arrayBuffer);
     if (bytes.length > MAX_IMAGE_RESPONSE_BYTES) {
-      throw new ProviderError('openai', 413, 'response_too_large', 'Downloaded image exceeded size limit');
+      throw new ProviderError(
+        'openai',
+        413,
+        'response_too_large',
+        'Downloaded image exceeded size limit',
+      );
     }
     const contentTypeHeader = imgResponse.headers.get('content-type') ?? undefined;
     const mediaType = detectMediaType(bytes, contentTypeHeader);
     return { bytes, mediaType, revisedPrompt };
   }
 
-  throw new ProviderError('openai', 500, 'invalid_response', 'Image response contains neither b64_json nor url');
+  throw new ProviderError(
+    'openai',
+    500,
+    'invalid_response',
+    'Image response contains neither b64_json nor url',
+  );
 }

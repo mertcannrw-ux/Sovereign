@@ -112,8 +112,18 @@ function highlightCode(code: string): string {
     const token = match[0];
     // Groups: 1 comment, 2 block comment, 3 template, 4 double-quoted,
     // 5 single-quoted, 6 number, 7 JSX tag, 8 closing tag, 9 identifier.
-    const [, comment, blockComment, template, doubleQuoted, singleQuoted, numberToken, jsxTag, closingTag, word] =
-      match;
+    const [
+      ,
+      comment,
+      blockComment,
+      template,
+      doubleQuoted,
+      singleQuoted,
+      numberToken,
+      jsxTag,
+      closingTag,
+      word,
+    ] = match;
     let className: string | null = null;
     if (comment || blockComment) className = 'hl-comment';
     else if (template || doubleQuoted || singleQuoted) className = 'hl-string';
@@ -171,7 +181,10 @@ export function CodeEditor({
   const highlightedHtml = useMemo(() => {
     if (!activeFileData) return '';
     // Use deferred value for the heavy regex pass to keep keystrokes responsive.
-    const source = deferredContent !== '' || activeFileData.content === '' ? deferredContent : activeFileData.content;
+    const source =
+      deferredContent !== '' || activeFileData.content === ''
+        ? deferredContent
+        : activeFileData.content;
     return highlightCode(source);
   }, [activeFileData, deferredContent]);
 

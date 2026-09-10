@@ -85,7 +85,10 @@ function ensureIndexHtml(content: string): string {
   if (mainScriptSrc.test(html)) {
     html = html.replace(/src\s*=\s*["'](?:\.\/)?\/?src\/main\.tsx["']/gi, 'src="/src/main.tsx"');
   } else if (/<\/body>/i.test(html)) {
-    html = html.replace(/<\/body>/i, '    <script type="module" src="/src/main.tsx"></script>\n  </body>');
+    html = html.replace(
+      /<\/body>/i,
+      '    <script type="module" src="/src/main.tsx"></script>\n  </body>',
+    );
   } else {
     html += '\n<script type="module" src="/src/main.tsx"></script>\n';
   }
@@ -99,7 +102,9 @@ function ensureTsconfig(content: string): { json: string; repaired: boolean; see
   }
   const obj = parsed as Record<string, unknown>;
   const compilerOptions =
-    obj.compilerOptions && typeof obj.compilerOptions === 'object' && !Array.isArray(obj.compilerOptions)
+    obj.compilerOptions &&
+    typeof obj.compilerOptions === 'object' &&
+    !Array.isArray(obj.compilerOptions)
       ? { ...(obj.compilerOptions as Record<string, unknown>) }
       : {};
   let changed = false;
@@ -149,7 +154,10 @@ function stripCall(source: string, name: string): string {
 
 function ensureViteConfig(content: string): string {
   if (!VISUAL_EDITOR_RE.test(content) && !/\bvisualEditor\b/.test(content)) return content;
-  let next = content.replace(/import\s+[^;]*?from\s+['"]@app-builder\/visual-editor['"]\s*;?\r?\n?/g, '');
+  let next = content.replace(
+    /import\s+[^;]*?from\s+['"]@app-builder\/visual-editor['"]\s*;?\r?\n?/g,
+    '',
+  );
   next = next.replace(/import\s+['"]@app-builder\/visual-editor['"]\s*;?\r?\n?/g, '');
   next = stripCall(next, 'visualEditor');
   next = next.replace(/,\s*,/g, ',');
@@ -219,7 +227,8 @@ export function applyStackContract(
   if (nextVite !== viteConfig) {
     next.set('vite.config.ts', nextVite);
     if (isBlank(viteConfig) && !seeded.includes('vite.config.ts')) seeded.push('vite.config.ts');
-    else if (!isBlank(viteConfig)) notes.push('rewrote vite.config.ts to drop @app-builder/visual-editor');
+    else if (!isBlank(viteConfig))
+      notes.push('rewrote vite.config.ts to drop @app-builder/visual-editor');
   }
 
   const indexHtml = next.get('index.html') ?? '';

@@ -17,8 +17,12 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/__tests__/setup.ts'],
-    // F-28: include package tests so image-client.test.ts is not orphaned
-    include: ['src/**/*.{test,spec}.{ts,tsx}', '../../packages/**/__tests__/**/*.{test,spec}.{ts,tsx}', '../../packages/**/src/**/*.{test,spec}.{ts,tsx}'],
+    // Only this app's tests. Package tests run in their own workspace via
+    // `turbo test` (each package has its own environment and DNS/undici mocks);
+    // globbing ../../packages/** here pulled files out of node_modules and
+    // duplicated runs in the wrong environment.
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    exclude: ['**/node_modules/**', '**/dist/**', '**/.next/**'],
     globals: true,
     coverage: {
       provider: 'v8',

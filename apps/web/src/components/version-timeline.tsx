@@ -90,101 +90,101 @@ export function VersionTimeline({
   return (
     <>
       <div
-      className={cn(
-        'flex items-center gap-1 overflow-x-auto px-3 py-2',
-        'scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent',
-        className,
-      )}
-    >
-      <History className="mr-1 h-3.5 w-3.5 shrink-0 text-foreground-muted" />
+        className={cn(
+          'flex items-center gap-1 overflow-x-auto px-3 py-2',
+          'scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent',
+          className,
+        )}
+      >
+        <History className="mr-1 h-3.5 w-3.5 shrink-0 text-foreground-muted" />
 
-      {/* Scroll hint arrows */}
-      <ChevronLeft className="h-3 w-3 shrink-0 text-foreground-muted/50 md:hidden" />
+        {/* Scroll hint arrows */}
+        <ChevronLeft className="h-3 w-3 shrink-0 text-foreground-muted/50 md:hidden" />
 
-      <div className="flex items-center gap-0.5">
-        {displayVersions.map((v) => {
-          const isCurrent = v.versionNumber === currentVersion;
-          const isLatest = v.versionNumber === maxVersion;
-          const isRestoreMarker = v.isRestore;
+        <div className="flex items-center gap-0.5">
+          {displayVersions.map((v) => {
+            const isCurrent = v.versionNumber === currentVersion;
+            const isLatest = v.versionNumber === maxVersion;
+            const isRestoreMarker = v.isRestore;
 
-          return (
-            <TooltipProvider key={v.id} delayDuration={400}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={() => onSelectVersion(v.versionNumber)}
-                    className={cn(
-                      'relative flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-medium transition-all',
-                      'hover:ring-2 hover:ring-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
-                      isCurrent && 'bg-primary text-white shadow-sm ring-2 ring-primary',
-                      !isCurrent &&
-                        isRestoreMarker &&
-                        'border border-warning/30 bg-warning-light text-warning',
-                      !isCurrent &&
-                        !isRestoreMarker &&
-                        isLatest &&
-                        'border border-primary/20 bg-primary-light text-primary',
-                      !isCurrent &&
-                        !isRestoreMarker &&
-                        !isLatest &&
-                        'border border-border bg-background-muted text-foreground-secondary hover:bg-background-subtle',
-                    )}
-                    aria-label={`Version ${v.versionNumber}${isCurrent ? ' (current)' : ''}`}
-                  >
-                    {isRestoreMarker ? <RotateCcw className="h-3 w-3" /> : v.versionNumber}
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="top" align="center" className="max-w-56">
-                  <div className="space-y-1">
-                    <p className="font-medium text-foreground">
-                      {isRestoreMarker
-                        ? `Restore Point ${v.versionNumber}`
-                        : `Version ${v.versionNumber}`}
-                    </p>
-                    <p className="text-foreground-muted">{formatVersionTime(v.createdAt)}</p>
-                    {v.fileCount > 0 && !isRestoreMarker && (
-                      <p className="text-foreground-muted">
-                        {v.fileCount} file{v.fileCount !== 1 ? 's' : ''} modified
+            return (
+              <TooltipProvider key={v.id} delayDuration={400}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => onSelectVersion(v.versionNumber)}
+                      className={cn(
+                        'relative flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-medium transition-all',
+                        'hover:ring-2 hover:ring-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+                        isCurrent && 'bg-primary text-white shadow-sm ring-2 ring-primary',
+                        !isCurrent &&
+                          isRestoreMarker &&
+                          'border border-warning/30 bg-warning-light text-warning',
+                        !isCurrent &&
+                          !isRestoreMarker &&
+                          isLatest &&
+                          'border border-primary/20 bg-primary-light text-primary',
+                        !isCurrent &&
+                          !isRestoreMarker &&
+                          !isLatest &&
+                          'border border-border bg-background-muted text-foreground-secondary hover:bg-background-subtle',
+                      )}
+                      aria-label={`Version ${v.versionNumber}${isCurrent ? ' (current)' : ''}`}
+                    >
+                      {isRestoreMarker ? <RotateCcw className="h-3 w-3" /> : v.versionNumber}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" align="center" className="max-w-56">
+                    <div className="space-y-1">
+                      <p className="font-medium text-foreground">
+                        {isRestoreMarker
+                          ? `Restore Point ${v.versionNumber}`
+                          : `Version ${v.versionNumber}`}
                       </p>
-                    )}
-                    {isCurrent && (
-                      <span className="inline-block rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                        Current
-                      </span>
-                    )}
-                    {isLatest && !isCurrent && (
-                      <span className="inline-block rounded bg-primary-light px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                        Latest
-                      </span>
-                    )}
-                    <div className="pt-1">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 w-full text-[11px]"
-                        onClick={(e) => handleRestore(e, v.versionNumber)}
-                        disabled={isCurrent || restoringVersion === v.versionNumber}
-                      >
-                        <RotateCcw className="mr-1 h-3 w-3" />
-                        {isCurrent ? 'Current' : 'Restore'}
-                      </Button>
+                      <p className="text-foreground-muted">{formatVersionTime(v.createdAt)}</p>
+                      {v.fileCount > 0 && !isRestoreMarker && (
+                        <p className="text-foreground-muted">
+                          {v.fileCount} file{v.fileCount !== 1 ? 's' : ''} modified
+                        </p>
+                      )}
+                      {isCurrent && (
+                        <span className="inline-block rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                          Current
+                        </span>
+                      )}
+                      {isLatest && !isCurrent && (
+                        <span className="inline-block rounded bg-primary-light px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                          Latest
+                        </span>
+                      )}
+                      <div className="pt-1">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 w-full text-[11px]"
+                          onClick={(e) => handleRestore(e, v.versionNumber)}
+                          disabled={isCurrent || restoringVersion === v.versionNumber}
+                        >
+                          <RotateCcw className="mr-1 h-3 w-3" />
+                          {isCurrent ? 'Current' : 'Restore'}
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          );
-        })}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            );
+          })}
+        </div>
+
+        <ChevronRight className="h-3 w-3 shrink-0 text-foreground-muted/50 md:hidden" />
+
+        {/* Current version label */}
+        <span className="ml-2 shrink-0 text-[10px] text-foreground-muted">
+          v{currentVersion}
+          {currentVersion < maxVersion ? ` of ${maxVersion}` : ''}
+        </span>
       </div>
-
-      <ChevronRight className="h-3 w-3 shrink-0 text-foreground-muted/50 md:hidden" />
-
-      {/* Current version label */}
-      <span className="ml-2 shrink-0 text-[10px] text-foreground-muted">
-        v{currentVersion}
-        {currentVersion < maxVersion ? ` of ${maxVersion}` : ''}
-      </span>
-    </div>
       {restoreError && (
         <p className="px-3 pb-2 text-xs text-error" role="alert">
           {restoreError}

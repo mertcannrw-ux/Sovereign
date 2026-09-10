@@ -34,6 +34,16 @@ export interface GenerationEditTarget {
   outerHTML: string;
 }
 
+/**
+ * A file the user attached to the prompt. `content` is already read client-side
+ * (the server only accepts text, caps each part at 100 KB, and enforces a 512 KB
+ * total budget).
+ */
+export interface GenerationAttachment {
+  path: string;
+  content: string;
+}
+
 export interface GenerationHistoryMessage {
   id: string;
   role: string;
@@ -96,6 +106,7 @@ export interface UseGenerationResult {
     messageOverride?: string,
     directionResponseOverride?: GenerateDirectionResponse,
     editTargetOverride?: GenerationEditTarget,
+    attachments?: GenerationAttachment[],
   ) => Promise<void>;
   stop: () => void;
   answerClarification: (answer: string) => void;
@@ -231,6 +242,7 @@ export function useGeneration({
       messageOverride?: string,
       directionResponseOverride?: GenerateDirectionResponse,
       editTargetOverride?: GenerationEditTarget,
+      attachments?: GenerationAttachment[],
     ) => {
       const text = messageOverride?.trim() ?? '';
       if ((!text && !directionResponseOverride) || isSending || !selectedModel || !selectedProvider)
@@ -275,6 +287,7 @@ export function useGeneration({
             reasoningEffort: reasoningEffort === 'auto' ? undefined : reasoningEffort,
             ...(currentEditTarget ? { editTarget: currentEditTarget } : {}),
             ...(directionResponseOverride ? { directionResponse: directionResponseOverride } : {}),
+            ...(attachments && attachments.length > 0 ? { files: attachments } : {}),
           }),
         });
 

@@ -13,6 +13,7 @@
   },
   "devDependencies": {
     "@app-builder/tsconfig": "*",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vite": "8.1.4"
   }
 }

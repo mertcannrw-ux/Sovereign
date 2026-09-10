@@ -24,7 +24,6 @@ export interface FilePreviewEvent {
   content?: string;
 }
 
-
 export interface ImageJobEventData {
   id: string;
   status: 'running' | 'complete' | 'failed';

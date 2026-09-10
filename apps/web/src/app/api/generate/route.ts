@@ -1,17 +1,31 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { getServerSession } from 'next-auth';
 import { NextRequest } from 'next/server';
 import { getProvider, generateImage, ProviderError } from '@app-builder/ai-gateway';
-import { applyStackContract, isForbiddenEnvPath, type StackContractChange } from '@app-builder/codegen';
+import {
+  applyStackContract,
+  isForbiddenEnvPath,
+  type StackContractChange,
+} from '@app-builder/codegen';
 import { TRPCError } from '@trpc/server';
 import { uploadProjectAsset } from '@/server/assets/project-assets';
 import { getR2ConfigStatus } from '@/server/assets/r2';
 import { AIProvider } from '@app-builder/shared';
-import { authOptions } from '@/lib/auth';
+import { getVerifiedSession } from '@/lib/auth';
 import { decryptApiKey } from '@/lib/crypto';
 import { getDb } from '@/lib/db';
 import { requireProjectRole } from '@/server/authz';
-import { applyAgentEdit, getAgentFileMutationPaths, getDesignDirectionActionError, getStreamingFileAction, getStreamingThought, parseAgentAction, MAX_IMAGES_PER_RUN, type AgentAction, type AgentReadRequest, type AgentStep } from '@/lib/agent-protocol';
+import {
+  applyAgentEdit,
+  getAgentFileMutationPaths,
+  getDesignDirectionActionError,
+  getStreamingFileAction,
+  getStreamingThought,
+  parseAgentAction,
+  MAX_IMAGES_PER_RUN,
+  type AgentAction,
+  type AgentReadRequest,
+  type AgentStep,
+} from '@/lib/agent-protocol';
 import {
   SOVEREIGN_TOOLS,
   actionsFromToolCalls,
@@ -62,6 +76,12 @@ const MAX_NO_PROGRESS_TURNS =
 const MAX_ATTACHMENT_BYTES = 512 * 1024;
 const MAX_READ_RESULT_CHARS = 60_000;
 const IMAGE_GENERATION_CONCURRENCY = 3;
+/**
+ * A generation lease older than this is treated as abandoned (the process
+ * crashed or was killed mid-run) and may be reclaimed. Set comfortably above
+ * `maxDuration` so a legitimately long run is never stolen.
+ */
+const GENERATION_LEASE_STALE_MS = 20 * 60 * 1000;
 
 function isRetryableImageError(error: unknown): boolean {
   if (error instanceof ProviderError) {
@@ -94,7 +114,6 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-
 function formatReadObservation(
   path: string,
   content: string | undefined,
@@ -111,9 +130,10 @@ function formatReadObservation(
   }
 
   const lastLine = Math.min(requestedLastLine, lines.length);
-  const header = request.startLine === undefined && request.endLine === undefined
-    ? `--- ${path} (full file, lines 1-${lines.length}) ---`
-    : `--- ${path} (lines ${firstLine}-${lastLine}) ---`;
+  const header =
+    request.startLine === undefined && request.endLine === undefined
+      ? `--- ${path} (full file, lines 1-${lines.length}) ---`
+      : `--- ${path} (lines ${firstLine}-${lastLine}) ---`;
   const numbered = lines
     .slice(firstLine - 1, lastLine)
     .map((line, index) => `${firstLine + index}: ${line}`)
@@ -192,7 +212,13 @@ function encodeEvent(event: string, data: unknown): Uint8Array {
   return new TextEncoder().encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
-function messageRecord(message: { id: string; role: string; content: string; timestamp: Date; model: string }) {
+function messageRecord(message: {
+  id: string;
+  role: string;
+  content: string;
+  timestamp: Date;
+  model: string;
+}) {
   return {
     id: message.id,
     role: message.role,
@@ -203,7 +229,7 @@ function messageRecord(message: { id: string; role: string; content: string; tim
 }
 
 export async function POST(request: NextRequest) {
-  const session = await getServerSession(authOptions);
+  const session = await getVerifiedSession();
   if (!session?.user?.id) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
   let body: GenerateBody;
@@ -214,17 +240,28 @@ export async function POST(request: NextRequest) {
   }
   const projectId = body.projectId?.trim();
   if (body.directionResponse && (!body.projectId || !body.modelProvider || !body.modelName)) {
-    return Response.json({ error: 'Missing generation input for direction response' }, { status: 400 });
+    return Response.json(
+      { error: 'Missing generation input for direction response' },
+      { status: 400 },
+    );
   }
   const prompt = body.message?.trim();
-  if (!projectId || (!prompt && !body.directionResponse) || !body.modelProvider || !body.modelName) {
+  if (
+    !projectId ||
+    (!prompt && !body.directionResponse) ||
+    !body.modelProvider ||
+    !body.modelName
+  ) {
     return Response.json({ error: 'Missing generation input' }, { status: 400 });
   }
 
   const rate = await checkRateLimit('prompt', session.user.id);
   if (!rate.allowed) {
     const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
-    return Response.json({ error: `Rate limit exceeded. Try again in ${retryIn}s.` }, { status: 429 });
+    return Response.json(
+      { error: `Rate limit exceeded. Try again in ${retryIn}s.` },
+      { status: 429 },
+    );
   }
 
   const db = getDb();
@@ -250,18 +287,81 @@ export async function POST(request: NextRequest) {
   });
   if (!project) return Response.json({ error: 'Project not found' }, { status: 404 });
 
+  // Claim the generation lease. Two concurrent runs on one project would
+  // interleave file writes (last write wins) and persist a mixed tree that
+  // matches neither run, so the second caller is rejected outright.
+  //
+  // The claim is a conditional update, not a read-then-write, so it is atomic
+  // across server instances. A lease older than MAX_RUN_MS + slack belongs to a
+  // crashed run and is reclaimed.
+  const generationLeaseCutoff = new Date(Date.now() - GENERATION_LEASE_STALE_MS);
+  const lease = await db.project.updateMany({
+    where: {
+      id: projectId,
+      OR: [{ generationStartedAt: null }, { generationStartedAt: { lt: generationLeaseCutoff } }],
+    },
+    data: { generationStartedAt: new Date() },
+  });
+  if (lease.count === 0) {
+    return Response.json(
+      {
+        error:
+          'A generation is already running for this project. Wait for it to finish or stop it first.',
+      },
+      { status: 409 },
+    );
+  }
+  let leaseReleased = false;
+  const releaseGenerationLease = async () => {
+    if (leaseReleased) return;
+    leaseReleased = true;
+    try {
+      await db.project.update({
+        where: { id: projectId },
+        data: { generationStartedAt: null },
+      });
+    } catch (error) {
+      // Failing to release only blocks the project until the stale cutoff
+      // passes; never mask the run's own outcome with this error.
+      console.error('generate.lease_release_failed', error);
+    }
+  };
+
+  /**
+   * Fail after the lease was claimed. Every post-lease exit path must release
+   * it, otherwise the project stays blocked until the stale cutoff passes.
+   */
+  const failWithLeaseReleased = async (body: unknown, status: number) => {
+    await releaseGenerationLease();
+    return Response.json(body, { status });
+  };
+
   let providerName: AIProvider;
   try {
     providerName = parseProvider(body.modelProvider);
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : 'Invalid provider' }, { status: 400 });
+    return failWithLeaseReleased(
+      { error: error instanceof Error ? error.message : 'Invalid provider' },
+      400,
+    );
   }
-  const storedKey = await db.apiKey.findFirst({ where: { userId: session.user.id, provider: providerName } });
-  if (!storedKey) return Response.json({ error: `No API key configured for ${providerName}` }, { status: 400 });
+  const storedKey = await db.apiKey.findFirst({
+    where: { userId: session.user.id, provider: providerName },
+  });
+  if (!storedKey) {
+    return failWithLeaseReleased({ error: `No API key configured for ${providerName}` }, 400);
+  }
   const apiKey = decryptApiKey(storedKey.encryptedKey);
-  const imageConfig = await db.imageProviderConfig.findFirst({ where: { userId: session.user.id, enabled: true } });
+  const imageConfig = await db.imageProviderConfig.findFirst({
+    where: { userId: session.user.id, enabled: true },
+  });
   const r2Status = getR2ConfigStatus();
-  const isImageGenReady = Boolean(imageConfig && r2Status.isConfigured);
+  // Image generation needs somewhere durable to put bytes. The local-disk
+  // fallback is fine for local development but on a deployed (ephemeral)
+  // filesystem the asset would vanish on the next deploy while its DB row
+  // survived — so production requires real object storage.
+  const isAssetStorageDurable = r2Status.isConfigured || process.env.NODE_ENV !== 'production';
+  const isImageGenReady = Boolean(imageConfig && isAssetStorageDurable);
 
   const attachmentParts: string[] = [];
   let attachmentBytes = 0;
@@ -275,7 +375,7 @@ export async function POST(request: NextRequest) {
     attachmentParts.push(`--- ${path} ---\n${content}`);
   }
   if (attachmentBytes > MAX_ATTACHMENT_BYTES) {
-    return Response.json({ error: 'Attachments exceed 512 KB total' }, { status: 400 });
+    return failWithLeaseReleased({ error: 'Attachments exceed 512 KB total' }, 400);
   }
   let effectivePrompt = prompt ?? '';
   if (body.directionResponse) {
@@ -285,16 +385,18 @@ export async function POST(request: NextRequest) {
       include: { directions: { include: { previewAsset: true } } },
     });
     if (!directionSet) {
-      return Response.json({ error: 'Design direction set not found' }, { status: 404 });
+      return failWithLeaseReleased({ error: 'Design direction set not found' }, 404);
     }
 
     if (action === 'select') {
-      if (!directionId) return Response.json({ error: 'Missing directionId' }, { status: 400 });
+      if (!directionId) return failWithLeaseReleased({ error: 'Missing directionId' }, 400);
       if (directionSet.status === 'selected') {
-        return Response.json({ error: 'Design direction already selected' }, { status: 400 });
+        return failWithLeaseReleased({ error: 'Design direction already selected' }, 400);
       }
       const selected = directionSet.directions.find((d) => d.id === directionId);
-      if (!selected) return Response.json({ error: 'Direction not found in set' }, { status: 404 });
+      if (!selected) {
+        return failWithLeaseReleased({ error: 'Direction not found in set' }, 404);
+      }
 
       await db.designDirectionSet.update({
         where: { id: setId },
@@ -313,9 +415,12 @@ export async function POST(request: NextRequest) {
       } else {
         // No usable direction — fall back to a plain generation instead of
         // silently dropping the request.
-        return Response.json(
-          { error: 'No ready design direction to skip to. Please regenerate or start a new request.' },
-          { status: 400 },
+        return failWithLeaseReleased(
+          {
+            error:
+              'No ready design direction to skip to. Please regenerate or start a new request.',
+          },
+          400,
         );
       }
     } else if (action === 'regenerate') {
@@ -329,7 +434,12 @@ export async function POST(request: NextRequest) {
   }
 
   const userMessage = await db.chatMessage.create({
-    data: { projectId, role: 'user', content: prompt ?? '', model: `${providerName}:${body.modelName}` },
+    data: {
+      projectId,
+      role: 'user',
+      content: prompt ?? '',
+      model: `${providerName}:${body.modelName}`,
+    },
   });
   const history = await db.chatMessage.findMany({
     where: { projectId, id: { not: userMessage.id } },
@@ -340,10 +450,14 @@ export async function POST(request: NextRequest) {
 
   let stoppedByClient = false;
   const abortController = new AbortController();
-  request.signal.addEventListener('abort', () => {
-    stoppedByClient = true;
-    abortController.abort();
-  }, { once: true });
+  request.signal.addEventListener(
+    'abort',
+    () => {
+      stoppedByClient = true;
+      abortController.abort();
+    },
+    { once: true },
+  );
 
   const isExistingProject = project.files.length > 0;
 
@@ -363,7 +477,7 @@ export async function POST(request: NextRequest) {
       const messages: AgentMessage[] = [
         { role: 'system', content: buildAgentSystemPrompt(toolsOffered) },
         ...history.reverse().map((message) => ({
-          role: message.role === 'assistant' ? 'assistant' as const : 'user' as const,
+          role: message.role === 'assistant' ? ('assistant' as const) : ('user' as const),
           content: message.content,
         })),
         {
@@ -377,7 +491,9 @@ export async function POST(request: NextRequest) {
             attachmentParts.length ? `Attachments:\n${attachmentParts.join('\n\n')}` : '',
             `Image Generation Capability: ${isImageGenReady ? 'available' : 'unavailable'}${!isImageGenReady ? ` (Reason: ${!imageConfig ? 'Image provider not configured' : r2Status.reason})` : ''}`,
             `Request: ${effectivePrompt}`,
-          ].filter(Boolean).join('\n\n'),
+          ]
+            .filter(Boolean)
+            .join('\n\n'),
         },
       ];
       let latestVersion = 0;
@@ -436,7 +552,12 @@ export async function POST(request: NextRequest) {
         latestVersion = version.versionNumber;
         const completedAt = new Date();
         for (const { step } of batch) {
-          emitStep({ ...step, status: 'complete', completedAt: completedAt.toISOString(), durationMs: completedAt.getTime() - new Date(step.startedAt).getTime() });
+          emitStep({
+            ...step,
+            status: 'complete',
+            completedAt: completedAt.toISOString(),
+            durationMs: completedAt.getTime() - new Date(step.startedAt).getTime(),
+          });
         }
         for (const { change } of persistable) {
           send('file-operation', {
@@ -503,7 +624,11 @@ export async function POST(request: NextRequest) {
       };
       try {
         send('phase', { phase: 'planning', label: 'Starting agent' });
-        for (let iteration = 0; MAX_ITERATIONS === null || iteration < MAX_ITERATIONS; iteration += 1) {
+        for (
+          let iteration = 0;
+          MAX_ITERATIONS === null || iteration < MAX_ITERATIONS;
+          iteration += 1
+        ) {
           if (abortController.signal.aborted) throw new Error('Generation stopped');
           const iterationStartedAt = new Date();
           const thinkingStepId = randomUUID();
@@ -527,21 +652,24 @@ export async function POST(request: NextRequest) {
           };
           emitStep(thinkingStep);
 
-          const generator = provider.stream(body.modelName!, trimMessagesForContext(messages), apiKey, {
-            baseUrl: storedKey.baseUrl ?? undefined,
-            // No artificial per-turn cap by default ("free" runs): the provider
-            // uses its own maximum output length. Operators can still bound
-            // spend with SOVEREIGN_MAX_TOKENS. Truncated outputs are continued
-            // automatically (finishReason === 'length'), never treated as
-            // failures.
-            ...(TURN_MAX_TOKENS !== undefined ? { maxTokens: TURN_MAX_TOKENS } : {}),
-            temperature: 0.2,
-            reasoningEffort: body.reasoningEffort,
-            signal: abortController.signal,
-            ...(toolsOffered
-              ? { tools: SOVEREIGN_TOOLS, toolChoice: 'auto' as const }
-              : {}),
-          });
+          const generator = provider.stream(
+            body.modelName!,
+            trimMessagesForContext(messages),
+            apiKey,
+            {
+              baseUrl: storedKey.baseUrl ?? undefined,
+              // No artificial per-turn cap by default ("free" runs): the provider
+              // uses its own maximum output length. Operators can still bound
+              // spend with SOVEREIGN_MAX_TOKENS. Truncated outputs are continued
+              // automatically (finishReason === 'length'), never treated as
+              // failures.
+              ...(TURN_MAX_TOKENS !== undefined ? { maxTokens: TURN_MAX_TOKENS } : {}),
+              temperature: 0.2,
+              reasoningEffort: body.reasoningEffort,
+              signal: abortController.signal,
+              ...(toolsOffered ? { tools: SOVEREIGN_TOOLS, toolChoice: 'auto' as const } : {}),
+            },
+          );
           while (true) {
             const next = await generator.next();
             if (next.done) {
@@ -573,14 +701,18 @@ export async function POST(request: NextRequest) {
               }
             }
             const streamedFile =
-              getStreamingFileFromToolCalls(streamedToolCalls) ?? getStreamingFileAction(responseContent);
+              getStreamingFileFromToolCalls(streamedToolCalls) ??
+              getStreamingFileAction(responseContent);
             if (streamedFile) {
               const now = Date.now();
               const provisionalKey = `${streamedFile.type}:${streamedFile.path}`;
               if (!provisionalSteps.has(provisionalKey)) {
                 const provisionalStep: AgentStep = {
                   id: randomUUID(),
-                  kind: streamedFile.type === 'write_file' && !files.has(streamedFile.path) ? 'write' : 'edit',
+                  kind:
+                    streamedFile.type === 'write_file' && !files.has(streamedFile.path)
+                      ? 'write'
+                      : 'edit',
                   title: `${streamedFile.type === 'write_file' && !files.has(streamedFile.path) ? 'Creating' : 'Editing'} ${streamedFile.path}`,
                   status: 'running',
                   startedAt: new Date().toISOString(),
@@ -595,14 +727,23 @@ export async function POST(request: NextRequest) {
                 const existing = files.get(streamedFile.path);
                 if (existing !== undefined) {
                   try {
-                    previewContent = applyAgentEdit(existing, streamedFile.search, streamedFile.replace);
+                    previewContent = applyAgentEdit(
+                      existing,
+                      streamedFile.search,
+                      streamedFile.replace,
+                    );
                   } catch {
                     previewContent = null;
                   }
                 }
               }
-              const signature = previewContent === null ? '' : `${streamedFile.path}:${previewContent.length}`;
-              if (previewContent !== null && signature !== previewSignature && now - lastFilePreviewEmit >= 75) {
+              const signature =
+                previewContent === null ? '' : `${streamedFile.path}:${previewContent.length}`;
+              if (
+                previewContent !== null &&
+                signature !== previewSignature &&
+                now - lastFilePreviewEmit >= 75
+              ) {
                 previewSignature = signature;
                 lastFilePreviewEmit = now;
                 if (!provisionalOriginals.has(streamedFile.path)) {
@@ -630,7 +771,8 @@ export async function POST(request: NextRequest) {
             emitStep({
               ...thinkingStep,
               title: 'Output truncated — continuing',
-              detail: 'The previous completion hit its token ceiling; asking the model to continue.',
+              detail:
+                'The previous completion hit its token ceiling; asking the model to continue.',
               status: 'complete',
               completedAt: new Date().toISOString(),
               durationMs: Date.now() - iterationStartedAt.getTime(),
@@ -659,7 +801,9 @@ export async function POST(request: NextRequest) {
             const mutationPaths = getAgentFileMutationPaths(action);
             for (const path of provisionalOriginals.keys()) {
               if (!mutationPaths.has(path)) {
-                throw new Error(`Streamed file edit for ${path} was not completed as a filesystem action`);
+                throw new Error(
+                  `Streamed file edit for ${path} was not completed as a filesystem action`,
+                );
               }
             }
             consecutiveProtocolFailures = 0;
@@ -667,12 +811,21 @@ export async function POST(request: NextRequest) {
             const completedAt = new Date();
             const message = error instanceof Error ? error.message : 'Invalid action format';
             for (const [path, original] of provisionalOriginals) {
-              send('file-preview', original === null
-                ? { operation: 'delete', path }
-                : { operation: 'update', path, content: original });
+              send(
+                'file-preview',
+                original === null
+                  ? { operation: 'delete', path }
+                  : { operation: 'update', path, content: original },
+              );
             }
             for (const step of provisionalSteps.values()) {
-              emitStep({ ...step, status: 'failed', detail: message, completedAt: completedAt.toISOString(), durationMs: completedAt.getTime() - new Date(step.startedAt).getTime() });
+              emitStep({
+                ...step,
+                status: 'failed',
+                detail: message,
+                completedAt: completedAt.toISOString(),
+                durationMs: completedAt.getTime() - new Date(step.startedAt).getTime(),
+              });
             }
             if (usedNativeToolCalls && streamedToolCalls.length > 0) {
               // The model called a tool we cannot execute (unknown name or
@@ -687,7 +840,11 @@ export async function POST(request: NextRequest) {
                 completedAt: completedAt.toISOString(),
                 durationMs: completedAt.getTime() - iterationStartedAt.getTime(),
               });
-              messages.push({ role: 'assistant', content: responseContent, toolCalls: streamedToolCalls });
+              messages.push({
+                role: 'assistant',
+                content: responseContent,
+                toolCalls: streamedToolCalls,
+              });
               streamedToolCalls.forEach((call, index) => {
                 messages.push({
                   role: 'tool',
@@ -729,7 +886,10 @@ export async function POST(request: NextRequest) {
               durationMs: completedAt.getTime() - iterationStartedAt.getTime(),
             });
             messages.push({ role: 'assistant', content: responseContent });
-            messages.push({ role: 'user', content: `The action could not be parsed: ${message}. Correct the format and continue. Do not explain the formatting error to the user.` });
+            messages.push({
+              role: 'user',
+              content: `The action could not be parsed: ${message}. Correct the format and continue. Do not explain the formatting error to the user.`,
+            });
             continue;
           }
           messages.push(
@@ -749,12 +909,17 @@ export async function POST(request: NextRequest) {
               completedAt: completedAt.toISOString(),
               durationMs: completedAt.getTime() - startedAt.getTime(),
             });
-            messages.push({ role: 'user', content: 'Thinking recorded. Choose whichever action is useful next.' });
+            messages.push({
+              role: 'user',
+              content: 'Thinking recorded. Choose whichever action is useful next.',
+            });
             // `think` makes no filesystem progress — count it so a model stuck
             // emitting only think/respond can't burn MAX_ITERATIONS of tokens.
             consecutiveNoProgressIterations += 1;
             if (consecutiveNoProgressIterations >= MAX_NO_PROGRESS_TURNS) {
-              throw new Error(`The agent made no filesystem progress after ${MAX_NO_PROGRESS_TURNS} turns.`);
+              throw new Error(
+                `The agent made no filesystem progress after ${MAX_NO_PROGRESS_TURNS} turns.`,
+              );
             }
             continue;
           }
@@ -773,9 +938,12 @@ export async function POST(request: NextRequest) {
           if (actionGuardError) {
             const completedAt = new Date();
             for (const [path, original] of provisionalOriginals) {
-              send('file-preview', original === null
-                ? { operation: 'delete', path }
-                : { operation: 'update', path, content: original });
+              send(
+                'file-preview',
+                original === null
+                  ? { operation: 'delete', path }
+                  : { operation: 'update', path, content: original },
+              );
             }
             for (const step of provisionalSteps.values()) {
               emitStep({
@@ -809,9 +977,15 @@ export async function POST(request: NextRequest) {
           const toolResults: string[] = [];
           let handledFilesystemAction = false;
           let handledFilesystemMutation = false;
-          const askQuestionsAction = actions.find((a): a is Extract<AgentAction, { type: 'ask_questions' }> => a.type === 'ask_questions');
-          const respondAction = actions.find((a): a is Extract<AgentAction, { type: 'respond' }> => a.type === 'respond');
-          const finishAction = actions.find((a): a is Extract<AgentAction, { type: 'finish' }> => a.type === 'finish');
+          const askQuestionsAction = actions.find(
+            (a): a is Extract<AgentAction, { type: 'ask_questions' }> => a.type === 'ask_questions',
+          );
+          const respondAction = actions.find(
+            (a): a is Extract<AgentAction, { type: 'respond' }> => a.type === 'respond',
+          );
+          const finishAction = actions.find(
+            (a): a is Extract<AgentAction, { type: 'finish' }> => a.type === 'finish',
+          );
           for (const currentAction of actions) {
             const currentStepId = randomUUID();
             const actionStartedAt = new Date();
@@ -819,9 +993,10 @@ export async function POST(request: NextRequest) {
               handledFilesystemAction = true;
               const detail = currentAction.files
                 .map((request) => {
-                  const range = request.startLine !== undefined || request.endLine !== undefined
-                    ? ` (${request.startLine ?? 1}-${request.endLine ?? 'EOF'})`
-                    : ' (full)';
+                  const range =
+                    request.startLine !== undefined || request.endLine !== undefined
+                      ? ` (${request.startLine ?? 1}-${request.endLine ?? 'EOF'})`
+                      : ' (full)';
                   return `${request.path}${range}`;
                 })
                 .join('\n');
@@ -835,56 +1010,107 @@ export async function POST(request: NextRequest) {
               };
               emitStep(step);
               let remainingBudget = MAX_READ_RESULT_CHARS;
-              const observations = currentAction.files.map((request) => {
-                const observation = formatReadObservation(request.path, files.get(request.path), request, remainingBudget);
-                remainingBudget = Math.max(0, remainingBudget - observation.length - 2);
-                return observation;
-              }).join('\n\n');
+              const observations = currentAction.files
+                .map((request) => {
+                  const observation = formatReadObservation(
+                    request.path,
+                    files.get(request.path),
+                    request,
+                    remainingBudget,
+                  );
+                  remainingBudget = Math.max(0, remainingBudget - observation.length - 2);
+                  return observation;
+                })
+                .join('\n\n');
               const completedAt = new Date();
-              emitStep({ ...step, status: 'complete', completedAt: completedAt.toISOString(), durationMs: completedAt.getTime() - actionStartedAt.getTime() });
+              emitStep({
+                ...step,
+                status: 'complete',
+                completedAt: completedAt.toISOString(),
+                durationMs: completedAt.getTime() - actionStartedAt.getTime(),
+              });
               toolResults.push(`read_files result:\n${observations}`);
               continue;
             }
             if (currentAction.type === 'write_file') {
               handledFilesystemAction = true;
               if (isForbiddenEnvPath(currentAction.path)) {
-                toolResults.push(`write_file error: refused to write ${currentAction.path}. Use .env.example with VITE_* keys only.`);
+                toolResults.push(
+                  `write_file error: refused to write ${currentAction.path}. Use .env.example with VITE_* keys only.`,
+                );
                 continue;
               }
               handledFilesystemMutation = true;
               const existed = files.has(currentAction.path);
               const before = files.get(currentAction.path);
-              const step = provisionalSteps.get(`write_file:${currentAction.path}`) ?? { id: currentStepId, kind: existed ? 'edit' : 'write', title: `${existed ? 'Writing' : 'Creating'} ${currentAction.path}`, status: 'running' as const, startedAt: actionStartedAt.toISOString() };
+              const step = provisionalSteps.get(`write_file:${currentAction.path}`) ?? {
+                id: currentStepId,
+                kind: existed ? 'edit' : 'write',
+                title: `${existed ? 'Writing' : 'Creating'} ${currentAction.path}`,
+                status: 'running' as const,
+                startedAt: actionStartedAt.toISOString(),
+              };
               if (!provisionalSteps.has(`write_file:${currentAction.path}`)) emitStep(step);
               files.set(currentAction.path, currentAction.content);
-              pendingBatch.push({ change: { file: currentAction.path, operation: existed ? 'update' : 'create', ...(before !== undefined ? { before } : {}), after: currentAction.content }, step });
-              toolResults.push(`write_file result: wrote ${currentAction.path} (${currentAction.content.length} characters).`);
+              pendingBatch.push({
+                change: {
+                  file: currentAction.path,
+                  operation: existed ? 'update' : 'create',
+                  ...(before !== undefined ? { before } : {}),
+                  after: currentAction.content,
+                },
+                step,
+              });
+              toolResults.push(
+                `write_file result: wrote ${currentAction.path} (${currentAction.content.length} characters).`,
+              );
               continue;
             }
             if (currentAction.type === 'edit_file') {
               handledFilesystemAction = true;
               if (isForbiddenEnvPath(currentAction.path)) {
-                toolResults.push(`edit_file error: refused to write ${currentAction.path}. Use .env.example with VITE_* keys only.`);
+                toolResults.push(
+                  `edit_file error: refused to write ${currentAction.path}. Use .env.example with VITE_* keys only.`,
+                );
                 continue;
               }
               handledFilesystemMutation = true;
               const before = files.get(currentAction.path);
               if (before === undefined) {
-                toolResults.push(`edit_file error: ${currentAction.path} does not exist. Use write_file to create it.`);
+                toolResults.push(
+                  `edit_file error: ${currentAction.path} does not exist. Use write_file to create it.`,
+                );
                 continue;
               }
-              const step = provisionalSteps.get(`edit_file:${currentAction.path}`) ?? { id: currentStepId, kind: 'edit' as const, title: `Editing ${currentAction.path}`, status: 'running' as const, startedAt: actionStartedAt.toISOString() };
+              const step = provisionalSteps.get(`edit_file:${currentAction.path}`) ?? {
+                id: currentStepId,
+                kind: 'edit' as const,
+                title: `Editing ${currentAction.path}`,
+                status: 'running' as const,
+                startedAt: actionStartedAt.toISOString(),
+              };
               if (!provisionalSteps.has(`edit_file:${currentAction.path}`)) emitStep(step);
               try {
                 const after = applyAgentEdit(before, currentAction.search, currentAction.replace);
                 files.set(currentAction.path, after);
-                pendingBatch.push({ change: { file: currentAction.path, operation: 'update', before, after }, step });
+                pendingBatch.push({
+                  change: { file: currentAction.path, operation: 'update', before, after },
+                  step,
+                });
                 toolResults.push(`edit_file result: updated ${currentAction.path}.`);
               } catch (error) {
                 const completedAt = new Date();
                 const message = error instanceof Error ? error.message : 'Edit failed';
-                emitStep({ ...step, status: 'failed', detail: message, completedAt: completedAt.toISOString(), durationMs: completedAt.getTime() - actionStartedAt.getTime() });
-                toolResults.push(`edit_file error: ${message}. Read the file again before retrying.`);
+                emitStep({
+                  ...step,
+                  status: 'failed',
+                  detail: message,
+                  completedAt: completedAt.toISOString(),
+                  durationMs: completedAt.getTime() - actionStartedAt.getTime(),
+                });
+                toolResults.push(
+                  `edit_file error: ${message}. Read the file again before retrying.`,
+                );
               }
               continue;
             }
@@ -896,10 +1122,19 @@ export async function POST(request: NextRequest) {
                 toolResults.push(`delete_file result: ${currentAction.path} was already absent.`);
                 continue;
               }
-              const step: AgentStep = { id: currentStepId, kind: 'delete', title: `Deleting ${currentAction.path}`, status: 'running', startedAt: actionStartedAt.toISOString() };
+              const step: AgentStep = {
+                id: currentStepId,
+                kind: 'delete',
+                title: `Deleting ${currentAction.path}`,
+                status: 'running',
+                startedAt: actionStartedAt.toISOString(),
+              };
               emitStep(step);
               files.delete(currentAction.path);
-              pendingBatch.push({ change: { file: currentAction.path, operation: 'delete', before }, step });
+              pendingBatch.push({
+                change: { file: currentAction.path, operation: 'delete', before },
+                step,
+              });
               toolResults.push(`delete_file result: deleted ${currentAction.path}.`);
             }
             if (currentAction.type === 'generate_images') {
@@ -940,11 +1175,16 @@ export async function POST(request: NextRequest) {
                     let lastError: unknown;
                     for (let attempt = 1; attempt <= 2; attempt += 1) {
                       try {
-                        const imgRes = await generateImage(imageConfig.model, spec.prompt, decryptedKey, {
-                          baseUrl: imageConfig.baseUrl,
-                          signal: abortController.signal,
-                          timeoutMs: 120_000,
-                        });
+                        const imgRes = await generateImage(
+                          imageConfig.model,
+                          spec.prompt,
+                          decryptedKey,
+                          {
+                            baseUrl: imageConfig.baseUrl,
+                            signal: abortController.signal,
+                            timeoutMs: 120_000,
+                          },
+                        );
                         const asset = await uploadProjectAsset({
                           projectId,
                           createdById: session.user.id,
@@ -981,7 +1221,8 @@ export async function POST(request: NextRequest) {
                     throw lastError;
                   } catch (error) {
                     const completedAt = new Date();
-                    const message = error instanceof Error ? error.message : 'Image generation failed';
+                    const message =
+                      error instanceof Error ? error.message : 'Image generation failed';
                     emitStep({
                       ...step,
                       status: 'failed',
@@ -1055,10 +1296,15 @@ export async function POST(request: NextRequest) {
                   if (!isImageGenReady || !imageConfig) return null;
                   try {
                     const decryptedKey = decryptApiKey(imageConfig.encryptedKey);
-                    const imgRes = await generateImage(imageConfig.model, dir.imagePrompt, decryptedKey, {
-                      baseUrl: imageConfig.baseUrl,
-                      signal: abortController.signal,
-                    });
+                    const imgRes = await generateImage(
+                      imageConfig.model,
+                      dir.imagePrompt,
+                      decryptedKey,
+                      {
+                        baseUrl: imageConfig.baseUrl,
+                        signal: abortController.signal,
+                      },
+                    );
                     const asset = await uploadProjectAsset({
                       projectId,
                       createdById: session.user.id,
@@ -1077,7 +1323,8 @@ export async function POST(request: NextRequest) {
                       where: { id: dir.id },
                       data: {
                         status: 'failed',
-                        errorMessage: err instanceof Error ? err.message : 'Preview generation failed',
+                        errorMessage:
+                          err instanceof Error ? err.message : 'Preview generation failed',
                       },
                     });
                     return null;
@@ -1168,7 +1415,9 @@ export async function POST(request: NextRequest) {
           } else if (!askQuestionsAction && !respondAction && !finishAction) {
             consecutiveNoProgressIterations += 1;
             if (consecutiveNoProgressIterations >= MAX_NO_PROGRESS_TURNS) {
-              throw new Error(`The agent made no filesystem progress after ${MAX_NO_PROGRESS_TURNS} turns.`);
+              throw new Error(
+                `The agent made no filesystem progress after ${MAX_NO_PROGRESS_TURNS} turns.`,
+              );
             }
           }
 
@@ -1195,9 +1444,23 @@ export async function POST(request: NextRequest) {
           }
 
           if (askQuestionsAction) {
-            const content = askQuestionsAction.questions.map((item, index) => `${index + 1}. ${item.question}`).join('\n');
-            const assistantMessage = await db.chatMessage.create({ data: { projectId, role: 'assistant', content, model: `${providerName}:${body.modelName}`, toolCalls: runSteps as never } });
-            send('questions', { questions: askQuestionsAction.questions, userMessage: messageRecord(userMessage), assistantMessage: messageRecord(assistantMessage) });
+            const content = askQuestionsAction.questions
+              .map((item, index) => `${index + 1}. ${item.question}`)
+              .join('\n');
+            const assistantMessage = await db.chatMessage.create({
+              data: {
+                projectId,
+                role: 'assistant',
+                content,
+                model: `${providerName}:${body.modelName}`,
+                toolCalls: runSteps as never,
+              },
+            });
+            send('questions', {
+              questions: askQuestionsAction.questions,
+              userMessage: messageRecord(userMessage),
+              assistantMessage: messageRecord(assistantMessage),
+            });
             return;
           }
           if (respondAction) {
@@ -1216,9 +1479,12 @@ export async function POST(request: NextRequest) {
         );
       } catch (error) {
         for (const [path, original] of activeProvisionalOriginals) {
-          send('file-preview', original === null
-            ? { operation: 'delete', path }
-            : { operation: 'update', path, content: original });
+          send(
+            'file-preview',
+            original === null
+              ? { operation: 'delete', path }
+              : { operation: 'update', path, content: original },
+          );
         }
         if (stoppedByClient) {
           send('failed', { message: 'Generation stopped. Completed changes were kept.' });
@@ -1226,6 +1492,9 @@ export async function POST(request: NextRequest) {
           send('failed', { message: error instanceof Error ? error.message : 'Agent run failed' });
         }
       } finally {
+        // The run is over (finished, failed, or aborted) — free the project for
+        // the next generation.
+        await releaseGenerationLease();
         try {
           controller.close();
         } catch {

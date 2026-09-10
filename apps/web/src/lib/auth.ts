@@ -1,10 +1,11 @@
-import { NextAuthOptions } from 'next-auth';
+import { NextAuthOptions, getServerSession, type Session } from 'next-auth';
 import GoogleProvider from 'next-auth/providers/google';
 import GitHubProvider from 'next-auth/providers/github';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import bcrypt from 'bcryptjs';
 import { isIP } from 'node:net';
 import { getDb } from './db';
+import { canAdoptAccountByEmail } from './account-linking';
 import { checkRateLimit, hashIp } from '@/server/rate-limit';
 
 export function oauthProvidersEnabled(): { google: boolean; github: boolean } {
@@ -17,12 +18,18 @@ export function oauthProvidersEnabled(): { google: boolean; github: boolean } {
 function buildProviders(): NextAuthOptions['providers'] {
   const enabled = oauthProvidersEnabled();
   const providers: NextAuthOptions['providers'] = [];
+  // `allowDangerousEmailAccountLinking` is deliberately NOT set. This app has no
+  // email-verification flow, so an attacker can register the victim's address
+  // with a password they control; auto-linking an OAuth identity onto that row
+  // would hand the attacker continued password access to the victim's account
+  // (account pre-hijacking). Linking decisions live in the `signIn` callback,
+  // which only adopts an existing row when it cannot already be controlled by
+  // someone else (see canAdoptAccountByEmail).
   if (enabled.google) {
     providers.push(
       GoogleProvider({
         clientId: process.env.GOOGLE_CLIENT_ID!,
         clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-        allowDangerousEmailAccountLinking: true,
       }),
     );
   }
@@ -31,7 +38,6 @@ function buildProviders(): NextAuthOptions['providers'] {
       GitHubProvider({
         clientId: process.env.GITHUB_CLIENT_ID!,
         clientSecret: process.env.GITHUB_CLIENT_SECRET!,
-        allowDangerousEmailAccountLinking: true,
       }),
     );
   }
@@ -55,10 +61,7 @@ function buildProviders(): NextAuthOptions['providers'] {
         // Falls back to per-email keying otherwise (keeps dev/local buckets
         // distinct and never collapses onto a single global key).
         const ip = trustedProxyClientIp(req);
-        const rate = await checkRateLimit(
-          'signIn',
-          ip ? `${hashIp(ip)}:${email}` : email,
-        );
+        const rate = await checkRateLimit('signIn', ip ? `${hashIp(ip)}:${email}` : email);
         if (!rate.allowed) {
           throw new Error('Too many sign-in attempts. Please try again later.');
         }
@@ -78,6 +81,7 @@ function buildProviders(): NextAuthOptions['providers'] {
           email: user.email,
           name: user.name,
           image: user.avatarUrl,
+          sessionVersion: user.sessionVersion,
         };
       },
     }),
@@ -111,6 +115,11 @@ function trustedProxyClientIp(req: unknown): string | null {
   return null;
 }
 
+/**
+ * NextAuth configuration. The account-linking policy used by the `signIn`
+ * callback lives in `lib/account-linking.ts` so it can be unit-tested without
+ * booting the server environment.
+ */
 export const authOptions: NextAuthOptions = {
   session: {
     strategy: 'jwt',
@@ -118,19 +127,32 @@ export const authOptions: NextAuthOptions = {
   },
   pages: {
     signIn: '/auth/signin',
+    error: '/auth/signin',
   },
   providers: buildProviders(),
   callbacks: {
-    async signIn({ user, account }) {
+    async signIn({ user, account, profile }) {
       if (!account || account.provider === 'credentials') return true;
       const email = user.email?.trim().toLowerCase();
       if (!email) return false;
+
+      // Providers that assert verification must assert it. Google always sets
+      // email_verified; GitHub's default profile omits it, so absence is not
+      // treated as a failure.
+      const providerEmailVerified = (profile as { email_verified?: unknown } | undefined)
+        ?.email_verified;
+      if (providerEmailVerified === false) return '/auth/signin?error=EmailNotVerified';
 
       const db = getDb();
       const existing = await db.user.findFirst({
         where: { email: { equals: email, mode: 'insensitive' } },
       });
       if (existing) {
+        if (!canAdoptAccountByEmail(existing)) {
+          // Do not sign the user in under an existing password-protected
+          // account, and do not create a duplicate row for the same address.
+          return '/auth/signin?error=AccountLinkRequired';
+        }
         user.id = existing.id;
         user.email = existing.email;
         if (user.name && user.name !== existing.name) {
@@ -155,19 +177,47 @@ export const authOptions: NextAuthOptions = {
       });
       user.id = created.id;
       user.email = created.email;
+      user.sessionVersion = created.sessionVersion;
       return true;
     },
     async session({ session, token }) {
       if (session.user && token.sub) {
         session.user.id = token.sub;
+        // Carried so server code can compare it against the database and treat
+        // a stale token as signed out (see getVerifiedSession).
+        session.user.sessionVersion = token.sessionVersion ?? 0;
       }
       return session;
     },
     async jwt({ token, user }) {
       if (user) {
         token.sub = user.id;
+        token.sessionVersion = (user as { sessionVersion?: number }).sessionVersion ?? 0;
       }
       return token;
     },
   },
 };
+
+/**
+ * Resolve the signed-in user for a server request, rejecting tokens that were
+ * issued before the account's `sessionVersion` was bumped (password reset,
+ * "sign out everywhere"). A JWT is self-contained, so without this check a
+ * stolen or leaked token keeps working for its full 30-day lifetime.
+ *
+ * Returns null when there is no valid session, which callers treat exactly like
+ * being signed out.
+ */
+export async function getVerifiedSession(): Promise<Session | null> {
+  const session = await getServerSession(authOptions);
+  const user = session?.user as (Session['user'] & { sessionVersion?: number }) | undefined;
+  if (!session || !user?.id) return null;
+
+  const dbUser = await getDb().user.findUnique({
+    where: { id: user.id },
+    select: { sessionVersion: true },
+  });
+  if (!dbUser) return null;
+
+  return dbUser.sessionVersion === (user.sessionVersion ?? 0) ? session : null;
+}

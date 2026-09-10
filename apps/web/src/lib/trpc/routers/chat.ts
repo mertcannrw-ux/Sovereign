@@ -154,7 +154,11 @@ export const chatRouter = router({
 
       try {
         const toolOutput = parseResponse(responseContent);
-        const budget = { maxInputTokens: 128000, maxOutputFiles: 50, maxOutputBytes: 5 * 1024 * 1024 };
+        const budget = {
+          maxInputTokens: 128000,
+          maxOutputFiles: 50,
+          maxOutputBytes: 5 * 1024 * 1024,
+        };
 
         const { valid, diagnostics: validationDiags } = validateChanges(
           toolOutput.changes,
@@ -292,7 +296,6 @@ export const chatRouter = router({
       await requireProjectRole(ctx, input.projectId, 'VIEWER');
 
       return getVersions(input.projectId);
-
     }),
 
   /**

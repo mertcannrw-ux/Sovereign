@@ -70,14 +70,24 @@ const markdownComponents: Components = {
     />
   ),
   ul: ({ node: _node, ...props }) => (
-    <ul className="my-1.5 list-disc space-y-1 pl-5 text-sm leading-relaxed text-foreground-secondary" {...props} />
+    <ul
+      className="my-1.5 list-disc space-y-1 pl-5 text-sm leading-relaxed text-foreground-secondary"
+      {...props}
+    />
   ),
   ol: ({ node: _node, ...props }) => (
-    <ol className="my-1.5 list-decimal space-y-1 pl-5 text-sm leading-relaxed text-foreground-secondary" {...props} />
+    <ol
+      className="my-1.5 list-decimal space-y-1 pl-5 text-sm leading-relaxed text-foreground-secondary"
+      {...props}
+    />
   ),
   li: ({ node: _node, ...props }) => <li className="leading-relaxed" {...props} />,
   input: ({ node: _node, ...props }) => (
-    <input className="mr-1.5 inline-block h-3.5 w-3.5 align-middle accent-primary" disabled {...props} />
+    <input
+      className="mr-1.5 inline-block h-3.5 w-3.5 align-middle accent-primary"
+      disabled
+      {...props}
+    />
   ),
   h1: ({ node: _node, ...props }) => (
     <h1 className="mb-1.5 mt-3 text-base font-semibold text-foreground first:mt-0" {...props} />
@@ -97,17 +107,13 @@ const markdownComponents: Components = {
       {...props}
     />
   ),
-  hr: ({ node: _node, ...props }) => (
-    <hr className="my-3 border-border" {...props} />
-  ),
+  hr: ({ node: _node, ...props }) => <hr className="my-3 border-border" {...props} />,
   table: ({ node: _node, ...props }) => (
     <div className="my-2 overflow-x-auto rounded-lg border border-border/60">
       <table className="w-full border-collapse text-sm" {...props} />
     </div>
   ),
-  thead: ({ node: _node, ...props }) => (
-    <thead className="bg-background-muted/60" {...props} />
-  ),
+  thead: ({ node: _node, ...props }) => <thead className="bg-background-muted/60" {...props} />,
   th: ({ node: _node, ...props }) => (
     <th
       className="border-b border-border px-2.5 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-foreground-muted"
@@ -115,11 +121,12 @@ const markdownComponents: Components = {
     />
   ),
   td: ({ node: _node, ...props }) => (
-    <td className="border-b border-border/50 px-2.5 py-1.5 align-top text-foreground-secondary" {...props} />
+    <td
+      className="border-b border-border/50 px-2.5 py-1.5 align-top text-foreground-secondary"
+      {...props}
+    />
   ),
-  del: ({ node: _node, ...props }) => (
-    <del className="text-foreground-muted" {...props} />
-  ),
+  del: ({ node: _node, ...props }) => <del className="text-foreground-muted" {...props} />,
 };
 
 function Markdown({ text }: { text: string }) {

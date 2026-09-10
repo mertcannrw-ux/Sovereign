@@ -90,7 +90,9 @@ async function* readSSEStream(body: ReadableStream<Uint8Array>): AsyncGenerator<
       }
     }
   } finally {
-    try { await reader.cancel(); } catch {}
+    try {
+      await reader.cancel();
+    } catch {}
     reader.releaseLock();
   }
 }
@@ -124,7 +126,9 @@ async function* readJSONLines(body: ReadableStream<Uint8Array>): AsyncGenerator<
       }
     }
   } finally {
-    try { await reader.cancel(); } catch {}
+    try {
+      await reader.cancel();
+    } catch {}
     reader.releaseLock();
   }
 }
@@ -167,7 +171,9 @@ async function* readAnthropicSSE(
       }
     }
   } finally {
-    try { await reader.cancel(); } catch {}
+    try {
+      await reader.cancel();
+    } catch {}
     reader.releaseLock();
   }
 }
@@ -259,7 +265,9 @@ export async function ssrfFetch(
     // to block all redirects. When an IP was pinned, a custom dispatcher routes
     // the connection to that IP without altering the SNI.
 
-    const mergedHeaders: Record<string,string> = { ...(init?.headers as Record<string,string> | undefined ?? {}) };
+    const mergedHeaders: Record<string, string> = {
+      ...((init?.headers as Record<string, string> | undefined) ?? {}),
+    };
     const response = await fetch(fetchUrl, {
       ...init,
       ...(Object.keys(mergedHeaders).length ? { headers: mergedHeaders } : {}),
@@ -409,7 +417,11 @@ abstract class OpenAICompatibleProvider implements Provider {
 
     for await (const raw of readSSEStream(body)) {
       let parsed: unknown;
-      try { parsed = JSON.parse(raw); } catch { continue; }
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        continue;
+      }
       if (!isObject(parsed)) continue;
 
       // usage in final chunk (OpenAI with stream_options.include_usage)
@@ -485,7 +497,7 @@ abstract class OpenAICompatibleProvider implements Provider {
       toolCalls: accumulatedToolCalls.length > 0 ? accumulatedToolCalls : undefined,
       usage: finalUsage,
     };
-}
+  }
 
   // ── Shared helpers ──
 
@@ -513,7 +525,8 @@ abstract class OpenAICompatibleProvider implements Provider {
     }
     if (options?.temperature !== undefined) body['temperature'] = options.temperature;
     if (options?.reasoningEffort !== undefined) {
-      body['reasoning_effort'] = options.reasoningEffort === 'off' ? 'none' : options.reasoningEffort;
+      body['reasoning_effort'] =
+        options.reasoningEffort === 'off' ? 'none' : options.reasoningEffort;
     }
     if (options?.tools !== undefined && options.tools.length > 0) {
       body['tools'] = options.tools;
@@ -748,7 +761,11 @@ export class AnthropicProvider implements Provider {
 
     for await (const { event, data: raw } of readAnthropicSSE(body)) {
       let parsed: unknown;
-      try { parsed = JSON.parse(raw); } catch { continue; }
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        continue;
+      }
       if (!isObject(parsed)) continue;
 
       switch (event) {
@@ -1027,7 +1044,11 @@ export class GoogleProvider implements Provider {
 
     for await (const raw of readSSEStream(body)) {
       let parsed: unknown;
-      try { parsed = JSON.parse(raw); } catch { continue; }
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        continue;
+      }
       if (!isObject(parsed)) continue;
 
       // usage metadata
@@ -1296,7 +1317,11 @@ export class OllamaProvider implements Provider {
 
     for await (const raw of readJSONLines(body)) {
       let parsed: unknown;
-      try { parsed = JSON.parse(raw); } catch { continue; }
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        continue;
+      }
       if (!isObject(parsed)) continue;
 
       const msg = parsed['message'];

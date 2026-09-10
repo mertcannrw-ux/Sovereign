@@ -36,14 +36,19 @@ export function DesignDirectionCards({
       </div>
 
       <p className="text-xs text-foreground-muted">
-        Review the visual rationale, palette, typography, and preview composition for each concept. Select your preferred direction to proceed with full application generation.
+        Review the visual rationale, palette, typography, and preview composition for each concept.
+        Select your preferred direction to proceed with full application generation.
       </p>
 
       <div className="grid gap-3 sm:grid-cols-3">
         {data.directions.map((dir, index) => {
           const isSelected = selectedId === dir.id;
-          const paletteObj = (dir.palette && typeof dir.palette === 'object' ? dir.palette : {}) as Record<string, string>;
-          const typographyObj = (dir.typography && typeof dir.typography === 'object' ? dir.typography : {}) as Record<string, string>;
+          const paletteObj = (
+            dir.palette && typeof dir.palette === 'object' ? dir.palette : {}
+          ) as Record<string, string>;
+          const typographyObj = (
+            dir.typography && typeof dir.typography === 'object' ? dir.typography : {}
+          ) as Record<string, string>;
 
           return (
             <Card
@@ -53,7 +58,7 @@ export function DesignDirectionCards({
                 isSelected && 'border-primary ring-2 ring-primary/20',
               )}
             >
-              <CardContent className="flex flex-col p-3 space-y-3">
+              <CardContent className="flex flex-col space-y-3 p-3">
                 {/* Hero Image Preview */}
                 <div className="relative h-32 w-full overflow-hidden rounded-lg bg-background-muted">
                   {dir.previewAsset?.publicUrl ? (
@@ -74,7 +79,7 @@ export function DesignDirectionCards({
                   )}
                   <Badge
                     variant="outline"
-                    className="absolute top-2 left-2 bg-background/80 backdrop-blur-sm text-[10px]"
+                    className="absolute left-2 top-2 bg-background/80 text-[10px] backdrop-blur-sm"
                   >
                     Option {index + 1}
                   </Badge>
@@ -82,7 +87,7 @@ export function DesignDirectionCards({
 
                 {/* Title & Brief */}
                 <div>
-                  <h4 className="font-semibold text-sm text-foreground">{dir.title}</h4>
+                  <h4 className="text-sm font-semibold text-foreground">{dir.title}</h4>
                   <p className="mt-1 line-clamp-3 text-[11px] leading-relaxed text-foreground-muted">
                     {dir.visualBrief}
                   </p>
@@ -90,7 +95,7 @@ export function DesignDirectionCards({
 
                 {/* Palette */}
                 <div className="space-y-1">
-                  <span className="text-[10px] font-semibold text-foreground-muted uppercase tracking-wider">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">
                     Palette
                   </span>
                   <div className="flex items-center gap-1.5">
@@ -100,7 +105,7 @@ export function DesignDirectionCards({
                       return (
                         <div
                           key={key}
-                          className="h-4 w-4 rounded-full border border-border shadow-xs"
+                          className="shadow-xs h-4 w-4 rounded-full border border-border"
                           style={{ backgroundColor: color }}
                           title={`${key}: ${color}`}
                         />
@@ -111,27 +116,28 @@ export function DesignDirectionCards({
 
                 {/* Typography */}
                 <div className="space-y-1">
-                  <span className="text-[10px] font-semibold text-foreground-muted uppercase tracking-wider">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">
                     Typography
                   </span>
                   <div className="flex flex-wrap gap-1 text-[10px] text-foreground-secondary">
                     {typographyObj.headingFont && (
-                      <Badge variant="outline" className="text-[10px] py-0">
+                      <Badge variant="outline" className="py-0 text-[10px]">
                         {typographyObj.headingFont}
                       </Badge>
                     )}
-                    {typographyObj.bodyFont && typographyObj.bodyFont !== typographyObj.headingFont && (
-                      <Badge variant="outline" className="text-[10px] py-0">
-                        {typographyObj.bodyFont}
-                      </Badge>
-                    )}
+                    {typographyObj.bodyFont &&
+                      typographyObj.bodyFont !== typographyObj.headingFont && (
+                        <Badge variant="outline" className="py-0 text-[10px]">
+                          {typographyObj.bodyFont}
+                        </Badge>
+                      )}
                   </div>
                 </div>
 
                 {/* Select Action */}
                 <Button
                   size="sm"
-                  className="w-full mt-2 gap-1.5"
+                  className="mt-2 w-full gap-1.5"
                   disabled={isResolved || isSubmitting}
                   onClick={async () => {
                     setSelectedId(dir.id);

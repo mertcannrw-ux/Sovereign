@@ -41,7 +41,10 @@ const REPLACE_END = '>>>>>>> REPLACE';
 export function parsePatchArtifact(raw: string): PatchArtifact {
   const messageStart = raw.indexOf(MESSAGE_START);
   const messageEnd = raw.indexOf(MESSAGE_END, messageStart + MESSAGE_START.length);
-  const message = messageStart >= 0 && messageEnd >= 0 ? raw.slice(messageStart + MESSAGE_START.length, messageEnd).trim() : '';
+  const message =
+    messageStart >= 0 && messageEnd >= 0
+      ? raw.slice(messageStart + MESSAGE_START.length, messageEnd).trim()
+      : '';
   const patches: GeneratedPatch[] = [];
   let cursor = 0;
   while (cursor < raw.length) {
@@ -59,8 +62,14 @@ export function parsePatchArtifact(raw: string): PatchArtifact {
     if (validPath(path) && searchStart >= 0 && replaceStart >= 0 && replaceEnd >= 0) {
       patches.push({
         path,
-        search: body.slice(searchStart + SEARCH_START.length, replaceStart).replace(/^\r?\n/, '').replace(/\r?\n$/, ''),
-        replace: body.slice(replaceStart + REPLACE_START.length, replaceEnd).replace(/^\r?\n/, '').replace(/\r?\n$/, ''),
+        search: body
+          .slice(searchStart + SEARCH_START.length, replaceStart)
+          .replace(/^\r?\n/, '')
+          .replace(/\r?\n$/, ''),
+        replace: body
+          .slice(replaceStart + REPLACE_START.length, replaceEnd)
+          .replace(/^\r?\n/, '')
+          .replace(/\r?\n$/, ''),
       });
     }
     cursor = end + PATCH_END.length;
@@ -68,12 +77,18 @@ export function parsePatchArtifact(raw: string): PatchArtifact {
   return { message, patches };
 }
 
-export function applyGeneratedPatches(files: GeneratedFile[], patches: GeneratedPatch[]): GeneratedFile[] {
+export function applyGeneratedPatches(
+  files: GeneratedFile[],
+  patches: GeneratedPatch[],
+): GeneratedFile[] {
   const contents = new Map(files.map((file) => [file.path, file.content]));
   for (const patch of patches) {
     const current = contents.get(patch.path);
     if (current === undefined) throw new Error(`Targeted edit file not found: ${patch.path}`);
-    if (current.split(patch.search).length - 1 !== 1) throw new Error(`Targeted edit could not uniquely locate the selected element in ${patch.path}`);
+    if (current.split(patch.search).length - 1 !== 1)
+      throw new Error(
+        `Targeted edit could not uniquely locate the selected element in ${patch.path}`,
+      );
     contents.set(patch.path, current.replace(patch.search, patch.replace));
   }
   return files.map((file) => ({ ...file, content: contents.get(file.path)! }));
@@ -139,21 +154,37 @@ export function parseGenerationArtifact(raw: string): GenerationArtifact {
     try {
       const parsed = JSON.parse(payload) as unknown;
       if (Array.isArray(parsed)) {
-        questions = parsed.flatMap((entry): ClarifyingQuestion[] => {
-          if (typeof entry === 'string') {
-            const question = entry.trim();
-            return question ? [{ question, options: ['Use the recommended approach', 'Keep it simple', 'Make it feature-rich'] }] : [];
-          }
-          if (!entry || typeof entry !== 'object') return [];
-          const record = entry as Record<string, unknown>;
-          const question = typeof record.question === 'string' ? record.question.trim() : '';
-          const options = Array.isArray(record.options)
-            ? record.options.filter((option): option is string => typeof option === 'string').map((option) => option.trim()).filter(Boolean)
-            : [];
-          return question && options.length >= 3
-            ? [{ question, options: [options[0]!, options[1]!, options[2]!] }]
-            : [];
-        }).slice(0, 3);
+        questions = parsed
+          .flatMap((entry): ClarifyingQuestion[] => {
+            if (typeof entry === 'string') {
+              const question = entry.trim();
+              return question
+                ? [
+                    {
+                      question,
+                      options: [
+                        'Use the recommended approach',
+                        'Keep it simple',
+                        'Make it feature-rich',
+                      ],
+                    },
+                  ]
+                : [];
+            }
+            if (!entry || typeof entry !== 'object') return [];
+            const record = entry as Record<string, unknown>;
+            const question = typeof record.question === 'string' ? record.question.trim() : '';
+            const options = Array.isArray(record.options)
+              ? record.options
+                  .filter((option): option is string => typeof option === 'string')
+                  .map((option) => option.trim())
+                  .filter(Boolean)
+              : [];
+            return question && options.length >= 3
+              ? [{ question, options: [options[0]!, options[1]!, options[2]!] }]
+              : [];
+          })
+          .slice(0, 3);
       }
     } catch {
       questions = [];
@@ -171,7 +202,10 @@ export function parseGenerationArtifact(raw: string): GenerationArtifact {
     const end = raw.indexOf(FILE_END, headerEnd + FILE_HEADER_END.length);
     if (end < 0) break;
     if (validPath(path)) {
-      const content = raw.slice(headerEnd + FILE_HEADER_END.length, end).replace(/^\r?\n/, '').replace(/\r?\n$/, '');
+      const content = raw
+        .slice(headerEnd + FILE_HEADER_END.length, end)
+        .replace(/^\r?\n/, '')
+        .replace(/\r?\n$/, '');
       // Keep the last occurrence so the model can revisit and overwrite a file.
       filesMap.set(path, content);
     }

@@ -32,12 +32,16 @@ interface SandboxState {
 
 let containerPromise: Promise<WebContainer> | null = null;
 
-/** Module-level reference so a remount can kill the previous server. */
+/** The server promoted by the most recent `server-ready`; module-level so a new
+ * hook instance can adopt (or kill) a preview started before it mounted. */
 let previousBootServer: PreviewProcess | null = null;
-let diagnosticsAttached = false;
-let bootListenerAttached = false;
+/** Global diagnostics sink. The hook repoints these at its live `setState` on
+ * every boot, so one container-level subscription survives remounts without
+ * ever writing into a dead instance's state. */
 let diagnosticsLog: (line: string) => void = () => {};
 let diagnosticsError: (message: string) => void = () => {};
+/** Teardown for the diagnostics subscription belonging to `containerPromise`. */
+let diagnosticsUnsubscribe: (() => void) | null = null;
 
 async function getContainer(): Promise<WebContainer> {
   if (!containerPromise) {
@@ -46,6 +50,18 @@ async function getContainer(): Promise<WebContainer> {
     );
   }
   return containerPromise;
+}
+
+/**
+ * Drop the cached container so the next `getContainer()` boots a fresh sandbox.
+ * A rejected `WebContainer.boot` never recovers, so this is the only way back
+ * from a failed boot. Any diagnostics listener bound to the discarded container
+ * is detached here; subscriptions are re-established by the next boot.
+ */
+function resetContainer(): void {
+  diagnosticsUnsubscribe?.();
+  diagnosticsUnsubscribe = null;
+  containerPromise = null;
 }
 
 async function ensureParentDirectories(container: WebContainer, path: string) {
@@ -92,6 +108,10 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
   const engineRef = useRef<PreviewEngine>('static');
   const overlayEnabledRef = useRef(overlayEnabled);
   overlayEnabledRef.current = overlayEnabled;
+  /** True while this instance owns the module-level `server-ready` listener. */
+  const serverReadyAttachedRef = useRef(false);
+  /** Detaches this instance's `server-ready` listener on unmount. */
+  const serverReadyUnsubscribeRef = useRef<(() => void) | null>(null);
 
   const enqueue = useCallback((op: () => Promise<void>) => {
     const next = writeQueueRef.current.then(op, op);
@@ -127,94 +147,100 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
     fetch(base + '/__sovereign_hmr/refresh', { method: 'POST', mode: 'cors' }).catch(() => {});
   }, []);
 
-  const restoreLiveStatic = useCallback((
-    failedProcess: PreviewProcess | null,
-    error: string,
-    liveCandidate?: PreviewProcess | null,
-  ) => {
-    const live =
-      (liveCandidate && liveCandidate !== failedProcess ? liveCandidate : null) ??
-      (previousBootServer && previousBootServer !== failedProcess ? previousBootServer : null);
-    if (!live) return false;
-    if (failedProcess && failedProcess !== live) killProcess(failedProcess);
-    cancelViteWatchRef.current?.();
-    cancelViteWatchRef.current = null;
-    pendingProcessRef.current = null;
-    serverRef.current = live;
-    engineRef.current = 'static';
-    setState((current) => ({
-      ...current,
-      status: 'ready',
-      engine: 'static',
-      error,
-    }));
-    return true;
-  }, []);
+  const restoreLiveStatic = useCallback(
+    (
+      failedProcess: PreviewProcess | null,
+      error: string,
+      liveCandidate?: PreviewProcess | null,
+    ) => {
+      const live =
+        (liveCandidate && liveCandidate !== failedProcess ? liveCandidate : null) ??
+        (previousBootServer && previousBootServer !== failedProcess ? previousBootServer : null);
+      if (!live) return false;
+      if (failedProcess && failedProcess !== live) killProcess(failedProcess);
+      cancelViteWatchRef.current?.();
+      cancelViteWatchRef.current = null;
+      pendingProcessRef.current = null;
+      serverRef.current = live;
+      engineRef.current = 'static';
+      setState((current) => ({
+        ...current,
+        status: 'ready',
+        engine: 'static',
+        error,
+      }));
+      return true;
+    },
+    [],
+  );
 
-  const attachServer = useCallback((
-    process: PreviewProcess,
-    engine: PreviewEngine,
-    fallbackError?: string,
-    reusedExisting?: boolean,
-  ) => {
-    const fallbackMessage = fallbackError
-      ? `Vite preview failed: ${fallbackError}. Using the static file server instead.`
-      : undefined;
-    if (
-      reusedExisting &&
-      restoreLiveStatic(
-        pendingProcessRef.current === process ? null : pendingProcessRef.current,
-        fallbackMessage ?? 'Vite preview failed. Keeping the static file server.',
-        process,
-      )
-    ) {
-      return;
-    }
-    cancelViteWatchRef.current?.();
-    cancelViteWatchRef.current = null;
-    pendingProcessRef.current = process;
-    serverRef.current = process;
-    engineRef.current = engine;
-    setState((current) => ({
-      ...current,
-      status: 'starting',
-      engine,
-      disclosure: engine === 'vite' ? PREVIEW_JS_DISCLOSURE : current.disclosure,
-      error: fallbackMessage ?? current.error,
-    }));
-    if (engine === 'vite') {
-      cancelViteWatchRef.current = scheduleViteReadyFallback(process, {
-        isCurrent: () => pendingProcessRef.current === process,
-        onLog: appendLog,
-        onFallback: () => {
-          void enqueue(async () => {
-            if (
-              restoreLiveStatic(
-                process,
-                'Vite preview failed before it was ready. Keeping the static file server.',
-              )
-            ) {
-              return;
-            }
-            const container = await getContainer();
-            const started = await startPreviewProcess(
-              { spawn: (command, args) => container.spawn(command, args) },
-              { mode: 'static', onLog: appendLog },
-            );
-            pendingProcessRef.current = started.process;
-            serverRef.current = started.process;
-            engineRef.current = 'static';
-            setState((current) => ({
-              ...current,
-              status: 'starting',
-              engine: 'static',
-              error: `Vite preview failed: process died before ready. Using the static file server instead.`,
-            }));
-          });
-        },
-      });
-    }
-  }, [appendLog, enqueue, restoreLiveStatic]);
+  const attachServer = useCallback(
+    (
+      process: PreviewProcess,
+      engine: PreviewEngine,
+      fallbackError?: string,
+      reusedExisting?: boolean,
+    ) => {
+      const fallbackMessage = fallbackError
+        ? `Vite preview failed: ${fallbackError}. Using the static file server instead.`
+        : undefined;
+      if (
+        reusedExisting &&
+        restoreLiveStatic(
+          pendingProcessRef.current === process ? null : pendingProcessRef.current,
+          fallbackMessage ?? 'Vite preview failed. Keeping the static file server.',
+          process,
+        )
+      ) {
+        return;
+      }
+      cancelViteWatchRef.current?.();
+      cancelViteWatchRef.current = null;
+      pendingProcessRef.current = process;
+      serverRef.current = process;
+      engineRef.current = engine;
+      setState((current) => ({
+        ...current,
+        status: 'starting',
+        engine,
+        disclosure: engine === 'vite' ? PREVIEW_JS_DISCLOSURE : current.disclosure,
+        error: fallbackMessage ?? current.error,
+      }));
+      if (engine === 'vite') {
+        cancelViteWatchRef.current = scheduleViteReadyFallback(process, {
+          isCurrent: () => pendingProcessRef.current === process,
+          onLog: appendLog,
+          onFallback: () => {
+            void enqueue(async () => {
+              if (
+                restoreLiveStatic(
+                  process,
+                  'Vite preview failed before it was ready. Keeping the static file server.',
+                )
+              ) {
+                return;
+              }
+              const container = await getContainer();
+              const started = await startPreviewProcess(
+                { spawn: (command, args) => container.spawn(command, args) },
+                { mode: 'static', onLog: appendLog },
+              );
+              pendingProcessRef.current = started.process;
+              serverRef.current = started.process;
+              engineRef.current = 'static';
+              setState((current) => ({
+                ...current,
+                status: 'starting',
+                engine: 'static',
+                error: `Vite preview failed: process died before ready. Using the static file server instead.`,
+              }));
+            });
+          },
+        });
+      }
+    },
+    [appendLog, enqueue, restoreLiveStatic],
+  );
 
   const bootPreview = useCallback(
     async (mode: PreviewEngine) => {
@@ -262,19 +288,22 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
     [appendLog, bootPreview],
   );
 
-  const replaceFiles = useCallback((previousFiles: PreviewFile[], nextFiles: PreviewFile[]) => {
-    return enqueue(async () => {
-      const container = await getContainer();
-      const nextPaths = new Set(nextFiles.map((file) => file.path));
-      await Promise.all(
-        previousFiles
-          .filter((file) => !nextPaths.has(file.path))
-          .map((file) => container.fs.rm(file.path, { force: true })),
-      );
-      await writeFilesToContainer(nextFiles);
-      await maybeSwitchToVite(nextFiles);
-    });
-  }, [enqueue, maybeSwitchToVite, writeFilesToContainer]);
+  const replaceFiles = useCallback(
+    (previousFiles: PreviewFile[], nextFiles: PreviewFile[]) => {
+      return enqueue(async () => {
+        const container = await getContainer();
+        const nextPaths = new Set(nextFiles.map((file) => file.path));
+        await Promise.all(
+          previousFiles
+            .filter((file) => !nextPaths.has(file.path))
+            .map((file) => container.fs.rm(file.path, { force: true })),
+        );
+        await writeFilesToContainer(nextFiles);
+        await maybeSwitchToVite(nextFiles);
+      });
+    },
+    [enqueue, maybeSwitchToVite, writeFilesToContainer],
+  );
 
   const removeFiles = useCallback(
     (paths: string[]) => {
@@ -287,6 +316,46 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
     [enqueue],
   );
 
+  /**
+   * Attach this instance's `server-ready` listener to the shared container.
+   *
+   * The container is a module-level singleton but the listener closes over this
+   * instance's refs and `setState`, so ownership must move with the instance:
+   * the previous owner detaches on unmount (see the cleanup effect) and the
+   * next mount re-attaches. A module-level "attached once" latch would leave
+   * the listener bound to a dead instance's nulled refs, and the preview would
+   * never become ready again for the rest of the browser session.
+   */
+  const attachServerReadyListener = useCallback((container: WebContainer) => {
+    if (serverReadyAttachedRef.current) return;
+    serverReadyAttachedRef.current = true;
+    const unsubscribe = container.on('server-ready', (_port, url) => {
+      const pending = pendingProcessRef.current;
+      if (pending && previousBootServer && previousBootServer !== pending) {
+        killProcess(previousBootServer);
+      }
+      if (pending) {
+        previousBootServer = pending;
+        serverRef.current = pending;
+        pendingProcessRef.current = null;
+      }
+      cancelViteWatchRef.current?.();
+      cancelViteWatchRef.current = null;
+      setState((current) => ({
+        ...current,
+        status: 'ready',
+        url,
+        engine: engineRef.current,
+        disclosure: engineRef.current === 'vite' ? PREVIEW_JS_DISCLOSURE : current.disclosure,
+      }));
+    });
+    // Unsubscribing also clears the latch so a retry can re-attach.
+    serverReadyUnsubscribeRef.current = () => {
+      serverReadyAttachedRef.current = false;
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, []);
+
   const boot = useCallback(async () => {
     if (bootedRef.current) return;
     bootedRef.current = true;
@@ -295,41 +364,22 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
       try {
         setState((current) => ({ ...current, status: 'booting', error: null }));
         const container = await getContainer();
-        // The container is a module-level singleton, so its server-ready
-        // listener must be attached exactly once — a retried boot must not
-        // stack duplicate listeners.
-        if (!bootListenerAttached) {
-          bootListenerAttached = true;
-          container.on('server-ready', (_port, url) => {
-            const pending = pendingProcessRef.current;
-            if (pending && previousBootServer && previousBootServer !== pending) {
-              killProcess(previousBootServer);
-            }
-            if (pending) {
-              previousBootServer = pending;
-              serverRef.current = pending;
-              pendingProcessRef.current = null;
-            }
-            cancelViteWatchRef.current?.();
-            cancelViteWatchRef.current = null;
-            setState((current) => ({
-              ...current,
-              status: 'ready',
-              url,
-              engine: engineRef.current,
-              disclosure: engineRef.current === 'vite' ? PREVIEW_JS_DISCLOSURE : current.disclosure,
-            }));
-          });
-        }
+        attachServerReadyListener(container);
+        // Keep the global diagnostics sink pointed at the live instance.
         diagnosticsLog = appendLog;
         diagnosticsError = (message) => {
           setState((current) => ({ ...current, status: 'error', error: message }));
         };
-        if (!diagnosticsAttached) {
-          diagnosticsAttached = true;
-          subscribePreviewDiagnostics(container, (line) => diagnosticsLog(line), (message) => {
-            diagnosticsError(message);
-          });
+        // The container is a singleton, so diagnostics are subscribed once and
+        // route through the sink above rather than capturing this instance.
+        if (!diagnosticsUnsubscribe) {
+          diagnosticsUnsubscribe = subscribePreviewDiagnostics(
+            container,
+            (line) => diagnosticsLog(line),
+            (message) => {
+              diagnosticsError(message);
+            },
+          );
         }
 
         const seedFiles = initialFiles.some((file) => isIndexHtmlPath(file.path))
@@ -343,11 +393,11 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
         if (mode === 'vite') viteAttemptedRef.current = true;
         await bootPreview(mode);
       } catch (error) {
-        // A failed boot must not brick the session: clear the module-level
-        // promise (a rejected WebContainer.boot never recovers) and the
-        // bootedRef latch so a later retry can start over. Kill any half-
-        // started preview process so it cannot keep running orphaned.
-        containerPromise = null;
+        // A failed boot must not brick the session: drop the cached container
+        // (a rejected WebContainer.boot never recovers) and the bootedRef
+        // latch so a later retry can start over. Kill any half-started preview
+        // process so it cannot keep running orphaned.
+        resetContainer();
         bootedRef.current = false;
         cancelViteWatchRef.current?.();
         cancelViteWatchRef.current = null;
@@ -360,16 +410,46 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
         }));
       }
     });
-  }, [appendLog, bootPreview, enqueue, initialFiles, writeFilesToContainer]);
+  }, [
+    appendLog,
+    attachServerReadyListener,
+    bootPreview,
+    enqueue,
+    initialFiles,
+    writeFilesToContainer,
+  ]);
 
-  const writeFilesAndMaybeVite = useCallback((files: PreviewFile[]) => {
-    return enqueue(async () => {
-      await writeFilesToContainer(files);
-      await maybeSwitchToVite(files);
-    });
-  }, [enqueue, maybeSwitchToVite, writeFilesToContainer]);
+  const writeFilesAndMaybeVite = useCallback(
+    (files: PreviewFile[]) => {
+      return enqueue(async () => {
+        await writeFilesToContainer(files);
+        await maybeSwitchToVite(files);
+      });
+    },
+    [enqueue, maybeSwitchToVite, writeFilesToContainer],
+  );
 
+  /**
+   * Recover from a failed preview. Clearing the latches is what makes this
+   * work: `bootedRef` short-circuits `boot()` and `viteAttemptedRef` blocks a
+   * second Vite attempt, so without the reset the Retry button was a no-op
+   * after any post-boot failure.
+   */
   const retry = useCallback(() => {
+    bootedRef.current = false;
+    viteAttemptedRef.current = false;
+    // Drop the cached container: a rejected WebContainer.boot never recovers,
+    // and the next getContainer() starts a fresh sandbox.
+    resetContainer();
+    cancelViteWatchRef.current?.();
+    cancelViteWatchRef.current = null;
+    killProcess(pendingProcessRef.current);
+    pendingProcessRef.current = null;
+    killProcess(serverRef.current);
+    serverRef.current = null;
+    killProcess(previousBootServer);
+    previousBootServer = null;
+    setState((current) => ({ ...current, status: 'booting', error: null, url: null }));
     void boot();
   }, [boot]);
 
@@ -383,6 +463,14 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
       serverRef.current = null;
       killProcess(previousBootServer);
       previousBootServer = null;
+      // Hand `server-ready` back so the next mount can own it. Without this the
+      // listener would stay bound to this instance's nulled refs, and a
+      // remounted preview would never become ready again.
+      serverReadyUnsubscribeRef.current?.();
+      serverReadyUnsubscribeRef.current = null;
+      // Stop routing container diagnostics into this instance's dead state.
+      diagnosticsLog = () => {};
+      diagnosticsError = () => {};
     };
   }, []);
 

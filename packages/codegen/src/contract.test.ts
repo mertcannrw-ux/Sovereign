@@ -80,7 +80,9 @@ export default function App() {
     expect(app).toContain('<HomeIcon />');
     expect(app).toContain('<NopeIcon />');
     const pkg = JSON.parse(result.files.get('package.json')!);
-    expect(pkg.dependencies['lucide-react']).toBe(stackLock.conditionalDependencies['lucide-react']);
+    expect(pkg.dependencies['lucide-react']).toBe(
+      stackLock.conditionalDependencies['lucide-react'],
+    );
   });
 
   it('strips visual-editor from vite.config.ts and patches index.html', () => {
@@ -139,7 +141,9 @@ export default {
       ]),
     );
     expect(result.files.has('.env')).toBe(false);
-    expect(result.changes.some((change) => change.path === '.env' && change.operation === 'delete')).toBe(true);
+    expect(
+      result.changes.some((change) => change.path === '.env' && change.operation === 'delete'),
+    ).toBe(true);
     const example = result.files.get('.env.example')!;
     expect(example).toContain('VITE_APP_TITLE=Shop');
     expect(example).not.toContain('DATABASE_URL');
@@ -157,7 +161,10 @@ export default {
 
   it('finishes a typical tree in well under 50ms', () => {
     const files = new Map<string, string>([
-      ['src/App.tsx', `import { HomeIcon } from 'lucide-react';\nexport default function App() { return <main><HomeIcon /></main>; }\n`],
+      [
+        'src/App.tsx',
+        `import { HomeIcon } from 'lucide-react';\nexport default function App() { return <main><HomeIcon /></main>; }\n`,
+      ],
       ['package.json', '{"name":"shop","dependencies":{"react":"^18.0.0",}'],
     ]);
     const start = performance.now();

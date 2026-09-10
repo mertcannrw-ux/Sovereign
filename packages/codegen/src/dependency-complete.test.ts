@@ -59,7 +59,9 @@ describe('completePackageJson', () => {
       extraDependencies: stackLock.conditionalDependencies,
     });
     const pkg = JSON.parse(result.json) as { dependencies: Record<string, string> };
-    expect(pkg.dependencies['lucide-react']).toBe(stackLock.conditionalDependencies['lucide-react']);
+    expect(pkg.dependencies['lucide-react']).toBe(
+      stackLock.conditionalDependencies['lucide-react'],
+    );
   });
 
   it('keeps irreparable package.json text instead of reseeding', () => {

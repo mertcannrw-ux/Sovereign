@@ -141,7 +141,8 @@ export const SOVEREIGN_TOOLS: NonNullable<ProviderCompleteOptions['tools']> = [
     type: 'function',
     function: {
       name: 'propose_design_directions',
-      description: 'Propose exactly 3 visual directions for an empty project. Do not mutate files in the same turn.',
+      description:
+        'Propose exactly 3 visual directions for an empty project. Do not mutate files in the same turn.',
       parameters: {
         type: 'object',
         properties: {
@@ -167,7 +168,9 @@ export function parseToolCallAction(name: string, rawArguments: string): AgentAc
 export function actionsFromToolCalls(
   calls: { id: string; function: { name: string; arguments: string } }[],
 ): AgentAction {
-  const actions = calls.map((call) => parseToolCallAction(call.function.name, call.function.arguments));
+  const actions = calls.map((call) =>
+    parseToolCallAction(call.function.name, call.function.arguments),
+  );
   if (actions.length === 1) return actions[0]!;
   // Each child comes from a single tool call, so it is never a nested batch.
   return { type: 'batch', actions: actions as Array<Exclude<AgentAction, { type: 'batch' }>> };
@@ -175,7 +178,10 @@ export function actionsFromToolCalls(
 
 export function getStreamingFileFromToolCalls(
   calls: { function: { name: string; arguments: string } }[],
-): { type: 'write_file'; path: string; content: string } | { type: 'edit_file'; path: string; search: string; replace: string } | null {
+):
+  | { type: 'write_file'; path: string; content: string }
+  | { type: 'edit_file'; path: string; search: string; replace: string }
+  | null {
   for (const call of calls) {
     const name = call.function.name;
     const args = call.function.arguments;
@@ -199,7 +205,11 @@ export function getStreamingFileFromToolCalls(
 function extractJsonString(source: string, key: string): string | null {
   try {
     const parsed = JSON.parse(source) as unknown;
-    if (parsed && typeof parsed === 'object' && typeof (parsed as Record<string, unknown>)[key] === 'string') {
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      typeof (parsed as Record<string, unknown>)[key] === 'string'
+    ) {
       return (parsed as Record<string, string>)[key]!;
     }
   } catch {

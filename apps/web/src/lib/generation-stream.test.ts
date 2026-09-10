@@ -9,7 +9,11 @@ describe('consumeGenerationStream', () => {
         start(controller) {
           controller.enqueue(encoder.encode('event: phase\ndata: {"phase":"plan'));
           controller.enqueue(encoder.encode('ning","label":"Planning"}\n\nevent: file-start\n'));
-          controller.enqueue(encoder.encode('data: {"path":"index.html"}\n\nevent: file-complete\ndata: {"path":"index.html","content":"<h1>Ready</h1>"}\n\n'));
+          controller.enqueue(
+            encoder.encode(
+              'data: {"path":"index.html"}\n\nevent: file-complete\ndata: {"path":"index.html","content":"<h1>Ready</h1>"}\n\n',
+            ),
+          );
           controller.close();
         },
       }),
@@ -62,10 +66,13 @@ describe('consumeGenerationStream', () => {
   });
 
   it('delivers provisional file content before the committed operation', async () => {
-    const response = new Response([
-      'event: file-preview\ndata: {"operation":"create","path":"src/App.tsx","content":"export default"}\n\n',
-      'event: file-operation\ndata: {"operation":"create","path":"src/App.tsx","content":"export default function App() {}","versionNumber":2}\n\n',
-    ].join(''), { status: 200 });
+    const response = new Response(
+      [
+        'event: file-preview\ndata: {"operation":"create","path":"src/App.tsx","content":"export default"}\n\n',
+        'event: file-operation\ndata: {"operation":"create","path":"src/App.tsx","content":"export default function App() {}","versionNumber":2}\n\n',
+      ].join(''),
+      { status: 200 },
+    );
     const onEvent = vi.fn();
 
     await consumeGenerationStream(response, onEvent);

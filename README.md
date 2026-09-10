@@ -40,22 +40,27 @@ Sovereign/
 ## 🚀 Quick Start
 
 ### 1. Prerequisites
+
 Ensure you have the following installed on your machine:
+
 - **Node.js:** `v20.0.0` or higher
 - **npm:** `v10.0.0` or higher
 
 ### 2. Install Dependencies
+
 ```bash
 npm install
 ```
 
 ### 3. Environment Setup
+
 Copy the `.env.example` file to `.env`:
+
 ```bash
 cp .env.example .env
 ```
 
-*(Note: The default `.env` is configured for local development using the embedded PostgreSQL socket server).*
+_(Note: The default `.env` is configured for local development using the embedded PostgreSQL socket server)._
 
 > **Production — rate limiting:** when deployed behind a reverse proxy (Vercel, Cloudflare, Nginx, …), set `TRUSTED_PROXY="true"`. Without it the app sees every request as `127.0.0.1`, so pre-auth rate limits (`register`/`signIn`) collapse into a single global bucket shared by all users. See `.env.example`.
 
@@ -64,31 +69,38 @@ cp .env.example .env
 ## 🗄️ Database Setup & Development
 
 ### 1. Start the Local PostgreSQL Database
+
 Launch the embedded PGLite server:
+
 ```bash
 npm run db:start
 ```
-*This starts a PostgreSQL server on `127.0.0.1:5433` using `.pglite_data`.*
+
+_This starts a PostgreSQL server on `127.0.0.1:5433` using `.pglite_data`._
 
 ### 2. Seed Initial Admin & Demo Data
+
 In a separate terminal window, populate the database:
+
 ```bash
 npm run db:seed
 ```
 
 #### 🔑 Local Admin Credentials (from .env)
-| Field | Credential |
-| :--- | :--- |
-| **Sign-in URL** | [http://localhost:3000/auth/signin](http://localhost:3000/auth/signin) |
-| **Email** | Set by `SEED_ADMIN_EMAIL` in `.env` (default `admin@appbuilder.local`) |
-| **Password** | Set by `SEED_ADMIN_PASSWORD` in `.env` |
-| **Organization** | `Admin's Organization` |
+
+| Field            | Credential                                                             |
+| :--------------- | :--------------------------------------------------------------------- |
+| **Sign-in URL**  | [http://localhost:3000/auth/signin](http://localhost:3000/auth/signin) |
+| **Email**        | Set by `SEED_ADMIN_EMAIL` in `.env` (default `admin@appbuilder.local`) |
+| **Password**     | Set by `SEED_ADMIN_PASSWORD` in `.env`                                 |
+| **Organization** | `Admin's Organization`                                                 |
 
 ---
 
 ## 💻 Running the Application
 
 Start the local development server:
+
 ```bash
 npm run dev
 ```
@@ -99,17 +111,34 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ## 📜 Available Scripts
 
-| Command | Description |
-| :--- | :--- |
-| `npm run dev` | Starts the Next.js development server on port 3000 via Turborepo |
-| `npm run build` | Builds all applications and packages for production |
-| `npm run db:start` | Launches the local PGLite PostgreSQL server on port 5433 |
-| `npm run db:generate` | Generates the Prisma Client types |
-| `npm run db:push` | Pushes the Prisma schema directly to the database |
-| `npm run db:seed` | Seeds initial admin user, organization, and demo projects |
-| `npm run db:studio` | Opens Prisma Studio GUI to view and edit database rows |
-| `npm run format` | Formats all files across the monorepo with Prettier |
-| `npm run check` | Runs typechecking, linting, and build checks |
+| Command                | Description                                                      |
+| :--------------------- | :--------------------------------------------------------------- |
+| `npm run dev`          | Starts the Next.js development server on port 3000 via Turborepo |
+| `npm run build`        | Builds all applications and packages for production              |
+| `npm run db:start`     | Launches the local PGLite PostgreSQL server on port 5433         |
+| `npm run db:generate`  | Generates the Prisma Client types                                |
+| `npm run db:push`      | Pushes the Prisma schema directly to the database                |
+| `npm run db:seed`      | Seeds initial admin user, organization, and demo projects        |
+| `npm run db:studio`    | Opens Prisma Studio GUI to view and edit database rows           |
+| `npm run format`       | Formats all files across the monorepo with Prettier              |
+| `npm run format:check` | Verifies formatting without writing (used by CI)                 |
+| `npm run test`         | Runs every workspace's unit test suite via Turborepo             |
+| `npm run typecheck`    | Typechecks all workspaces                                        |
+| `npm run check`        | Runs typechecking, linting, and build checks                     |
+
+### End-to-end tests
+
+Playwright smoke tests live in `apps/web/e2e` and cover health endpoints,
+security headers, unauthenticated-API rejection, and page rendering:
+
+```bash
+cd apps/web
+npx playwright install chromium   # first run only
+npm run test:e2e
+```
+
+The Playwright config starts the app automatically (dev server locally,
+`next start` in CI).
 
 ---
 
