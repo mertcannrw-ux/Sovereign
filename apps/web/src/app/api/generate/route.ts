@@ -34,7 +34,12 @@ import {
 } from '@/lib/agent-tools';
 import type { ToolCall } from '@app-builder/ai-gateway';
 import { trimMessagesForContext, type AgentMessage } from '@/lib/context-window';
-import { createVersion, type VersionDiffEntry } from '@/lib/versioning';
+import {
+  createVersion,
+  tryClaimGenerationLease,
+  clearGenerationLease,
+  type VersionDiffEntry,
+} from '@/lib/versioning';
 import { checkRateLimit } from '@/server/rate-limit';
 import { isSovereignOverlayPath } from '@/lib/preview-startup';
 
@@ -64,7 +69,7 @@ interface GenerateBody {
 const MAX_ITERATIONS =
   Number(process.env.SOVEREIGN_MAX_ITERATIONS) > 0
     ? Math.floor(Number(process.env.SOVEREIGN_MAX_ITERATIONS))
-    : null;
+    : 40;
 const TURN_MAX_TOKENS =
   Number(process.env.SOVEREIGN_MAX_TOKENS) > 0
     ? Math.floor(Number(process.env.SOVEREIGN_MAX_TOKENS))
@@ -76,12 +81,6 @@ const MAX_NO_PROGRESS_TURNS =
 const MAX_ATTACHMENT_BYTES = 512 * 1024;
 const MAX_READ_RESULT_CHARS = 60_000;
 const IMAGE_GENERATION_CONCURRENCY = 3;
-/**
- * A generation lease older than this is treated as abandoned (the process
- * crashed or was killed mid-run) and may be reclaimed. Set comfortably above
- * `maxDuration` so a legitimately long run is never stolen.
- */
-const GENERATION_LEASE_STALE_MS = 20 * 60 * 1000;
 
 function isRetryableImageError(error: unknown): boolean {
   if (error instanceof ProviderError) {
@@ -294,15 +293,8 @@ export async function POST(request: NextRequest) {
   // The claim is a conditional update, not a read-then-write, so it is atomic
   // across server instances. A lease older than MAX_RUN_MS + slack belongs to a
   // crashed run and is reclaimed.
-  const generationLeaseCutoff = new Date(Date.now() - GENERATION_LEASE_STALE_MS);
-  const lease = await db.project.updateMany({
-    where: {
-      id: projectId,
-      OR: [{ generationStartedAt: null }, { generationStartedAt: { lt: generationLeaseCutoff } }],
-    },
-    data: { generationStartedAt: new Date() },
-  });
-  if (lease.count === 0) {
+  const claimed = await tryClaimGenerationLease(db, projectId);
+  if (!claimed) {
     return Response.json(
       {
         error:
@@ -316,10 +308,7 @@ export async function POST(request: NextRequest) {
     if (leaseReleased) return;
     leaseReleased = true;
     try {
-      await db.project.update({
-        where: { id: projectId },
-        data: { generationStartedAt: null },
-      });
+      await clearGenerationLease(db, projectId);
     } catch (error) {
       // Failing to release only blocks the project until the stale cutoff
       // passes; never mask the run's own outcome with this error.
@@ -638,11 +627,7 @@ export async function POST(request: NextRequest) {
             });
           };
           send('phase', { phase: 'planning', label: 'Starting agent' });
-          for (
-            let iteration = 0;
-            MAX_ITERATIONS === null || iteration < MAX_ITERATIONS;
-            iteration += 1
-          ) {
+          for (let iteration = 0; iteration < MAX_ITERATIONS; iteration += 1) {
             if (abortController.signal.aborted) throw new Error('Generation stopped');
             const iterationStartedAt = new Date();
             const thinkingStepId = randomUUID();
@@ -702,6 +687,7 @@ export async function POST(request: NextRequest) {
               }
               responseContent += next.value.content;
               if (next.value.reasoning) reasoningContent += next.value.reasoning;
+              if (next.value.finishReason === 'length') truncatedThisTurn = true;
               if (next.value.toolCalls && next.value.toolCalls.length > 0) {
                 streamedToolCalls = next.value.toolCalls;
               }
@@ -778,13 +764,28 @@ export async function POST(request: NextRequest) {
             // SOVEREIGN_MAX_TOKENS or a provider-imposed limit). Parsing a
             // truncated action would fail; ask the model to finish the output in
             // the next turn — never counted as a failure, never aborted.
-            if (truncatedThisTurn && responseContent.trim().length > 0) {
-              messages.push({ role: 'assistant', content: responseContent });
-              messages.push({
-                role: 'user',
-                content:
-                  'Your previous output was cut off at the token limit. If you were writing a JSON action, output the COMPLETE valid JSON action now without repeating prose. Otherwise continue your previous message exactly where it stopped.',
-              });
+            if (truncatedThisTurn) {
+              messages.push(
+                streamedToolCalls.length > 0
+                  ? { role: 'assistant', content: responseContent, toolCalls: streamedToolCalls }
+                  : { role: 'assistant', content: responseContent },
+              );
+              if (streamedToolCalls.length > 0) {
+                streamedToolCalls.forEach((call, index) => {
+                  messages.push({
+                    role: 'tool',
+                    toolCallId: call.id || `call_${index}`,
+                    content:
+                      'error: the previous tool call was truncated at the token limit. Re-issue the complete call.',
+                  });
+                });
+              } else {
+                messages.push({
+                  role: 'user',
+                  content:
+                    'Your previous output was cut off at the token limit. If you were writing a JSON action, output the COMPLETE valid JSON action now without repeating prose. Otherwise continue your previous message exactly where it stopped.',
+                });
+              }
               emitStep({
                 ...thinkingStep,
                 title: 'Output truncated — continuing',
@@ -979,10 +980,20 @@ export async function POST(request: NextRequest) {
                 completedAt: completedAt.toISOString(),
                 durationMs: completedAt.getTime() - startedAt.getTime(),
               });
-              messages.push({
-                role: 'user',
-                content: `Action blocked: ${actionGuardError} Continue by reading and editing only the files needed for the user's request.`,
-              });
+              if (usedNativeToolCalls && streamedToolCalls.length > 0) {
+                streamedToolCalls.forEach((call, index) => {
+                  messages.push({
+                    role: 'tool',
+                    toolCallId: call.id || `call_${index}`,
+                    content: `error: ${actionGuardError}`,
+                  });
+                });
+              } else {
+                messages.push({
+                  role: 'user',
+                  content: `Action blocked: ${actionGuardError} Continue by reading and editing only the files needed for the user's request.`,
+                });
+              }
               consecutiveNoProgressIterations += 1;
               if (consecutiveNoProgressIterations >= MAX_NO_PROGRESS_TURNS) {
                 throw new Error(
@@ -1490,11 +1501,7 @@ export async function POST(request: NextRequest) {
               return;
             }
           }
-          throw new Error(
-            MAX_ITERATIONS === null
-              ? 'Agent ran for an unusually long time without finishing.'
-              : `Agent exceeded ${MAX_ITERATIONS} steps without finishing`,
-          );
+          throw new Error(`Agent exceeded ${MAX_ITERATIONS} steps without finishing`);
         } catch (error) {
           for (const [path, original] of activeProvisionalOriginals) {
             send(

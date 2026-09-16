@@ -200,6 +200,22 @@ function isLoopbackHostname(hostname: string): boolean {
   return isLoopbackIPv4(host);
 }
 
+/**
+ * Loopback custom providers (Ollama, vLLM) are a local-dev convenience.
+ * In production they are SSRF to the host unless the operator opts in.
+ */
+export function loopbackProvidersAllowed(): boolean {
+  const flag = process.env.ALLOW_LOOPBACK_PROVIDERS;
+  if (flag === 'true' || flag === '1') return true;
+  if (flag === 'false' || flag === '0') return false;
+  return process.env.NODE_ENV !== 'production';
+}
+
+export type ValidateUrlOptions = {
+  /** Override the ALLOW_LOOPBACK_PROVIDERS / NODE_ENV policy. */
+  allowLoopback?: boolean;
+};
+
 // ─── URL validation ────────────────────────────────────────
 
 export class SsrfError extends Error {
@@ -214,7 +230,7 @@ export class SsrfError extends Error {
  * Does NOT perform DNS resolution. HTTP is allowed for literal loopback
  * so custom local providers work. Remote custom providers may use any HTTPS port.
  */
-export function validateUrl(url: string): URL {
+export function validateUrl(url: string, options?: ValidateUrlOptions): URL {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -223,6 +239,11 @@ export function validateUrl(url: string): URL {
   }
 
   const isLocalHost = isLoopbackHostname(parsed.hostname);
+  const allowLoopback = options?.allowLoopback ?? loopbackProvidersAllowed();
+
+  if (isLocalHost && !allowLoopback) {
+    throw new SsrfError('Loopback URLs are not allowed');
+  }
 
   if (parsed.protocol === 'http:' && !isLocalHost) {
     throw new SsrfError('Only HTTPS URLs are allowed');
@@ -249,10 +270,13 @@ export function validateUrl(url: string): URL {
  * Returns the validated IP addresses so the caller can pin them for the
  * subsequent fetch, eliminating the DNS-rebinding TOCTOU window.
  */
-export async function validateOutboundUrl(url: string): Promise<{ url: URL; addresses: string[] }> {
-  const parsed = validateUrl(url);
+export async function validateOutboundUrl(
+  url: string,
+  options?: ValidateUrlOptions,
+): Promise<{ url: URL; addresses: string[] }> {
+  const parsed = validateUrl(url, options);
   // Literal loopback cannot rebind to another address, so skip DNS pinning.
-  // Blocking it would reject local custom providers (Ollama, vLLM, etc.).
+  // Only reachable when loopback is explicitly allowed.
   if (isLoopbackHostname(parsed.hostname)) {
     return { url: parsed, addresses: [] };
   }

@@ -34,11 +34,8 @@ export const deploymentsRouter = router({
 
   /**
    * Trigger a new deployment for a project.
-   * Simulates the build-deploy pipeline:
-   *   1. Find the latest version number for the project
-   *   2. Create a deployment record with status BUILDING
-   *   3. Simulate a build delay, then mark as LIVE
-   *   4. Update the project's publishedAt timestamp
+   * Until Vercel is wired, this records a FAILED stub so list/getStatus
+   * cannot look like a live host.
    */
   deploy: protectedProcedure
     .input(z.object({ projectId: z.string() }))
@@ -89,16 +86,11 @@ export const deploymentsRouter = router({
               data: {
                 projectId: input.projectId,
                 version: nextVersion,
-                status: 'LIVE',
+                status: 'FAILED',
                 url: deploymentUrl,
                 buildLogs: buildSteps.join('\n') + '\n',
-                deployedAt: now,
+                deployedAt: null,
               },
-            });
-
-            await tx.project.update({
-              where: { id: input.projectId },
-              data: { publishedAt: now, status: 'PUBLISHED' },
             });
 
             return { ...deployment, stub: true as const };

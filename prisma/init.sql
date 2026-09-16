@@ -576,6 +576,74 @@ CREATE TABLE "entitlements" (
 );
 
 -- CreateTable
+CREATE TABLE "image_provider_configs" (
+    "id" TEXT NOT NULL,
+    "user_id" TEXT NOT NULL,
+    "encrypted_key" TEXT NOT NULL,
+    "base_url" TEXT NOT NULL,
+    "model" TEXT NOT NULL,
+    "label" TEXT,
+    "enabled" BOOLEAN NOT NULL DEFAULT true,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+    "last_used_at" TIMESTAMP(3),
+
+    CONSTRAINT "image_provider_configs_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "project_assets" (
+    "id" TEXT NOT NULL,
+    "project_id" TEXT NOT NULL,
+    "created_by_id" TEXT,
+    "object_key" TEXT NOT NULL,
+    "public_url" TEXT NOT NULL,
+    "media_type" TEXT NOT NULL,
+    "byte_size" INTEGER NOT NULL,
+    "width" INTEGER,
+    "height" INTEGER,
+    "source" TEXT NOT NULL DEFAULT 'generated',
+    "prompt" TEXT,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "project_assets_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "design_direction_sets" (
+    "id" TEXT NOT NULL,
+    "project_id" TEXT NOT NULL,
+    "original_request" TEXT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'pending',
+    "selected_direction_id" TEXT,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "design_direction_sets_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "design_directions" (
+    "id" TEXT NOT NULL,
+    "set_id" TEXT NOT NULL,
+    "order_number" INTEGER NOT NULL,
+    "title" TEXT NOT NULL,
+    "visual_brief" TEXT NOT NULL,
+    "image_prompt" TEXT NOT NULL,
+    "palette" JSONB NOT NULL,
+    "typography" JSONB NOT NULL,
+    "layout_notes" TEXT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'generating',
+    "preview_asset_id" TEXT,
+    "error_message" TEXT,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "design_directions_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "agent_plans" (
     "id" TEXT NOT NULL,
     "project_id" TEXT NOT NULL,
@@ -648,6 +716,9 @@ CREATE UNIQUE INDEX "users_email_key" ON "users"("email");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "accounts_provider_provider_account_id_key" ON "accounts"("provider", "provider_account_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "accounts_user_id_provider_key" ON "accounts"("user_id", "provider");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "sessions_session_token_key" ON "sessions"("session_token");
@@ -755,6 +826,9 @@ CREATE INDEX "backend_functions_project_id_idx" ON "backend_functions"("project_
 CREATE UNIQUE INDEX "backend_functions_project_id_path_method_key" ON "backend_functions"("project_id", "path", "method");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "app_databases_project_id_key" ON "app_databases"("project_id");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "app_auth_configs_project_id_key" ON "app_auth_configs"("project_id");
 
 -- CreateIndex
@@ -855,6 +929,33 @@ CREATE INDEX "entitlements_organization_id_idx" ON "entitlements"("organization_
 
 -- CreateIndex
 CREATE UNIQUE INDEX "entitlements_organization_id_key_key" ON "entitlements"("organization_id", "key");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "image_provider_configs_user_id_label_key" ON "image_provider_configs"("user_id", "label");
+
+-- CreateIndex
+CREATE INDEX "image_provider_configs_user_id_idx" ON "image_provider_configs"("user_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "project_assets_object_key_key" ON "project_assets"("object_key");
+
+-- CreateIndex
+CREATE INDEX "project_assets_project_id_created_at_idx" ON "project_assets"("project_id", "created_at");
+
+-- CreateIndex
+CREATE INDEX "project_assets_created_by_id_idx" ON "project_assets"("created_by_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "design_direction_sets_selected_direction_id_key" ON "design_direction_sets"("selected_direction_id");
+
+-- CreateIndex
+CREATE INDEX "design_direction_sets_project_id_created_at_idx" ON "design_direction_sets"("project_id", "created_at");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "design_directions_set_id_order_number_key" ON "design_directions"("set_id", "order_number");
+
+-- CreateIndex
+CREATE INDEX "design_directions_set_id_idx" ON "design_directions"("set_id");
 
 -- CreateIndex
 CREATE INDEX "agent_plans_project_id_created_at_idx" ON "agent_plans"("project_id", "created_at");
@@ -1032,4 +1133,25 @@ ALTER TABLE "verify_reports" ADD CONSTRAINT "verify_reports_run_id_fkey" FOREIGN
 
 -- AddForeignKey
 ALTER TABLE "verify_reports" ADD CONSTRAINT "verify_reports_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "projects"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "image_provider_configs" ADD CONSTRAINT "image_provider_configs_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "project_assets" ADD CONSTRAINT "project_assets_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "projects"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "project_assets" ADD CONSTRAINT "project_assets_created_by_id_fkey" FOREIGN KEY ("created_by_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "design_direction_sets" ADD CONSTRAINT "design_direction_sets_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "projects"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "design_directions" ADD CONSTRAINT "design_directions_set_id_fkey" FOREIGN KEY ("set_id") REFERENCES "design_direction_sets"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "design_directions" ADD CONSTRAINT "design_directions_preview_asset_id_fkey" FOREIGN KEY ("preview_asset_id") REFERENCES "project_assets"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "design_direction_sets" ADD CONSTRAINT "design_direction_sets_selected_direction_id_fkey" FOREIGN KEY ("selected_direction_id") REFERENCES "design_directions"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 

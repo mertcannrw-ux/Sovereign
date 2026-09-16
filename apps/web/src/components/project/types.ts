@@ -5,6 +5,7 @@ export interface SelectedPreviewElement {
   text: string;
   selector: string;
   sourceFile: string;
+  veId?: string | null;
   outerHTML: string;
 }
 

@@ -1,8 +1,10 @@
+import { SEEDS } from '@app-builder/codegen';
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { protectedProcedure, router } from '../trpc';
 import { requireOrganizationRole, requireProjectRole } from '@/server/authz';
 import { provisionAppDatabase } from '@/server/app-database';
+import { persistProjectFiles } from '@/lib/project-files';
 
 function generateSlug(name: string): string {
   return (
@@ -55,6 +57,7 @@ export const projectsRouter = router({
         modelProvider: z.string().optional(),
         modelName: z.string().optional(),
         organizationId: z.string().uuid(),
+        templateId: z.string().max(80).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -81,6 +84,21 @@ export const projectsRouter = router({
           },
         });
         await provisionAppDatabase(tx, created.id);
+        if (input.templateId) {
+          const safeName = input.name.replace(/[<>&`]/g, '');
+          const safeDescription = (input.description ?? '').replace(/[<>&`]/g, '');
+          await persistProjectFiles(
+            tx,
+            created.id,
+            Object.entries(SEEDS).map(([path, content]) => ({
+              path,
+              content:
+                path === 'src/App.tsx'
+                  ? `export default function App() {\n  return (\n    <main>\n      <h1>${safeName}</h1>\n      <p>${safeDescription}</p>\n    </main>\n  );\n}\n`
+                  : content,
+            })),
+          );
+        }
         return created;
       });
 

@@ -108,6 +108,9 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
   const engineRef = useRef<PreviewEngine>('static');
   const overlayEnabledRef = useRef(overlayEnabled);
   overlayEnabledRef.current = overlayEnabled;
+  const initialFilesRef = useRef(initialFiles);
+  initialFilesRef.current = initialFiles;
+  const rejectStaticFallbackRef = useRef(false);
   /** True while this instance owns the module-level `server-ready` listener. */
   const serverReadyAttachedRef = useRef(false);
   /** Detaches this instance's `server-ready` listener on unmount. */
@@ -184,6 +187,9 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
       const fallbackMessage = fallbackError
         ? `Vite preview failed: ${fallbackError}. Using the static file server instead.`
         : undefined;
+      rejectStaticFallbackRef.current = Boolean(
+        fallbackError && shouldBootVite(initialFilesRef.current),
+      );
       if (
         reusedExisting &&
         restoreLiveStatic(
@@ -201,10 +207,13 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
       engineRef.current = engine;
       setState((current) => ({
         ...current,
-        status: 'starting',
+        status: rejectStaticFallbackRef.current ? 'error' : 'starting',
         engine,
         disclosure: engine === 'vite' ? PREVIEW_JS_DISCLOSURE : current.disclosure,
-        error: fallbackMessage ?? current.error,
+        error: rejectStaticFallbackRef.current
+          ? `Vite preview failed: ${fallbackError}. The static file server cannot run TypeScript React apps.`
+          : (fallbackMessage ?? current.error),
+        url: rejectStaticFallbackRef.current ? null : current.url,
       }));
       if (engine === 'vite') {
         cancelViteWatchRef.current = scheduleViteReadyFallback(process, {
@@ -341,13 +350,25 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
       }
       cancelViteWatchRef.current?.();
       cancelViteWatchRef.current = null;
-      setState((current) => ({
-        ...current,
-        status: 'ready',
-        url,
-        engine: engineRef.current,
-        disclosure: engineRef.current === 'vite' ? PREVIEW_JS_DISCLOSURE : current.disclosure,
-      }));
+      setState((current) => {
+        if (rejectStaticFallbackRef.current && engineRef.current === 'static') {
+          return {
+            ...current,
+            status: 'error',
+            url: null,
+            error:
+              current.error ??
+              'Vite preview failed. The static file server cannot run TypeScript React apps.',
+          };
+        }
+        return {
+          ...current,
+          status: 'ready',
+          url,
+          engine: engineRef.current,
+          disclosure: engineRef.current === 'vite' ? PREVIEW_JS_DISCLOSURE : current.disclosure,
+        };
+      });
     });
     // Unsubscribing also clears the latch so a retry can re-attach.
     serverReadyUnsubscribeRef.current = () => {
@@ -438,6 +459,7 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
   const retry = useCallback(() => {
     bootedRef.current = false;
     viteAttemptedRef.current = false;
+    rejectStaticFallbackRef.current = false;
     // Drop the cached container: a rejected WebContainer.boot never recovers,
     // and the next getContainer() starts a fresh sandbox.
     resetContainer();

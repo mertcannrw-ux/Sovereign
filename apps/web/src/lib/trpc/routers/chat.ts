@@ -12,6 +12,8 @@ import {
   getVersions,
   restoreVersion,
   parseFileDiffsFromResponse,
+  tryClaimGenerationLease,
+  clearGenerationLease,
 } from '@/lib/versioning';
 import type { VersionDiffEntry } from '@/lib/versioning';
 import { persistProjectFiles } from '@/lib/project-files';
@@ -39,6 +41,16 @@ export const chatRouter = router({
       // ── 1. Validate project access ──────────────────────────────
       await requireProjectRole(ctx, input.projectId, 'EDITOR');
 
+      const claimed = await tryClaimGenerationLease(ctx.db, input.projectId);
+      if (!claimed) {
+        throw new TRPCError({
+          code: 'CONFLICT',
+          message:
+            'A generation is already running for this project. Wait for it to finish or stop it first.',
+        });
+      }
+
+      try {
       const rate = await checkRateLimit('prompt', ctx.user.id);
       if (!rate.allowed) {
         const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
@@ -246,6 +258,11 @@ export const chatRouter = router({
         parsingMethod,
         ...(parsingErrors.length > 0 ? { parsingErrors } : {}),
       };
+      } finally {
+        await clearGenerationLease(ctx.db, input.projectId).catch((error) => {
+          console.error('chat.send.lease_release_failed', error);
+        });
+      }
     }),
 
   /**
@@ -312,9 +329,22 @@ export const chatRouter = router({
     .mutation(async ({ ctx, input }) => {
       await requireProjectRole(ctx, input.projectId, 'EDITOR');
 
-      const result = await restoreVersion(input.projectId, input.versionNumber);
+      const claimed = await tryClaimGenerationLease(ctx.db, input.projectId);
+      if (!claimed) {
+        throw new TRPCError({
+          code: 'CONFLICT',
+          message:
+            'A generation is already running for this project. Wait for it to finish or stop it first.',
+        });
+      }
 
-      return result;
+      try {
+        return await restoreVersion(input.projectId, input.versionNumber);
+      } finally {
+        await clearGenerationLease(ctx.db, input.projectId).catch((error) => {
+          console.error('chat.restoreVersion.lease_release_failed', error);
+        });
+      }
     }),
 });
 

@@ -29,7 +29,12 @@ const LEFT_PANEL_MIN = 20;
 const LEFT_PANEL_MAX = 75;
 const LEFT_PANEL_DEFAULT = 38;
 
-export default function ProjectWorkspace() {
+export default function ProjectPage() {
+  const params = useParams<{ id: string }>();
+  return <ProjectWorkspace key={params.id ?? ''} />;
+}
+
+function ProjectWorkspace() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const projectId = params.id ?? '';
@@ -42,11 +47,13 @@ export default function ProjectWorkspace() {
   const filesQuery = trpc.projects.files.useQuery({ id: projectId });
   const restoreMutation = trpc.chat.restoreVersion.useMutation();
   const updateProjectMutation = trpc.projects.update.useMutation();
+  const deployMutation = trpc.deployments.deploy.useMutation();
 
   const [projectName, setProjectName] = useState('Untitled Project');
   const [selectedModelKey, setSelectedModelKey] = useState('');
   const [input, setInput] = useState('');
   const [activeTab, setActiveTab] = useState('preview');
+  const [mobilePane, setMobilePane] = useState<'chat' | 'workspace'>('chat');
   const [reasoningEffort, setReasoningEffort] = useState('auto');
   const [isRestoring, setIsRestoring] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -195,6 +202,12 @@ export default function ProjectWorkspace() {
     setProjectName(projectQuery.data.name);
   }, [projectQuery.data]);
 
+  useEffect(() => {
+    const versions = versionsQuery.data;
+    if (!versions?.length || generation.currentVersion !== 0) return;
+    generation.setCurrentVersion(Math.max(...versions.map((v) => v.versionNumber)));
+  }, [generation.currentVersion, generation.setCurrentVersion, versionsQuery.data]);
+
   const seenProjectIdRef = useRef(projectId);
   useEffect(() => {
     if (seenProjectIdRef.current === projectId) return;
@@ -320,15 +333,23 @@ export default function ProjectWorkspace() {
               <TooltipTrigger asChild>
                 <Button
                   size="default"
-                  className="h-9 cursor-not-allowed gap-2 rounded-lg px-4 text-xs font-semibold opacity-45 shadow-sm sm:text-sm"
-                  aria-disabled="true"
-                  onClick={(event) => event.preventDefault()}
+                  className="h-9 gap-2 rounded-lg px-4 text-xs font-semibold shadow-sm sm:text-sm"
+                  disabled={deployMutation.isPending}
+                  onClick={() => deployMutation.mutate({ projectId })}
                 >
                   <Rocket className="h-4 w-4" />
-                  <span className="hidden sm:inline">Deploy</span>
+                  <span className="hidden sm:inline">
+                    {deployMutation.isPending ? 'Deploying…' : 'Deploy'}
+                  </span>
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Vercel is not connected.</TooltipContent>
+              <TooltipContent>
+                {deployMutation.data?.stub
+                  ? 'Vercel is not connected. This recorded a failed placeholder, not a live URL.'
+                  : deployMutation.error
+                    ? deployMutation.error.message
+                    : 'Create a deployment. Live hosting requires Vercel credentials.'}
+              </TooltipContent>
             </Tooltip>
           </TooltipProvider>
 
@@ -348,7 +369,7 @@ export default function ProjectWorkspace() {
         <VersionTimeline
           versions={versionTimelineEntries}
           currentVersion={generation.currentVersion}
-          onSelectVersion={generation.setCurrentVersion}
+          onSelectVersion={() => undefined}
           onRestoreVersion={handleRestoreVersion}
           isLoading={versionsQuery.isLoading || isRestoring}
         />
@@ -363,8 +384,12 @@ export default function ProjectWorkspace() {
         )}
 
         <div
-          className="flex w-full flex-col border-r border-border bg-background transition-[width] duration-75"
-          style={{ width: `${leftPanelWidth}%` }}
+          className={cn(
+            'flex flex-col border-r border-border bg-background transition-[width] duration-75',
+            mobilePane === 'workspace' ? 'max-md:hidden' : 'flex',
+            'w-full md:w-[var(--panel-width)]',
+          )}
+          style={{ ['--panel-width' as string]: `${leftPanelWidth}%` }}
         >
           <ChatPanel
             messages={generation.localMessages}
@@ -443,7 +468,12 @@ export default function ProjectWorkspace() {
           </div>
         </div>
 
-        <div className="relative hidden min-w-0 flex-1 flex-col bg-background md:flex">
+        <div
+          className={cn(
+            'relative min-w-0 flex-1 flex-col bg-background',
+            mobilePane === 'chat' ? 'hidden md:flex' : 'flex',
+          )}
+        >
           <div className="flex items-center gap-3 border-b border-border bg-background-subtle px-4 py-2.5">
             <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1">
               <TabsList className="h-8">
@@ -489,10 +519,14 @@ export default function ProjectWorkspace() {
 
           {activeTab === 'preview' && (
             <PreviewPane
-              url={preview.url}
-              status={preview.status}
+              url={filesQuery.isError ? null : preview.url}
+              status={filesQuery.isError ? 'error' : preview.status}
               logs={preview.logs}
-              error={preview.error}
+              error={
+                filesQuery.isError
+                  ? (filesQuery.error?.message ?? 'Could not load project files')
+                  : preview.error
+              }
               engine={preview.engine}
               disclosure={preview.disclosure}
               previewKey={preview.previewKey}
@@ -503,7 +537,7 @@ export default function ProjectWorkspace() {
               onSelectedElementChange={setSelectedPreviewElement}
               onElementSelected={() => requestAnimationFrame(() => inputRef.current?.focus())}
               onQuickEdit={handleQuickEdit}
-              onRetry={preview.retry}
+              onRetry={filesQuery.isError ? () => void filesQuery.refetch() : preview.retry}
             />
           )}
           {activeTab === 'code' && (
@@ -528,15 +562,17 @@ export default function ProjectWorkspace() {
           <Button
             size="sm"
             className="shadow-lg"
-            onClick={() => setActiveTab(activeTab === 'preview' ? 'code' : 'preview')}
+            onClick={() =>
+              setMobilePane((pane) => (pane === 'chat' ? 'workspace' : 'chat'))
+            }
           >
-            {activeTab === 'preview' ? (
+            {mobilePane === 'chat' ? (
               <>
-                <Code className="mr-1.5 h-3.5 w-3.5" /> View Code
+                <Eye className="mr-1.5 h-3.5 w-3.5" /> View Preview
               </>
             ) : (
               <>
-                <Eye className="mr-1.5 h-3.5 w-3.5" /> View Preview
+                <Code className="mr-1.5 h-3.5 w-3.5" /> Back to chat
               </>
             )}
           </Button>

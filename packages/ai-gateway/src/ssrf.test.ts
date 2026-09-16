@@ -120,4 +120,24 @@ describe('validateOutboundUrl', () => {
     const result = await validateOutboundUrl('https://[2606:4700:4700::1111]/');
     expect(result.addresses).toEqual(['2606:4700:4700::1111']);
   });
+
+  it('rejects loopback when ALLOW_LOOPBACK_PROVIDERS is false', async () => {
+    const previous = process.env.ALLOW_LOOPBACK_PROVIDERS;
+    process.env.ALLOW_LOOPBACK_PROVIDERS = 'false';
+    try {
+      expect(() => validateUrl('http://127.0.0.1:11434')).toThrow(/Loopback URLs are not allowed/);
+      await expect(validateOutboundUrl('http://localhost:11434')).rejects.toThrow(
+        /Loopback URLs are not allowed/,
+      );
+    } finally {
+      if (previous === undefined) delete process.env.ALLOW_LOOPBACK_PROVIDERS;
+      else process.env.ALLOW_LOOPBACK_PROVIDERS = previous;
+    }
+  });
+
+  it('never allows loopback when allowLoopback is false, even in development', async () => {
+    await expect(
+      validateOutboundUrl('http://127.0.0.1/secret', { allowLoopback: false }),
+    ).rejects.toThrow(/Loopback URLs are not allowed/);
+  });
 });

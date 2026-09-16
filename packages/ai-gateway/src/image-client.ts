@@ -217,7 +217,9 @@ export async function generateImage(
   if (item.url && item.url.length > 0) {
     const imageUrl = item.url;
     try {
-      await validateOutboundUrl(imageUrl);
+      // Provider-returned download URLs must never hit loopback even when the
+      // operator allows local Ollama as a chat endpoint.
+      await validateOutboundUrl(imageUrl, { allowLoopback: false });
     } catch (e) {
       throw new ProviderError(
         'openai',

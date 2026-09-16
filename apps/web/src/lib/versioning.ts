@@ -139,6 +139,28 @@ export async function createVersion(
 /**
  * Get the full version timeline for a project, ordered chronologically.
  */
+/** A generation lease older than this is treated as abandoned. */
+export const GENERATION_LEASE_STALE_MS = 20 * 60 * 1000;
+
+export async function tryClaimGenerationLease(db: DbClient, projectId: string): Promise<boolean> {
+  const cutoff = new Date(Date.now() - GENERATION_LEASE_STALE_MS);
+  const lease = await db.project.updateMany({
+    where: {
+      id: projectId,
+      OR: [{ generationStartedAt: null }, { generationStartedAt: { lt: cutoff } }],
+    },
+    data: { generationStartedAt: new Date() },
+  });
+  return lease.count > 0;
+}
+
+export async function clearGenerationLease(db: DbClient, projectId: string): Promise<void> {
+  await db.project.update({
+    where: { id: projectId },
+    data: { generationStartedAt: null },
+  });
+}
+
 export async function getVersions(projectId: string): Promise<VersionInfo[]> {
   const versions = await getDb().projectSnapshot.findMany({
     where: { projectId },

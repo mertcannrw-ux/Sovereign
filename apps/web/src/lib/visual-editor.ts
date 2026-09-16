@@ -127,6 +127,32 @@ function visualEditorRuntime() {
     return ['body', ...parts].join(' > ');
   }
 
+  function spaSourceFile() {
+    const moduleScript = document.querySelector('script[type="module"][src]');
+    const src = moduleScript?.getAttribute('src') ?? '';
+    if (src.includes('/src/main.') || document.getElementById('root')) return 'src/App.tsx';
+    return null;
+  }
+
+  function veSource(element: Element) {
+    let current: Element | null = element;
+    while (current) {
+      const veId = current.getAttribute('data-ve-id');
+      if (veId) {
+        const match = veId.match(/^ve-(.+)-(\d+)$/);
+        const base = match?.[1];
+        if (base) {
+          if (base.endsWith('.tsx') || base.endsWith('.jsx') || base.endsWith('.ts')) {
+            return base.includes('/') ? base : `src/${base}`;
+          }
+          return `src/${base}.tsx`;
+        }
+      }
+      current = current.parentElement;
+    }
+    return spaSourceFile();
+  }
+
   function describe(element: Element) {
     const htmlElement = element as HTMLElement;
     const text = (htmlElement.innerText || element.textContent || '')
@@ -134,7 +160,8 @@ function visualEditorRuntime() {
       .trim()
       .slice(0, 240);
     const sourceFile =
-      location.pathname === '/' ? 'index.html' : location.pathname.replace(/^\//, '');
+      veSource(element) ??
+      (location.pathname === '/' ? 'index.html' : location.pathname.replace(/^\//, ''));
     const cleanClone = element.cloneNode(true) as Element;
     cleanClone.removeAttribute('data-sovereign-hovered');
     cleanClone.removeAttribute('data-sovereign-selected');
@@ -145,6 +172,7 @@ function visualEditorRuntime() {
       text,
       selector: cssPath(element),
       sourceFile,
+      veId: element.getAttribute('data-ve-id'),
       outerHTML: cleanClone.outerHTML.slice(0, 2000),
     };
   }

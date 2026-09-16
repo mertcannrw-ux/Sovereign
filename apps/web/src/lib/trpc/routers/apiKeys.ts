@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
-import { getProvider, SsrfError, validateUrl } from '@app-builder/ai-gateway';
+import { getProvider, SsrfError, validateOutboundUrl } from '@app-builder/ai-gateway';
 import { protectedProcedure, router } from '../trpc';
 import { encryptApiKey, decryptApiKey, maskApiKey } from '@/lib/crypto';
 import { checkRateLimit } from '@/server/rate-limit';
@@ -79,7 +79,7 @@ export const apiKeysRouter = router({
       }
       if (input.baseUrl) {
         try {
-          validateUrl(input.baseUrl);
+          await validateOutboundUrl(input.baseUrl);
         } catch (error) {
           throw new TRPCError({
             code: 'BAD_REQUEST',

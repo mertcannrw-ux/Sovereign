@@ -39,5 +39,5 @@ export {
   rewriteLucideSource,
 } from './lucide-map';
 export { getPreviewAssetUrls, replacePreviewAssetUrls } from './preview-assets';
-export { sanitizeEnvExample } from './stack-seeds';
+export { sanitizeEnvExample, SEEDS } from './stack-seeds';
 export { default as stackLock } from './stack-lock.json';

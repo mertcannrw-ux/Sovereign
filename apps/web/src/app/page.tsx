@@ -54,7 +54,7 @@ const workflow = [
   {
     number: '04',
     title: 'Ship without lock-in',
-    copy: 'Deploy in a click, sync to GitHub, or export the entire codebase whenever you want.',
+    copy: 'Export the entire codebase or sync to GitHub whenever you want. Hosted deploy connects when Vercel is configured.',
   },
 ];
 

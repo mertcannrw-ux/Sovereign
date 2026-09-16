@@ -67,7 +67,10 @@ export default function TemplatesPage() {
   async function instantiateTemplate(template: (typeof templates)[number]) {
     if (creatingId) return;
     const orgId = orgsQuery.data?.[0]?.id;
-    if (!orgId) return;
+    if (!orgId) {
+      setCreateError('Create or join an organization before using a template.');
+      return;
+    }
     setCreatingId(template.id);
     setCreateError(null);
     try {
@@ -75,6 +78,7 @@ export default function TemplatesPage() {
         name: template.name,
         description: template.description ?? undefined,
         organizationId: orgId,
+        templateId: template.id,
       });
       router.push(`/project/${project.id}`);
     } catch {

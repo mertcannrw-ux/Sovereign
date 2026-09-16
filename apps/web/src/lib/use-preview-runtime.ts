@@ -94,7 +94,8 @@ export function usePreviewRuntime({
     setFilesRevision((n) => n + 1);
   }, []);
 
-  if (projectId !== undefined && projectIdRef.current !== projectId) {
+  const previousProjectId = projectIdRef.current;
+  if (projectId !== undefined && previousProjectId !== projectId) {
     projectIdRef.current = projectId;
     filesRef.current.clear();
     pendingWritesRef.current = new Map();
@@ -315,6 +316,14 @@ export function usePreviewRuntime({
     lastPreviewRefreshRef.current = 0;
     setPreviewKey(0);
   }, [projectId]);
+
+  const seededProjectRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!enabled || initialFiles.length === 0 || !projectId) return;
+    if (seededProjectRef.current === projectId) return;
+    seededProjectRef.current = projectId;
+    void applyFiles(initialFiles);
+  }, [applyFiles, enabled, initialFiles, projectId]);
 
   useEffect(() => {
     return () => {

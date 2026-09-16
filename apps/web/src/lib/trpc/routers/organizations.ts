@@ -248,6 +248,18 @@ export const organizationsRouter = router({
       }
 
       const result = await ctx.db.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT id FROM organizations WHERE id = ${input.organizationId} FOR UPDATE`;
+        const locked = await tx.organization.findUnique({
+          where: { id: input.organizationId },
+          select: { ownerId: true },
+        });
+        if (!locked || locked.ownerId !== ctx.user.id) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'Only the current owner can transfer ownership.',
+          });
+        }
+
         // Demote current owner to ADMIN
         await tx.organizationMember.update({
           where: {

@@ -1036,6 +1036,7 @@ export class GoogleProvider implements Provider {
     const body = rawBody.pipeThrough(createBodySizeLimit(MAX_BODY_BYTES));
 
     let accumulatedContent = '';
+    let finishReason: AIStreamChunk['finishReason'] = 'stop';
     let finalUsage: AICompletionResponse['usage'] = {
       promptTokens: 0,
       completionTokens: 0,
@@ -1090,13 +1091,14 @@ export class GoogleProvider implements Provider {
       ) {
         const mapped: AIStreamChunk['finishReason'] =
           rawFinish === 'STOP' ? 'stop' : rawFinish === 'MAX_TOKENS' ? 'length' : 'stop'; // SAFETY → treat as stop from our perspective
+        finishReason = mapped;
         yield { content: '', finishReason: mapped };
       }
     }
 
     return {
       content: accumulatedContent,
-      finishReason: 'stop',
+      finishReason,
       usage: finalUsage,
     };
   }
@@ -1309,6 +1311,7 @@ export class OllamaProvider implements Provider {
     const body = rawBody.pipeThrough(createBodySizeLimit(MAX_BODY_BYTES));
 
     let accumulatedContent = '';
+    let finishReason: AIStreamChunk['finishReason'] = 'stop';
     let finalUsage: AICompletionResponse['usage'] = {
       promptTokens: 0,
       completionTokens: 0,
@@ -1339,12 +1342,16 @@ export class OllamaProvider implements Provider {
           completionTokens: safeNumber(parsed['eval_count']),
           totalTokens: safeNumber(parsed['prompt_eval_count']) + safeNumber(parsed['eval_count']),
         };
+        const doneReason = safeString(parsed['done_reason']);
+        if (doneReason === 'length' || doneReason === 'max_tokens') {
+          finishReason = 'length';
+        }
       }
     }
 
     return {
       content: accumulatedContent,
-      finishReason: 'stop',
+      finishReason,
       usage: finalUsage,
     };
   }
