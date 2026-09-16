@@ -62,7 +62,8 @@ export interface UsePreviewRuntimeResult {
   handleRuntimeRequest: (payload: RuntimeRequestPayload) => Promise<void>;
 }
 
-function sortPreviewFiles(files: PreviewFile[]): PreviewFile[] {
+/** Canonical display order for project files: entry HTML first, then the rest. */
+export function sortPreviewFiles(files: PreviewFile[]): PreviewFile[] {
   return [...files].sort((a, b) => {
     const aScore = a.path === 'index.html' ? 0 : a.path.endsWith('.html') ? 1 : 2;
     const bScore = b.path === 'index.html' ? 0 : b.path.endsWith('.html') ? 1 : 2;

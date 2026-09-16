@@ -11,10 +11,12 @@ import { parseResponse, validateChanges, validatePath } from '@app-builder/codeg
 import {
   createVersion,
   getVersions,
+  reconstructVersionFiles,
   restoreVersion,
   parseFileDiffsFromResponse,
   tryClaimGenerationLease,
   clearGenerationLease,
+  VersionNotFoundError,
 } from '@/lib/versioning';
 import type { VersionDiffEntry } from '@/lib/versioning';
 import { persistProjectFiles } from '@/lib/project-files';
@@ -314,7 +316,31 @@ export const chatRouter = router({
     .query(async ({ ctx, input }) => {
       await requireProjectRole(ctx, input.projectId, 'VIEWER');
 
-      return getVersions(input.projectId);
+      return getVersions(ctx.db, input.projectId);
+    }),
+
+  /**
+   * Reconstruct the files of a single version without applying them, so the
+   * timeline can show what a restore would write.
+   */
+  getVersionFiles: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.string(),
+        versionNumber: z.number().int().positive(),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      await requireProjectRole(ctx, input.projectId, 'VIEWER');
+
+      try {
+        return await reconstructVersionFiles(ctx.db, input.projectId, input.versionNumber);
+      } catch (error) {
+        if (error instanceof VersionNotFoundError) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: error.message });
+        }
+        throw error;
+      }
     }),
 
   /**
@@ -342,7 +368,12 @@ export const chatRouter = router({
       }
 
       try {
-        return await restoreVersion(input.projectId, input.versionNumber);
+        return await restoreVersion(ctx.db, input.projectId, input.versionNumber);
+      } catch (error) {
+        if (error instanceof VersionNotFoundError) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: error.message });
+        }
+        throw error;
       } finally {
         await clearGenerationLease(ctx.db, input.projectId, leaseToken).catch((error) => {
           console.error('chat.restoreVersion.lease_release_failed', error);

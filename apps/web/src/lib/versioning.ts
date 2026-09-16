@@ -1,5 +1,4 @@
 import { Prisma } from '@prisma-generated/prisma/client';
-import { getDb } from '@/lib/db';
 import { createHash } from 'node:crypto';
 import type { DbClient } from '@/lib/project-files';
 
@@ -12,18 +11,35 @@ export interface VersionDiffEntry {
   after?: string;
 }
 
-export interface VersionInfo {
+/** Marker written to `message` on snapshots created by {@link restoreVersion}. */
+export const RESTORE_VERSION_MESSAGE_PREFIX = 'Restored version ';
+
+/** Snapshot metadata for the version timeline. Deliberately excludes manifests. */
+export interface VersionSummary {
   id: string;
   versionNumber: number;
-  manifest: unknown;
   createdAt: Date;
-  sourceMessageId: string | null;
-  /** Set only for restore-point snapshots (e.g. "Restored version 3"). */
+  /** Snapshot message; restore points carry "Restored version N". */
   message: string | null;
+  isRestore: boolean;
+  /** Number of file operations recorded in the snapshot. */
+  fileCount: number;
 }
+
 export interface RestoredProjectFile {
   path: string;
   content: string;
+}
+
+/** Raised when a version number does not exist for the project. */
+export class VersionNotFoundError extends Error {
+  constructor(
+    readonly projectId: string,
+    readonly versionNumber: number,
+  ) {
+    super(`Version ${versionNumber} not found for this project`);
+    this.name = 'VersionNotFoundError';
+  }
 }
 
 /** Reconstruct the complete filesystem by applying snapshots in chronological order. */
@@ -193,61 +209,80 @@ export async function clearGenerationLease(
   return cleared.count > 0;
 }
 
-export async function getVersions(projectId: string): Promise<VersionInfo[]> {
-  const versions = await getDb().projectSnapshot.findMany({
+export async function getVersions(db: DbClient, projectId: string): Promise<VersionSummary[]> {
+  const versions = await db.projectSnapshot.findMany({
     where: { projectId },
     orderBy: { versionNumber: 'asc' },
+    select: { id: true, versionNumber: true, createdAt: true, message: true, manifest: true },
   });
 
   return versions.map((v) => ({
     id: v.id,
     versionNumber: v.versionNumber,
-    manifest: v.manifest,
     createdAt: v.createdAt,
-    sourceMessageId: v.sourceMessageId,
     message: v.message,
+    isRestore: v.message?.startsWith(RESTORE_VERSION_MESSAGE_PREFIX) ?? false,
+    fileCount: Array.isArray(v.manifest) ? v.manifest.length : 0,
   }));
 }
 
 /**
- * Restore a project to a specific version by recording a restore event.
- * Creates a new version entry that documents the rollback.
+ * Reconstruct the complete filesystem as of `versionNumber` by replaying every
+ * snapshot up to and including it. This is exactly what a restore applies, so
+ * the timeline can show a version before the user commits to it.
  */
-export async function restoreVersion(
+export async function reconstructVersionFiles(
+  db: DbClient,
   projectId: string,
   versionNumber: number,
-): Promise<{ id: string; versionNumber: number; files: RestoredProjectFile[] }> {
-  const snapshots = await getDb().projectSnapshot.findMany({
+): Promise<RestoredProjectFile[]> {
+  const snapshots = await db.projectSnapshot.findMany({
     where: { projectId, versionNumber: { lte: versionNumber } },
     orderBy: { versionNumber: 'asc' },
     select: { versionNumber: true, manifest: true },
   });
   if (!snapshots.some((snapshot) => snapshot.versionNumber === versionNumber)) {
-    throw new Error(`Version ${versionNumber} not found for this project`);
+    throw new VersionNotFoundError(projectId, versionNumber);
   }
 
-  const files = reconstructProjectFiles(snapshots.map((snapshot) => snapshot.manifest));
-  const currentFiles = await getDb().projectFile.findMany({
-    where: { projectId },
-    select: { path: true },
-  });
-  const restoredPaths = new Set(files.map((file) => file.path));
-  const manifest = [
-    ...files.map((file) => ({
-      file: file.path,
-      operation: 'update' as const,
-      after: file.content,
-    })),
-    ...currentFiles
-      .filter((file) => !restoredPaths.has(file.path))
-      .map((file) => ({ file: file.path, operation: 'delete' as const })),
-  ];
-  const version = await getDb().$transaction(async (tx) => {
-    // Serialize concurrent restores to the same project — same pattern as
-    // createVersion. Without this, two simultaneous restores race the
-    // versionNumber allocation (both read N, both write N+1).
-    const lockKey = projectIdToAdvisoryKey(projectId);
+  return reconstructProjectFiles(snapshots.map((snapshot) => snapshot.manifest));
+}
+
+/**
+ * Restore a project to a specific version by recording a restore event.
+ * Creates a new version entry that documents the rollback.
+ *
+ * Reads and writes run in one transaction under the project's advisory lock so
+ * a concurrent generation cannot interleave between the reconstruction and the
+ * file rewrite, and so two restores cannot allocate the same version number.
+ */
+export async function restoreVersion(
+  db: DbClient,
+  projectId: string,
+  versionNumber: number,
+): Promise<{ id: string; versionNumber: number; files: RestoredProjectFile[] }> {
+  const lockKey = projectIdToAdvisoryKey(projectId);
+
+  return db.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(${lockKey})`;
+
+    const files = await reconstructVersionFiles(tx, projectId, versionNumber);
+    const currentFiles = await tx.projectFile.findMany({
+      where: { projectId },
+      select: { path: true },
+    });
+    const restoredPaths = new Set(files.map((file) => file.path));
+    const manifest = [
+      ...files.map((file) => ({
+        file: file.path,
+        operation: 'update' as const,
+        after: file.content,
+      })),
+      ...currentFiles
+        .filter((file) => !restoredPaths.has(file.path))
+        .map((file) => ({ file: file.path, operation: 'delete' as const })),
+    ];
+
     await tx.projectFile.deleteMany({ where: { projectId } });
     if (files.length > 0) {
       await tx.projectFile.createMany({
@@ -259,25 +294,26 @@ export async function restoreVersion(
         })),
       });
     }
+
     const latestVersion = await tx.projectSnapshot.findFirst({
       where: { projectId },
       orderBy: { versionNumber: 'desc' },
       select: { versionNumber: true },
     });
     const newVersionNumber = (latestVersion?.versionNumber ?? 0) + 1;
-    return tx.projectSnapshot.create({
+    const version = await tx.projectSnapshot.create({
       data: {
         projectId,
         versionNumber: newVersionNumber,
         manifest: manifest as Prisma.InputJsonValue,
         sourceMessageId: null,
         createdById: null,
-        message: `Restored version ${versionNumber}`,
+        message: `${RESTORE_VERSION_MESSAGE_PREFIX}${versionNumber}`,
       },
     });
-  });
 
-  return { id: version.id, versionNumber: version.versionNumber, files };
+    return { id: version.id, versionNumber: version.versionNumber, files };
+  });
 }
 
 // ─── AI Response Parsing ───────────────────────────────

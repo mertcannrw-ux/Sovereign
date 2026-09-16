@@ -12,7 +12,7 @@ import { VersionTimeline } from '@/components/version-timeline';
 import type { VersionTimelineEntry } from '@/components/version-timeline';
 import { trpc } from '@/lib/trpc/client';
 import { getPreviewCursorTarget, useSmoothCursor } from '@/lib/use-smooth-cursor';
-import { usePreviewRuntime } from '@/lib/use-preview-runtime';
+import { sortPreviewFiles, usePreviewRuntime } from '@/lib/use-preview-runtime';
 import { useGeneration } from '@/lib/use-generation';
 import { ChatPanel } from '@/components/project/chat-panel';
 import {
@@ -23,7 +23,16 @@ import {
 import { PreviewPane } from '@/components/project/preview-pane';
 import { CodePane } from '@/components/project/code-pane';
 import type { SelectedPreviewElement } from '@/components/project/types';
-import { ArrowLeft, Settings, Rocket, Code, Eye, RefreshCw, Crosshair } from 'lucide-react';
+import {
+  ArrowLeft,
+  Settings,
+  Rocket,
+  Code,
+  Eye,
+  RefreshCw,
+  Crosshair,
+  History,
+} from 'lucide-react';
 
 const LEFT_PANEL_MIN = 20;
 const LEFT_PANEL_MAX = 75;
@@ -55,7 +64,8 @@ function ProjectWorkspace() {
   const [activeTab, setActiveTab] = useState('preview');
   const [mobilePane, setMobilePane] = useState<'chat' | 'workspace'>('chat');
   const [reasoningEffort, setReasoningEffort] = useState('auto');
-  const [isRestoring, setIsRestoring] = useState(false);
+  const [selectedVersion, setSelectedVersion] = useState(0);
+  const [snapshotFilePath, setSnapshotFilePath] = useState<string | null>(null);
   const [isEditMode, setIsEditMode] = useState(false);
   const [selectedPreviewElement, setSelectedPreviewElement] =
     useState<SelectedPreviewElement | null>(null);
@@ -208,6 +218,48 @@ function ProjectWorkspace() {
     generation.setCurrentVersion(Math.max(...versions.map((v) => v.versionNumber)));
   }, [generation.currentVersion, generation.setCurrentVersion, versionsQuery.data]);
 
+  // The inspected version follows the project's version: the initial load, a
+  // generation, and a restore all land on the newest snapshot.
+  useEffect(() => {
+    if (generation.currentVersion === 0) return;
+    setSelectedVersion(generation.currentVersion);
+    setSnapshotFilePath(null);
+  }, [generation.currentVersion]);
+
+  const viewingOlderVersion = selectedVersion > 0 && selectedVersion !== generation.currentVersion;
+  const versionFilesQuery = trpc.chat.getVersionFiles.useQuery(
+    { projectId, versionNumber: selectedVersion },
+    { enabled: viewingOlderVersion },
+  );
+  const snapshotFiles = useMemo(
+    () => (viewingOlderVersion ? sortPreviewFiles(versionFilesQuery.data ?? []) : []),
+    [versionFilesQuery.data, viewingOlderVersion],
+  );
+  const snapshotActiveFile = useMemo(() => {
+    const file =
+      snapshotFiles.find((candidate) => candidate.path === snapshotFilePath) ??
+      snapshotFiles.find((candidate) => candidate.path.endsWith('.html')) ??
+      snapshotFiles[0];
+    return file ? { path: file.path, content: file.content, line: 1, column: 0 } : null;
+  }, [snapshotFilePath, snapshotFiles]);
+  const snapshotEmptyMessage = versionFilesQuery.isLoading
+    ? 'Loading version files…'
+    : versionFilesQuery.isError
+      ? 'Could not load this version.'
+      : 'This version has no files.';
+
+  const handleSelectVersion = useCallback(
+    (versionNumber: number) => {
+      setSelectedVersion(versionNumber);
+      setSnapshotFilePath(null);
+      if (versionNumber !== generation.currentVersion) {
+        setIsEditMode(false);
+        setActiveTab('code');
+      }
+    },
+    [generation.currentVersion],
+  );
+
   const seenProjectIdRef = useRef(projectId);
   useEffect(() => {
     if (seenProjectIdRef.current === projectId) return;
@@ -239,27 +291,23 @@ function ProjectWorkspace() {
 
   const handleRestoreVersion = useCallback(
     async (versionNumber: number) => {
-      setIsRestoring(true);
-      try {
-        const restored = await restoreMutation.mutateAsync({ projectId, versionNumber });
-        await preview.replaceFiles(preview.filesList, restored.files);
-        const primaryRestored =
-          restored.files.find((f) => f.path === 'index.html') ??
-          restored.files.find((f) => f.path.endsWith('.html')) ??
-          restored.files[0];
-        if (primaryRestored) {
-          generation.setActiveFile({
-            path: primaryRestored.path,
-            content: primaryRestored.content,
-            line: 1,
-            column: 0,
-          });
-        }
-        generation.setCurrentVersion(restored.versionNumber);
-        await Promise.all([versionsQuery.refetch(), filesQuery.refetch()]);
-      } finally {
-        setIsRestoring(false);
+      const restored = await restoreMutation.mutateAsync({ projectId, versionNumber });
+      await preview.replaceFiles(preview.filesList, restored.files);
+      const primaryRestored =
+        restored.files.find((f) => f.path === 'index.html') ??
+        restored.files.find((f) => f.path.endsWith('.html')) ??
+        restored.files[0];
+      if (primaryRestored) {
+        generation.setActiveFile({
+          path: primaryRestored.path,
+          content: primaryRestored.content,
+          line: 1,
+          column: 0,
+        });
       }
+      generation.setCurrentVersion(restored.versionNumber);
+      setActiveTab('preview');
+      await Promise.all([versionsQuery.refetch(), filesQuery.refetch()]);
     },
     [filesQuery, generation, preview, projectId, restoreMutation, versionsQuery],
   );
@@ -280,8 +328,9 @@ function ProjectWorkspace() {
         id: version.id,
         versionNumber: version.versionNumber,
         createdAt: new Date(version.createdAt),
-        fileCount: Object.keys(version.manifest as Record<string, string>).length,
-        isRestore: false,
+        fileCount: version.fileCount,
+        message: version.message,
+        isRestore: version.isRestore,
       })),
     [versionsQuery.data],
   );
@@ -369,9 +418,10 @@ function ProjectWorkspace() {
         <VersionTimeline
           versions={versionTimelineEntries}
           currentVersion={generation.currentVersion}
-          onSelectVersion={() => undefined}
+          selectedVersion={selectedVersion}
+          onSelectVersion={handleSelectVersion}
           onRestoreVersion={handleRestoreVersion}
-          isLoading={versionsQuery.isLoading || isRestoring}
+          isLoading={versionsQuery.isLoading}
         />
       </div>
 
@@ -518,42 +568,62 @@ function ProjectWorkspace() {
           </div>
 
           {activeTab === 'preview' && (
-            <PreviewPane
-              url={filesQuery.isError ? null : preview.url}
-              status={filesQuery.isError ? 'error' : preview.status}
-              logs={preview.logs}
-              error={
-                filesQuery.isError
-                  ? (filesQuery.error?.message ?? 'Could not load project files')
-                  : preview.error
-              }
-              engine={preview.engine}
-              disclosure={preview.disclosure}
-              previewKey={preview.previewKey}
-              isEditMode={isEditMode}
-              isSending={generation.isSending}
-              previewCursorTarget={previewCursorTarget}
-              selectedPreviewElement={selectedPreviewElement}
-              onSelectedElementChange={setSelectedPreviewElement}
-              onElementSelected={() => requestAnimationFrame(() => inputRef.current?.focus())}
-              onQuickEdit={handleQuickEdit}
-              onRetry={filesQuery.isError ? () => void filesQuery.refetch() : preview.retry}
-            />
+            <>
+              {viewingOlderVersion ? (
+                <div
+                  role="status"
+                  className="flex items-center gap-2 border-b border-warning/30 bg-warning-light px-4 py-1.5 text-[11px] text-warning"
+                >
+                  <History className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  <p>
+                    The preview shows your current files. Use Restore v{selectedVersion} in the
+                    version bar to apply this snapshot.
+                  </p>
+                </div>
+              ) : null}
+              <PreviewPane
+                url={filesQuery.isError ? null : preview.url}
+                status={filesQuery.isError ? 'error' : preview.status}
+                logs={preview.logs}
+                error={
+                  filesQuery.isError
+                    ? (filesQuery.error?.message ?? 'Could not load project files')
+                    : preview.error
+                }
+                engine={preview.engine}
+                disclosure={preview.disclosure}
+                previewKey={preview.previewKey}
+                isEditMode={isEditMode}
+                isSending={generation.isSending}
+                previewCursorTarget={previewCursorTarget}
+                selectedPreviewElement={selectedPreviewElement}
+                onSelectedElementChange={setSelectedPreviewElement}
+                onElementSelected={() => requestAnimationFrame(() => inputRef.current?.focus())}
+                onQuickEdit={handleQuickEdit}
+                onRetry={filesQuery.isError ? () => void filesQuery.refetch() : preview.retry}
+              />
+            </>
           )}
           {activeTab === 'code' && (
             <CodePane
-              files={preview.filesList}
-              activeFile={generation.activeFile}
-              isSending={generation.isSending}
-              onSelectFile={(file) =>
+              files={viewingOlderVersion ? snapshotFiles : preview.filesList}
+              activeFile={viewingOlderVersion ? snapshotActiveFile : generation.activeFile}
+              isSending={viewingOlderVersion ? false : generation.isSending}
+              onSelectFile={(file) => {
+                if (viewingOlderVersion) {
+                  setSnapshotFilePath(file.path);
+                  return;
+                }
                 generation.setActiveFile({
                   path: file.path,
                   content: file.content,
                   line: 1,
                   column: 0,
-                })
-              }
+                });
+              }}
               cursor={smoothCursor}
+              badge={viewingOlderVersion ? `Version ${selectedVersion} snapshot` : null}
+              emptyMessage={viewingOlderVersion ? snapshotEmptyMessage : undefined}
             />
           )}
         </div>

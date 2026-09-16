@@ -16,11 +16,22 @@ export interface CodePaneProps {
     visible: boolean;
     pos: { line: number; column: number };
   };
+  /** Read-only badge shown in the header, e.g. "Version 5 snapshot". */
+  badge?: string | null;
+  /** Shown when there is no file to display. */
+  emptyMessage?: string;
 }
 
-export function CodePane({ files, activeFile, isSending, onSelectFile, cursor }: CodePaneProps) {
-  const rawContent =
-    activeFile?.content ?? files[0]?.content ?? 'Describe the app you want to build.';
+export function CodePane({
+  files,
+  activeFile,
+  isSending,
+  onSelectFile,
+  cursor,
+  badge = null,
+  emptyMessage = 'Describe the app you want to build.',
+}: CodePaneProps) {
+  const rawContent = activeFile?.content ?? files[0]?.content ?? emptyMessage;
   const isTruncated = rawContent.length > MAX_CODE_PREVIEW_CHARS;
   const displayContent = isTruncated ? rawContent.slice(0, MAX_CODE_PREVIEW_CHARS) : rawContent;
 
@@ -50,8 +61,15 @@ export function CodePane({ files, activeFile, isSending, onSelectFile, cursor }:
         ))}
       </div>
       <div className="relative min-w-0 flex-1 overflow-auto">
-        <div className="sticky top-0 z-10 border-b border-white/10 bg-[#181818] px-4 py-2 font-mono text-[11px] text-[#9ca3af]">
-          {activeFile?.path ?? files[0]?.path ?? 'No generated files'}
+        <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-white/10 bg-[#181818] px-4 py-2 font-mono text-[11px] text-[#9ca3af]">
+          <span className="truncate">
+            {activeFile?.path ?? files[0]?.path ?? 'No generated files'}
+          </span>
+          {badge ? (
+            <span className="shrink-0 rounded-full border border-warning/40 bg-warning-light px-2 py-0.5 font-sans text-[10px] text-warning">
+              {badge}
+            </span>
+          ) : null}
         </div>
         <pre className="max-h-[600px] min-h-full overflow-auto p-4 font-mono text-xs leading-5 text-[#d4d4d4]">
           <code>{displayContent}</code>
