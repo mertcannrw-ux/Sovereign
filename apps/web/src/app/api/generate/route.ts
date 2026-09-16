@@ -336,1180 +336,1209 @@ export async function POST(request: NextRequest) {
     return Response.json(body, { status });
   };
 
-  let providerName: AIProvider;
+  // Everything from here until the stream response is handed back is fallible:
+  // key decryption, DB reads/writes and R2 configuration can all throw. Any
+  // throw must release the lease, otherwise the project stays blocked until the
+  // stale cutoff passes. Once the response is constructed the stream owns the
+  // lease and releases it from its own `finally`.
+  let leaseTransferredToStream = false;
   try {
-    providerName = parseProvider(body.modelProvider);
-  } catch (error) {
-    return failWithLeaseReleased(
-      { error: error instanceof Error ? error.message : 'Invalid provider' },
-      400,
-    );
-  }
-  const storedKey = await db.apiKey.findFirst({
-    where: { userId: session.user.id, provider: providerName },
-  });
-  if (!storedKey) {
-    return failWithLeaseReleased({ error: `No API key configured for ${providerName}` }, 400);
-  }
-  const apiKey = decryptApiKey(storedKey.encryptedKey);
-  const imageConfig = await db.imageProviderConfig.findFirst({
-    where: { userId: session.user.id, enabled: true },
-  });
-  const r2Status = getR2ConfigStatus();
-  // Image generation needs somewhere durable to put bytes. The local-disk
-  // fallback is fine for local development but on a deployed (ephemeral)
-  // filesystem the asset would vanish on the next deploy while its DB row
-  // survived — so production requires real object storage.
-  const isAssetStorageDurable = r2Status.isConfigured || process.env.NODE_ENV !== 'production';
-  const isImageGenReady = Boolean(imageConfig && isAssetStorageDurable);
-
-  const attachmentParts: string[] = [];
-  let attachmentBytes = 0;
-  for (const file of Array.isArray(body.files) ? body.files.slice(0, 10) : []) {
-    const path = (file.path ?? '').trim().slice(0, 256);
-    const content = file.content ?? '';
-    if (!path || !content) continue;
-    const contentBytes = Buffer.byteLength(content, 'utf8');
-    if (contentBytes > 100 * 1024) continue;
-    attachmentBytes += contentBytes;
-    attachmentParts.push(`--- ${path} ---\n${content}`);
-  }
-  if (attachmentBytes > MAX_ATTACHMENT_BYTES) {
-    return failWithLeaseReleased({ error: 'Attachments exceed 512 KB total' }, 400);
-  }
-  let effectivePrompt = prompt ?? '';
-  if (body.directionResponse) {
-    const { action, setId, directionId } = body.directionResponse;
-    const directionSet = await db.designDirectionSet.findFirst({
-      where: { id: setId, projectId },
-      include: { directions: { include: { previewAsset: true } } },
-    });
-    if (!directionSet) {
-      return failWithLeaseReleased({ error: 'Design direction set not found' }, 404);
+    let providerName: AIProvider;
+    try {
+      providerName = parseProvider(body.modelProvider);
+    } catch (error) {
+      return failWithLeaseReleased(
+        { error: error instanceof Error ? error.message : 'Invalid provider' },
+        400,
+      );
     }
+    const storedKey = await db.apiKey.findFirst({
+      where: { userId: session.user.id, provider: providerName },
+    });
+    if (!storedKey) {
+      return failWithLeaseReleased({ error: `No API key configured for ${providerName}` }, 400);
+    }
+    const apiKey = decryptApiKey(storedKey.encryptedKey);
+    const imageConfig = await db.imageProviderConfig.findFirst({
+      where: { userId: session.user.id, enabled: true },
+    });
+    const r2Status = getR2ConfigStatus();
+    // Image generation needs somewhere durable to put bytes. The local-disk
+    // fallback is fine for local development but on a deployed (ephemeral)
+    // filesystem the asset would vanish on the next deploy while its DB row
+    // survived — so production requires real object storage.
+    const isAssetStorageDurable = r2Status.isConfigured || process.env.NODE_ENV !== 'production';
+    const isImageGenReady = Boolean(imageConfig && isAssetStorageDurable);
 
-    if (action === 'select') {
-      if (!directionId) return failWithLeaseReleased({ error: 'Missing directionId' }, 400);
-      if (directionSet.status === 'selected') {
-        return failWithLeaseReleased({ error: 'Design direction already selected' }, 400);
-      }
-      const selected = directionSet.directions.find((d) => d.id === directionId);
-      if (!selected) {
-        return failWithLeaseReleased({ error: 'Direction not found in set' }, 404);
-      }
-
-      await db.designDirectionSet.update({
-        where: { id: setId },
-        data: { status: 'selected', selectedDirectionId: directionId },
+    const attachmentParts: string[] = [];
+    let attachmentBytes = 0;
+    for (const file of Array.isArray(body.files) ? body.files.slice(0, 10) : []) {
+      const path = (file.path ?? '').trim().slice(0, 256);
+      const content = file.content ?? '';
+      if (!path || !content) continue;
+      const contentBytes = Buffer.byteLength(content, 'utf8');
+      if (contentBytes > 100 * 1024) continue;
+      attachmentBytes += contentBytes;
+      attachmentParts.push(`--- ${path} ---\n${content}`);
+    }
+    if (attachmentBytes > MAX_ATTACHMENT_BYTES) {
+      return failWithLeaseReleased({ error: 'Attachments exceed 512 KB total' }, 400);
+    }
+    let effectivePrompt = prompt ?? '';
+    if (body.directionResponse) {
+      const { action, setId, directionId } = body.directionResponse;
+      const directionSet = await db.designDirectionSet.findFirst({
+        where: { id: setId, projectId },
+        include: { directions: { include: { previewAsset: true } } },
       });
+      if (!directionSet) {
+        return failWithLeaseReleased({ error: 'Design direction set not found' }, 404);
+      }
 
-      effectivePrompt = `[Selected Visual Direction: "${selected.title}"]\nVisual Brief: ${selected.visualBrief}\nPalette: ${JSON.stringify(selected.palette)}\nTypography: ${JSON.stringify(selected.typography)}\nLayout Notes: ${selected.layoutNotes}${selected.previewAsset?.publicUrl ? `\nHero Asset URL: ${selected.previewAsset.publicUrl}` : ''}\n\n${prompt ? `User Prompt: ${prompt}` : 'Apply the selected visual direction and construct the application.'}`;
-    } else if (action === 'skip') {
-      const readyDir = directionSet.directions.find((d) => d.status === 'ready');
-      if (readyDir) {
+      if (action === 'select') {
+        if (!directionId) return failWithLeaseReleased({ error: 'Missing directionId' }, 400);
+        if (directionSet.status === 'selected') {
+          return failWithLeaseReleased({ error: 'Design direction already selected' }, 400);
+        }
+        const selected = directionSet.directions.find((d) => d.id === directionId);
+        if (!selected) {
+          return failWithLeaseReleased({ error: 'Direction not found in set' }, 404);
+        }
+
         await db.designDirectionSet.update({
           where: { id: setId },
-          data: { status: 'skipped', selectedDirectionId: readyDir.id },
+          data: { status: 'selected', selectedDirectionId: directionId },
         });
-        effectivePrompt = `[Default Visual Direction: "${readyDir.title}"]\nVisual Brief: ${readyDir.visualBrief}\nPalette: ${JSON.stringify(readyDir.palette)}\nTypography: ${JSON.stringify(readyDir.typography)}\nLayout Notes: ${readyDir.layoutNotes}${readyDir.previewAsset?.publicUrl ? `\nHero Asset URL: ${readyDir.previewAsset.publicUrl}` : ''}\n\n${prompt ? `User Prompt: ${prompt}` : 'Apply the default visual direction and construct the application.'}`;
-      } else {
-        // No usable direction — fall back to a plain generation instead of
-        // silently dropping the request.
-        return failWithLeaseReleased(
-          {
-            error:
-              'No ready design direction to skip to. Please regenerate or start a new request.',
-          },
-          400,
-        );
-      }
-    } else if (action === 'regenerate') {
-      // Re-open the set and instruct the agent to propose fresh directions.
-      await db.designDirectionSet.update({
-        where: { id: setId },
-        data: { status: 'pending', selectedDirectionId: null },
-      });
-      effectivePrompt = `${prompt ? `User Prompt: ${prompt}\n\n` : ''}The previous design directions were not satisfactory. Propose 3 NEW and DIFFERENT design directions with propose_design_directions.`;
-    }
-  }
 
-  const userMessage = await db.chatMessage.create({
-    data: {
-      projectId,
-      role: 'user',
-      content: prompt ?? '',
-      model: `${providerName}:${body.modelName}`,
-    },
-  });
-  const history = await db.chatMessage.findMany({
-    where: { projectId, id: { not: userMessage.id } },
-    orderBy: { timestamp: 'desc' },
-    take: 10,
-    select: { role: true, content: true },
-  });
-
-  let stoppedByClient = false;
-  const abortController = new AbortController();
-  request.signal.addEventListener(
-    'abort',
-    () => {
-      stoppedByClient = true;
-      abortController.abort();
-    },
-    { once: true },
-  );
-
-  const isExistingProject = project.files.length > 0;
-
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const send = (event: string, data: unknown) => {
-        try {
-          if (controller.desiredSize !== null) controller.enqueue(encodeEvent(event, data));
-        } catch {
-          // The client disconnected and the stream was closed or errored —
-          // swallow so the agent loop can unwind instead of crashing it.
-        }
-      };
-      const files = new Map(project.files.map((file) => [file.path, file.content]));
-      const provider = getProvider(providerName);
-      const toolsOffered = nativeToolsEnabled(providerName);
-      const messages: AgentMessage[] = [
-        { role: 'system', content: buildAgentSystemPrompt(toolsOffered) },
-        ...history.reverse().map((message) => ({
-          role: message.role === 'assistant' ? ('assistant' as const) : ('user' as const),
-          content: message.content,
-        })),
-        {
-          role: 'user',
-          content: [
-            `Project: ${project.name}`,
-            project.description ? `Description: ${project.description}` : '',
-            `Project state: ${isExistingProject ? 'EXISTING APPLICATION — preserve the current design and make only the requested changes.' : 'EMPTY PROJECT — create the application from the user request.'}`,
-            `Current file manifest:\n${[...files.keys()].join('\n') || '(empty project)'}`,
-            body.editTarget ? `Selected visual element: ${JSON.stringify(body.editTarget)}` : '',
-            attachmentParts.length ? `Attachments:\n${attachmentParts.join('\n\n')}` : '',
-            `Image Generation Capability: ${isImageGenReady ? 'available' : 'unavailable'}${!isImageGenReady ? ` (Reason: ${!imageConfig ? 'Image provider not configured' : r2Status.reason})` : ''}`,
-            `Request: ${effectivePrompt}`,
-          ]
-            .filter(Boolean)
-            .join('\n\n'),
-        },
-      ];
-      let latestVersion = 0;
-      let finalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
-      const runSteps: AgentStep[] = [];
-      let consecutiveProtocolFailures = 0;
-      let imagesGeneratedThisRun = 0;
-      // Tracks how many consecutive turns made no filesystem progress. Prevents a
-      // model that emits `think`/`respond` (or any valid non-mutating action)
-      // forever from running the loop to MAX_ITERATIONS and burning tokens.
-      let consecutiveNoProgressIterations = 0;
-      let activeProvisionalOriginals = new Map<string, string | null>();
-
-      const emitStep = (step: AgentStep) => {
-        const index = runSteps.findIndex((item) => item.id === step.id);
-        if (index < 0) runSteps.push(step);
-        else runSteps[index] = step;
-        send('step', step);
-      };
-      // F-10: batch file mutations within one agent turn into a single
-      // transaction + single version snapshot to avoid DB amplification.
-      let pendingBatch: { change: VersionDiffEntry; step: AgentStep }[] = [];
-      const flushPendingBatch = async () => {
-        if (pendingBatch.length === 0) return;
-        const batch = pendingBatch.splice(0);
-        const persistable = batch.filter((b) => !isSovereignOverlayPath(b.change.file));
-        if (persistable.length === 0) {
-          const completedAt = new Date();
-          for (const { step } of batch) {
-            emitStep({
-              ...step,
-              status: 'complete',
-              completedAt: completedAt.toISOString(),
-              durationMs: completedAt.getTime() - new Date(step.startedAt).getTime(),
-            });
-          }
-          return;
-        }
-        const changes = persistable.map((b) => b.change);
-        const version = await db.$transaction(async (tx) => {
-          for (const ch of changes) {
-            if (ch.operation === 'delete') {
-              await tx.projectFile.deleteMany({ where: { projectId, path: ch.file } });
-            } else {
-              const content = ch.after ?? '';
-              const contentHash = createHash('sha256').update(content).digest('hex');
-              await tx.projectFile.upsert({
-                where: { projectId_path: { projectId, path: ch.file } },
-                create: { projectId, path: ch.file, content, contentHash },
-                update: { content, contentHash },
-              });
-            }
-          }
-          return createVersion(tx, projectId, null, changes);
-        });
-        latestVersion = version.versionNumber;
-        const completedAt = new Date();
-        for (const { step } of batch) {
-          emitStep({
-            ...step,
-            status: 'complete',
-            completedAt: completedAt.toISOString(),
-            durationMs: completedAt.getTime() - new Date(step.startedAt).getTime(),
+        effectivePrompt = `[Selected Visual Direction: "${selected.title}"]\nVisual Brief: ${selected.visualBrief}\nPalette: ${JSON.stringify(selected.palette)}\nTypography: ${JSON.stringify(selected.typography)}\nLayout Notes: ${selected.layoutNotes}${selected.previewAsset?.publicUrl ? `\nHero Asset URL: ${selected.previewAsset.publicUrl}` : ''}\n\n${prompt ? `User Prompt: ${prompt}` : 'Apply the selected visual direction and construct the application.'}`;
+      } else if (action === 'skip') {
+        const readyDir = directionSet.directions.find((d) => d.status === 'ready');
+        if (readyDir) {
+          await db.designDirectionSet.update({
+            where: { id: setId },
+            data: { status: 'skipped', selectedDirectionId: readyDir.id },
           });
-        }
-        for (const { change } of persistable) {
-          send('file-operation', {
-            operation: change.operation,
-            path: change.file,
-            ...(change.after !== undefined ? { content: change.after } : {}),
-            versionNumber: latestVersion,
-          });
-          activeProvisionalOriginals.delete(change.file);
-        }
-      };
-      const persistAutofix = async (changes: StackContractChange[]) => {
-        if (changes.length === 0) return;
-        const versionDiffs: VersionDiffEntry[] = changes.map((ch) => ({
-          file: ch.path,
-          operation: ch.operation,
-          ...(ch.before !== undefined ? { before: ch.before } : {}),
-          ...(ch.content !== undefined ? { after: ch.content } : {}),
-        }));
-        const version = await db.$transaction(async (tx) => {
-          for (const ch of changes) {
-            if (ch.operation === 'delete') {
-              await tx.projectFile.deleteMany({ where: { projectId, path: ch.path } });
-            } else {
-              const content = ch.content ?? '';
-              const contentHash = createHash('sha256').update(content).digest('hex');
-              await tx.projectFile.upsert({
-                where: { projectId_path: { projectId, path: ch.path } },
-                create: { projectId, path: ch.path, content, contentHash },
-                update: { content, contentHash },
-              });
-            }
-          }
-          return createVersion(tx, projectId, null, versionDiffs, { message: 'autofix' });
-        });
-        latestVersion = version.versionNumber;
-        for (const ch of changes) {
-          send('file-operation', {
-            operation: ch.operation,
-            path: ch.path,
-            ...(ch.content !== undefined ? { content: ch.content } : {}),
-            versionNumber: latestVersion,
-          });
-        }
-      };
-      const completeRun = async (content: string) => {
-        const assistantMessage = await db.chatMessage.create({
-          data: {
-            projectId,
-            role: 'assistant',
-            content,
-            model: `${providerName}:${body.modelName}`,
-            tokenUsage: finalUsage,
-            toolCalls: runSteps as never,
-          },
-        });
-        await db.apiKey.update({ where: { id: storedKey.id }, data: { lastUsedAt: new Date() } });
-        send('ready', {
-          userMessage: messageRecord(userMessage),
-          assistantMessage: { ...messageRecord(assistantMessage), tokenUsage: finalUsage },
-          files: [...files].map(([path, content]) => ({ path, content })),
-          versionNumber: latestVersion,
-        });
-      };
-      try {
-        send('phase', { phase: 'planning', label: 'Starting agent' });
-        for (
-          let iteration = 0;
-          MAX_ITERATIONS === null || iteration < MAX_ITERATIONS;
-          iteration += 1
-        ) {
-          if (abortController.signal.aborted) throw new Error('Generation stopped');
-          const iterationStartedAt = new Date();
-          const thinkingStepId = randomUUID();
-          let responseContent = '';
-          let reasoningContent = '';
-          let streamedToolCalls: ToolCall[] = [];
-          let truncatedThisTurn = false;
-          let lastThinkingEmit = 0;
-          let lastFilePreviewEmit = 0;
-          let previewSignature = '';
-          const provisionalOriginals = new Map<string, string | null>();
-          activeProvisionalOriginals = provisionalOriginals;
-          const provisionalSteps = new Map<string, AgentStep>();
-          const thinkingStep: AgentStep = {
-            id: thinkingStepId,
-            kind: 'thinking',
-            title: 'Thinking',
-            detail: 'Analyzing the request…',
-            status: 'running',
-            startedAt: iterationStartedAt.toISOString(),
-          };
-          emitStep(thinkingStep);
-
-          const generator = provider.stream(
-            body.modelName!,
-            trimMessagesForContext(messages),
-            apiKey,
+          effectivePrompt = `[Default Visual Direction: "${readyDir.title}"]\nVisual Brief: ${readyDir.visualBrief}\nPalette: ${JSON.stringify(readyDir.palette)}\nTypography: ${JSON.stringify(readyDir.typography)}\nLayout Notes: ${readyDir.layoutNotes}${readyDir.previewAsset?.publicUrl ? `\nHero Asset URL: ${readyDir.previewAsset.publicUrl}` : ''}\n\n${prompt ? `User Prompt: ${prompt}` : 'Apply the default visual direction and construct the application.'}`;
+        } else {
+          // No usable direction — fall back to a plain generation instead of
+          // silently dropping the request.
+          return failWithLeaseReleased(
             {
-              baseUrl: storedKey.baseUrl ?? undefined,
-              // No artificial per-turn cap by default ("free" runs): the provider
-              // uses its own maximum output length. Operators can still bound
-              // spend with SOVEREIGN_MAX_TOKENS. Truncated outputs are continued
-              // automatically (finishReason === 'length'), never treated as
-              // failures.
-              ...(TURN_MAX_TOKENS !== undefined ? { maxTokens: TURN_MAX_TOKENS } : {}),
-              temperature: 0.2,
-              reasoningEffort: body.reasoningEffort,
-              signal: abortController.signal,
-              ...(toolsOffered ? { tools: SOVEREIGN_TOOLS, toolChoice: 'auto' as const } : {}),
+              error:
+                'No ready design direction to skip to. Please regenerate or start a new request.',
             },
+            400,
           );
-          while (true) {
-            const next = await generator.next();
-            if (next.done) {
-              responseContent = next.value.content || responseContent;
-              if (next.value.reasoning) reasoningContent = next.value.reasoning;
-              if (next.value.finishReason === 'length') truncatedThisTurn = true;
-              if (next.value.toolCalls && next.value.toolCalls.length > 0) {
-                streamedToolCalls = next.value.toolCalls;
-              }
-              finalUsage = {
-                promptTokens: finalUsage.promptTokens + next.value.usage.promptTokens,
-                completionTokens: finalUsage.completionTokens + next.value.usage.completionTokens,
-                totalTokens: finalUsage.totalTokens + next.value.usage.totalTokens,
-              };
-              break;
-            }
-            responseContent += next.value.content;
-            if (next.value.reasoning) reasoningContent += next.value.reasoning;
-            if (next.value.toolCalls && next.value.toolCalls.length > 0) {
-              streamedToolCalls = next.value.toolCalls;
-            }
-            const streamedThought = reasoningContent || getStreamingThought(responseContent);
-            if (streamedThought) {
-              const now = Date.now();
-              if (now - lastThinkingEmit >= 75) {
-                lastThinkingEmit = now;
-                emitStep({ ...thinkingStep, detail: streamedThought });
-                send('thinking', { content: streamedThought });
-              }
-            }
-            const streamedFile =
-              getStreamingFileFromToolCalls(streamedToolCalls) ??
-              getStreamingFileAction(responseContent);
-            if (streamedFile) {
-              const now = Date.now();
-              const provisionalKey = `${streamedFile.type}:${streamedFile.path}`;
-              if (!provisionalSteps.has(provisionalKey)) {
-                const provisionalStep: AgentStep = {
-                  id: randomUUID(),
-                  kind:
-                    streamedFile.type === 'write_file' && !files.has(streamedFile.path)
-                      ? 'write'
-                      : 'edit',
-                  title: `${streamedFile.type === 'write_file' && !files.has(streamedFile.path) ? 'Creating' : 'Editing'} ${streamedFile.path}`,
-                  status: 'running',
-                  startedAt: new Date().toISOString(),
-                };
-                provisionalSteps.set(provisionalKey, provisionalStep);
-                emitStep(provisionalStep);
-              }
-              let previewContent: string | null = null;
-              if (streamedFile.type === 'write_file') {
-                previewContent = streamedFile.content;
-              } else {
-                const existing = files.get(streamedFile.path);
-                if (existing !== undefined) {
-                  try {
-                    previewContent = applyAgentEdit(
-                      existing,
-                      streamedFile.search,
-                      streamedFile.replace,
-                    );
-                  } catch {
-                    previewContent = null;
-                  }
-                }
-              }
-              const signature =
-                previewContent === null ? '' : `${streamedFile.path}:${previewContent.length}`;
-              if (
-                previewContent !== null &&
-                signature !== previewSignature &&
-                now - lastFilePreviewEmit >= 75
-              ) {
-                previewSignature = signature;
-                lastFilePreviewEmit = now;
-                if (!provisionalOriginals.has(streamedFile.path)) {
-                  provisionalOriginals.set(streamedFile.path, files.get(streamedFile.path) ?? null);
-                }
-                send('file-preview', {
-                  operation: files.has(streamedFile.path) ? 'update' : 'create',
-                  path: streamedFile.path,
-                  content: previewContent,
-                });
-              }
-            }
-          }
-          // The provider cut the completion off at its token ceiling (either
-          // SOVEREIGN_MAX_TOKENS or a provider-imposed limit). Parsing a
-          // truncated action would fail; ask the model to finish the output in
-          // the next turn — never counted as a failure, never aborted.
-          if (truncatedThisTurn && responseContent.trim().length > 0) {
-            messages.push({ role: 'assistant', content: responseContent });
-            messages.push({
-              role: 'user',
-              content:
-                'Your previous output was cut off at the token limit. If you were writing a JSON action, output the COMPLETE valid JSON action now without repeating prose. Otherwise continue your previous message exactly where it stopped.',
-            });
-            emitStep({
-              ...thinkingStep,
-              title: 'Output truncated — continuing',
-              detail:
-                'The previous completion hit its token ceiling; asking the model to continue.',
-              status: 'complete',
-              completedAt: new Date().toISOString(),
-              durationMs: Date.now() - iterationStartedAt.getTime(),
-            });
-            continue;
-          }
-          let action: AgentAction;
-          const usedNativeToolCalls = toolsOffered && streamedToolCalls.length > 0;
+        }
+      } else if (action === 'regenerate') {
+        // Re-open the set and instruct the agent to propose fresh directions.
+        await db.designDirectionSet.update({
+          where: { id: setId },
+          data: { status: 'pending', selectedDirectionId: null },
+        });
+        effectivePrompt = `${prompt ? `User Prompt: ${prompt}\n\n` : ''}The previous design directions were not satisfactory. Propose 3 NEW and DIFFERENT design directions with propose_design_directions.`;
+      }
+    }
+
+    const userMessage = await db.chatMessage.create({
+      data: {
+        projectId,
+        role: 'user',
+        content: prompt ?? '',
+        model: `${providerName}:${body.modelName}`,
+      },
+    });
+    const history = await db.chatMessage.findMany({
+      where: { projectId, id: { not: userMessage.id } },
+      orderBy: { timestamp: 'desc' },
+      take: 10,
+      select: { role: true, content: true },
+    });
+
+    let stoppedByClient = false;
+    const abortController = new AbortController();
+    request.signal.addEventListener(
+      'abort',
+      () => {
+        stoppedByClient = true;
+        abortController.abort();
+      },
+      { once: true },
+    );
+
+    const isExistingProject = project.files.length > 0;
+
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const send = (event: string, data: unknown) => {
           try {
-            if (usedNativeToolCalls) {
-              action = actionsFromToolCalls(streamedToolCalls);
-            } else {
-              const text = responseContent.trim();
-              if (!text) {
-                action = { type: 'finish', summary: reasoningContent.trim() || 'Done.' };
-              } else {
-                try {
-                  action = parseAgentAction(text);
-                } catch {
-                  // Free-form output is a valid agent answer — a structured
-                  // action is never required for the run to complete.
-                  action = { type: 'respond', message: text };
-                }
-              }
-            }
-            const mutationPaths = getAgentFileMutationPaths(action);
-            for (const path of provisionalOriginals.keys()) {
-              if (!mutationPaths.has(path)) {
-                throw new Error(
-                  `Streamed file edit for ${path} was not completed as a filesystem action`,
-                );
-              }
-            }
-            consecutiveProtocolFailures = 0;
-          } catch (error) {
-            const completedAt = new Date();
-            const message = error instanceof Error ? error.message : 'Invalid action format';
-            for (const [path, original] of provisionalOriginals) {
-              send(
-                'file-preview',
-                original === null
-                  ? { operation: 'delete', path }
-                  : { operation: 'update', path, content: original },
-              );
-            }
-            for (const step of provisionalSteps.values()) {
-              emitStep({
-                ...step,
-                status: 'failed',
-                detail: message,
-                completedAt: completedAt.toISOString(),
-                durationMs: completedAt.getTime() - new Date(step.startedAt).getTime(),
-              });
-            }
-            if (usedNativeToolCalls && streamedToolCalls.length > 0) {
-              // The model called a tool we cannot execute (unknown name or
-              // malformed arguments). Feed each call back as a tool error —
-              // exactly like a real harness — so the model corrects itself
-              // instead of the run aborting after retries.
-              emitStep({
-                ...thinkingStep,
-                title: 'Tool call rejected',
-                detail: message,
-                status: 'failed',
-                completedAt: completedAt.toISOString(),
-                durationMs: completedAt.getTime() - iterationStartedAt.getTime(),
-              });
-              messages.push({
-                role: 'assistant',
-                content: responseContent,
-                toolCalls: streamedToolCalls,
-              });
-              streamedToolCalls.forEach((call, index) => {
-                messages.push({
-                  role: 'tool',
-                  toolCallId: call.id || `call_${index}`,
-                  content: `error: could not execute "${call.function.name}": ${message}. Only use the tools listed in the system prompt and re-issue the corrected call.`,
-                });
-              });
-              consecutiveProtocolFailures = 0;
-              continue;
-            }
-            consecutiveProtocolFailures += 1;
-            if (consecutiveProtocolFailures >= 3) {
-              // Never hard-fail a run over formatting: surface whatever the
-              // model produced as a normal reply so the user can steer the
-              // next turn.
-              const fallbackText =
-                responseContent.trim() ||
-                'I could not format that step as an action. What should I try instead?';
-              if (responseContent.trim().length > 0) {
-                messages.push({ role: 'assistant', content: responseContent });
-              }
-              emitStep({
-                ...thinkingStep,
-                title: 'Completing with a plain answer',
-                detail: message,
-                status: 'complete',
-                completedAt: completedAt.toISOString(),
-                durationMs: completedAt.getTime() - iterationStartedAt.getTime(),
-              });
-              await completeRun(fallbackText);
-              return;
-            }
-            emitStep({
-              ...thinkingStep,
-              title: 'Retrying action',
-              detail: message,
-              status: 'failed',
-              completedAt: completedAt.toISOString(),
-              durationMs: completedAt.getTime() - iterationStartedAt.getTime(),
-            });
-            messages.push({ role: 'assistant', content: responseContent });
-            messages.push({
-              role: 'user',
-              content: `The action could not be parsed: ${message}. Correct the format and continue. Do not explain the formatting error to the user.`,
-            });
-            continue;
+            if (controller.desiredSize !== null) controller.enqueue(encodeEvent(event, data));
+          } catch {
+            // The client disconnected and the stream was closed or errored —
+            // swallow so the agent loop can unwind instead of crashing it.
           }
-          messages.push(
-            usedNativeToolCalls
-              ? { role: 'assistant', content: responseContent, toolCalls: streamedToolCalls }
-              : { role: 'assistant', content: responseContent },
-          );
-          const startedAt = iterationStartedAt;
+        };
+        // Declared before the try so the failure handler can still revert partial
+        // streaming previews when setup throws before the agent loop starts.
+        let activeProvisionalOriginals = new Map<string, string | null>();
+        try {
+          const files = new Map(project.files.map((file) => [file.path, file.content]));
+          const provider = getProvider(providerName);
+          const toolsOffered = nativeToolsEnabled(providerName);
+          const messages: AgentMessage[] = [
+            { role: 'system', content: buildAgentSystemPrompt(toolsOffered) },
+            ...history.reverse().map((message) => ({
+              role: message.role === 'assistant' ? ('assistant' as const) : ('user' as const),
+              content: message.content,
+            })),
+            {
+              role: 'user',
+              content: [
+                `Project: ${project.name}`,
+                project.description ? `Description: ${project.description}` : '',
+                `Project state: ${isExistingProject ? 'EXISTING APPLICATION — preserve the current design and make only the requested changes.' : 'EMPTY PROJECT — create the application from the user request.'}`,
+                `Current file manifest:\n${[...files.keys()].join('\n') || '(empty project)'}`,
+                body.editTarget
+                  ? `Selected visual element: ${JSON.stringify(body.editTarget)}`
+                  : '',
+                attachmentParts.length ? `Attachments:\n${attachmentParts.join('\n\n')}` : '',
+                `Image Generation Capability: ${isImageGenReady ? 'available' : 'unavailable'}${!isImageGenReady ? ` (Reason: ${!imageConfig ? 'Image provider not configured' : r2Status.reason})` : ''}`,
+                `Request: ${effectivePrompt}`,
+              ]
+                .filter(Boolean)
+                .join('\n\n'),
+            },
+          ];
+          let latestVersion = 0;
+          let finalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+          const runSteps: AgentStep[] = [];
+          let consecutiveProtocolFailures = 0;
+          let imagesGeneratedThisRun = 0;
+          // Tracks how many consecutive turns made no filesystem progress. Prevents a
+          // model that emits `think`/`respond` (or any valid non-mutating action)
+          // forever from running the loop to MAX_ITERATIONS and burning tokens.
+          let consecutiveNoProgressIterations = 0;
 
-          if (action.type === 'think') {
-            const completedAt = new Date();
-            emitStep({
-              ...thinkingStep,
-              title: action.summary,
-              detail: action.content,
-              status: 'complete',
-              completedAt: completedAt.toISOString(),
-              durationMs: completedAt.getTime() - startedAt.getTime(),
-            });
-            messages.push({
-              role: 'user',
-              content: 'Thinking recorded. Choose whichever action is useful next.',
-            });
-            // `think` makes no filesystem progress — count it so a model stuck
-            // emitting only think/respond can't burn MAX_ITERATIONS of tokens.
-            consecutiveNoProgressIterations += 1;
-            if (consecutiveNoProgressIterations >= MAX_NO_PROGRESS_TURNS) {
-              throw new Error(
-                `The agent made no filesystem progress after ${MAX_NO_PROGRESS_TURNS} turns.`,
-              );
-            }
-            continue;
-          }
-
-          const thinkingCompletedAt = new Date();
-          emitStep({
-            ...thinkingStep,
-            title: 'Chose next action',
-            detail: reasoningContent || 'Selected the next useful action.',
-            status: 'complete',
-            completedAt: thinkingCompletedAt.toISOString(),
-            durationMs: thinkingCompletedAt.getTime() - startedAt.getTime(),
-          });
-          const actions = action.type === 'batch' ? action.actions : [action];
-          const actionGuardError = getDesignDirectionActionError(action, isExistingProject);
-          if (actionGuardError) {
-            const completedAt = new Date();
-            for (const [path, original] of provisionalOriginals) {
-              send(
-                'file-preview',
-                original === null
-                  ? { operation: 'delete', path }
-                  : { operation: 'update', path, content: original },
-              );
-            }
-            for (const step of provisionalSteps.values()) {
-              emitStep({
-                ...step,
-                status: 'failed',
-                detail: actionGuardError,
-                completedAt: completedAt.toISOString(),
-                durationMs: completedAt.getTime() - new Date(step.startedAt).getTime(),
-              });
-            }
-            emitStep({
-              ...thinkingStep,
-              title: 'Blocked unsafe action',
-              detail: actionGuardError,
-              status: 'complete',
-              completedAt: completedAt.toISOString(),
-              durationMs: completedAt.getTime() - startedAt.getTime(),
-            });
-            messages.push({
-              role: 'user',
-              content: `Action blocked: ${actionGuardError} Continue by reading and editing only the files needed for the user's request.`,
-            });
-            consecutiveNoProgressIterations += 1;
-            if (consecutiveNoProgressIterations >= MAX_NO_PROGRESS_TURNS) {
-              throw new Error(
-                `The agent repeatedly attempted an unsafe design-direction action (${MAX_NO_PROGRESS_TURNS} turns).`,
-              );
-            }
-            continue;
-          }
-          const toolResults: string[] = [];
-          let handledFilesystemAction = false;
-          let handledFilesystemMutation = false;
-          const askQuestionsAction = actions.find(
-            (a): a is Extract<AgentAction, { type: 'ask_questions' }> => a.type === 'ask_questions',
-          );
-          const respondAction = actions.find(
-            (a): a is Extract<AgentAction, { type: 'respond' }> => a.type === 'respond',
-          );
-          const finishAction = actions.find(
-            (a): a is Extract<AgentAction, { type: 'finish' }> => a.type === 'finish',
-          );
-          for (const currentAction of actions) {
-            const currentStepId = randomUUID();
-            const actionStartedAt = new Date();
-            if (currentAction.type === 'read_files') {
-              handledFilesystemAction = true;
-              const detail = currentAction.files
-                .map((request) => {
-                  const range =
-                    request.startLine !== undefined || request.endLine !== undefined
-                      ? ` (${request.startLine ?? 1}-${request.endLine ?? 'EOF'})`
-                      : ' (full)';
-                  return `${request.path}${range}`;
-                })
-                .join('\n');
-              const step: AgentStep = {
-                id: currentStepId,
-                kind: 'read',
-                title: `Reading ${currentAction.files.length} file${currentAction.files.length === 1 ? '' : 's'}`,
-                detail,
-                status: 'running',
-                startedAt: actionStartedAt.toISOString(),
-              };
-              emitStep(step);
-              let remainingBudget = MAX_READ_RESULT_CHARS;
-              const observations = currentAction.files
-                .map((request) => {
-                  const observation = formatReadObservation(
-                    request.path,
-                    files.get(request.path),
-                    request,
-                    remainingBudget,
-                  );
-                  remainingBudget = Math.max(0, remainingBudget - observation.length - 2);
-                  return observation;
-                })
-                .join('\n\n');
+          const emitStep = (step: AgentStep) => {
+            const index = runSteps.findIndex((item) => item.id === step.id);
+            if (index < 0) runSteps.push(step);
+            else runSteps[index] = step;
+            send('step', step);
+          };
+          // F-10: batch file mutations within one agent turn into a single
+          // transaction + single version snapshot to avoid DB amplification.
+          let pendingBatch: { change: VersionDiffEntry; step: AgentStep }[] = [];
+          const flushPendingBatch = async () => {
+            if (pendingBatch.length === 0) return;
+            const batch = pendingBatch.splice(0);
+            const persistable = batch.filter((b) => !isSovereignOverlayPath(b.change.file));
+            if (persistable.length === 0) {
               const completedAt = new Date();
-              emitStep({
-                ...step,
-                status: 'complete',
-                completedAt: completedAt.toISOString(),
-                durationMs: completedAt.getTime() - actionStartedAt.getTime(),
-              });
-              toolResults.push(`read_files result:\n${observations}`);
-              continue;
-            }
-            if (currentAction.type === 'write_file') {
-              handledFilesystemAction = true;
-              if (isForbiddenEnvPath(currentAction.path)) {
-                toolResults.push(
-                  `write_file error: refused to write ${currentAction.path}. Use .env.example with VITE_* keys only.`,
-                );
-                continue;
-              }
-              handledFilesystemMutation = true;
-              const existed = files.has(currentAction.path);
-              const before = files.get(currentAction.path);
-              const step = provisionalSteps.get(`write_file:${currentAction.path}`) ?? {
-                id: currentStepId,
-                kind: existed ? 'edit' : 'write',
-                title: `${existed ? 'Writing' : 'Creating'} ${currentAction.path}`,
-                status: 'running' as const,
-                startedAt: actionStartedAt.toISOString(),
-              };
-              if (!provisionalSteps.has(`write_file:${currentAction.path}`)) emitStep(step);
-              files.set(currentAction.path, currentAction.content);
-              pendingBatch.push({
-                change: {
-                  file: currentAction.path,
-                  operation: existed ? 'update' : 'create',
-                  ...(before !== undefined ? { before } : {}),
-                  after: currentAction.content,
-                },
-                step,
-              });
-              toolResults.push(
-                `write_file result: wrote ${currentAction.path} (${currentAction.content.length} characters).`,
-              );
-              continue;
-            }
-            if (currentAction.type === 'edit_file') {
-              handledFilesystemAction = true;
-              if (isForbiddenEnvPath(currentAction.path)) {
-                toolResults.push(
-                  `edit_file error: refused to write ${currentAction.path}. Use .env.example with VITE_* keys only.`,
-                );
-                continue;
-              }
-              handledFilesystemMutation = true;
-              const before = files.get(currentAction.path);
-              if (before === undefined) {
-                toolResults.push(
-                  `edit_file error: ${currentAction.path} does not exist. Use write_file to create it.`,
-                );
-                continue;
-              }
-              const step = provisionalSteps.get(`edit_file:${currentAction.path}`) ?? {
-                id: currentStepId,
-                kind: 'edit' as const,
-                title: `Editing ${currentAction.path}`,
-                status: 'running' as const,
-                startedAt: actionStartedAt.toISOString(),
-              };
-              if (!provisionalSteps.has(`edit_file:${currentAction.path}`)) emitStep(step);
-              try {
-                const after = applyAgentEdit(before, currentAction.search, currentAction.replace);
-                files.set(currentAction.path, after);
-                pendingBatch.push({
-                  change: { file: currentAction.path, operation: 'update', before, after },
-                  step,
-                });
-                toolResults.push(`edit_file result: updated ${currentAction.path}.`);
-              } catch (error) {
-                const completedAt = new Date();
-                const message = error instanceof Error ? error.message : 'Edit failed';
+              for (const { step } of batch) {
                 emitStep({
                   ...step,
-                  status: 'failed',
-                  detail: message,
+                  status: 'complete',
                   completedAt: completedAt.toISOString(),
-                  durationMs: completedAt.getTime() - actionStartedAt.getTime(),
+                  durationMs: completedAt.getTime() - new Date(step.startedAt).getTime(),
                 });
-                toolResults.push(
-                  `edit_file error: ${message}. Read the file again before retrying.`,
-                );
               }
-              continue;
-            }
-            if (currentAction.type === 'delete_file') {
-              handledFilesystemAction = true;
-              handledFilesystemMutation = true;
-              const before = files.get(currentAction.path);
-              if (before === undefined) {
-                toolResults.push(`delete_file result: ${currentAction.path} was already absent.`);
-                continue;
-              }
-              const step: AgentStep = {
-                id: currentStepId,
-                kind: 'delete',
-                title: `Deleting ${currentAction.path}`,
-                status: 'running',
-                startedAt: actionStartedAt.toISOString(),
-              };
-              emitStep(step);
-              files.delete(currentAction.path);
-              pendingBatch.push({
-                change: { file: currentAction.path, operation: 'delete', before },
-                step,
-              });
-              toolResults.push(`delete_file result: deleted ${currentAction.path}.`);
-            }
-            if (currentAction.type === 'generate_images') {
-              if (imagesGeneratedThisRun + currentAction.images.length > MAX_IMAGES_PER_RUN) {
-                toolResults.push(
-                  `generate_images error: this run already used ${imagesGeneratedThisRun} of ${MAX_IMAGES_PER_RUN} images. Do not request more images.`,
-                );
-                continue;
-              }
-              imagesGeneratedThisRun += currentAction.images.length;
-              const imageResults = await mapWithConcurrency(
-                currentAction.images,
-                IMAGE_GENERATION_CONCURRENCY,
-                async (spec) => {
-                  const jobId = randomUUID();
-                  const step: AgentStep = {
-                    id: jobId,
-                    kind: 'image',
-                    title: `Generating image: ${spec.semanticUse}`,
-                    detail: spec.prompt,
-                    status: 'running',
-                    startedAt: new Date().toISOString(),
-                  };
-                  emitStep(step);
-                  send('image-job', {
-                    id: jobId,
-                    status: 'running',
-                    semanticUse: spec.semanticUse,
-                    prompt: spec.prompt,
-                    placeholderToken: spec.placeholderToken,
-                  });
-
-                  try {
-                    if (!isImageGenReady || !imageConfig) {
-                      throw new Error('Image generation is unavailable');
-                    }
-                    const decryptedKey = decryptApiKey(imageConfig.encryptedKey);
-                    let lastError: unknown;
-                    for (let attempt = 1; attempt <= 2; attempt += 1) {
-                      try {
-                        const imgRes = await generateImage(
-                          imageConfig.model,
-                          spec.prompt,
-                          decryptedKey,
-                          {
-                            baseUrl: imageConfig.baseUrl,
-                            signal: abortController.signal,
-                            timeoutMs: 120_000,
-                          },
-                        );
-                        const asset = await uploadProjectAsset({
-                          projectId,
-                          createdById: session.user.id,
-                          bytes: imgRes.bytes,
-                          mediaType: imgRes.mediaType,
-                          prompt: spec.prompt,
-                          source: 'generated',
-                        });
-                        await db.imageProviderConfig.update({
-                          where: { id: imageConfig.id },
-                          data: { lastUsedAt: new Date() },
-                        });
-                        const completedAt = new Date();
-                        emitStep({
-                          ...step,
-                          status: 'complete',
-                          completedAt: completedAt.toISOString(),
-                          durationMs: completedAt.getTime() - new Date(step.startedAt).getTime(),
-                        });
-                        send('image-job', {
-                          id: jobId,
-                          status: 'complete',
-                          publicUrl: asset.publicUrl,
-                          assetId: asset.id,
-                          placeholderToken: spec.placeholderToken,
-                        });
-                        return `${spec.semanticUse}: ${asset.publicUrl}`;
-                      } catch (error) {
-                        lastError = error;
-                        if (abortController.signal.aborted) throw error;
-                        if (!isRetryableImageError(error)) break;
-                      }
-                    }
-                    throw lastError;
-                  } catch (error) {
-                    const completedAt = new Date();
-                    const message =
-                      error instanceof Error ? error.message : 'Image generation failed';
-                    emitStep({
-                      ...step,
-                      status: 'failed',
-                      detail: message,
-                      completedAt: completedAt.toISOString(),
-                      durationMs: completedAt.getTime() - new Date(step.startedAt).getTime(),
-                    });
-                    send('image-job', {
-                      id: jobId,
-                      status: 'failed',
-                      error: message,
-                      placeholderToken: spec.placeholderToken,
-                    });
-                    return `${spec.semanticUse}: FAILED (${message})`;
-                  }
-                },
-              );
-              toolResults.push(
-                `generate_images result:\n${imageResults.join('\n')}\nUse only the successful absolute URLs in source files. Do not write placeholder tokens for failed images.`,
-              );
-              handledFilesystemAction = true;
-              handledFilesystemMutation = true;
-            }
-            if (currentAction.type === 'propose_design_directions') {
-              // Supersede any older pending sets so `getActive` returns the newest.
-              await db.designDirectionSet.updateMany({
-                where: { projectId, status: 'pending' },
-                data: { status: 'skipped' },
-              });
-
-              const directionSet = await db.designDirectionSet.create({
-                data: {
-                  projectId,
-                  originalRequest: prompt ?? '',
-                  status: 'pending',
-                  directions: {
-                    create: currentAction.directions.map((d, idx) => ({
-                      orderNumber: idx,
-                      title: d.title,
-                      visualBrief: d.visualBrief,
-                      imagePrompt: d.imagePrompt,
-                      palette: d.palette,
-                      typography: d.typography,
-                      layoutNotes: d.layoutNotes,
-                      status: 'generating',
-                    })),
-                  },
-                },
-                include: { directions: { orderBy: { orderNumber: 'asc' } } },
-              });
-
-              send('design-directions', {
-                id: directionSet.id,
-                status: 'pending',
-                originalRequest: prompt ?? '',
-                directions: directionSet.directions,
-              });
-
-              const dirStep: AgentStep = {
-                id: randomUUID(),
-                kind: 'direction',
-                title: 'Proposing 3 design directions',
-                detail: 'Generating preview moodboards for concepts',
-                status: 'running',
-                startedAt: new Date().toISOString(),
-              };
-              emitStep(dirStep);
-
-              const settled = await Promise.allSettled(
-                directionSet.directions.map(async (dir) => {
-                  if (!isImageGenReady || !imageConfig) return null;
-                  try {
-                    const decryptedKey = decryptApiKey(imageConfig.encryptedKey);
-                    const imgRes = await generateImage(
-                      imageConfig.model,
-                      dir.imagePrompt,
-                      decryptedKey,
-                      {
-                        baseUrl: imageConfig.baseUrl,
-                        signal: abortController.signal,
-                      },
-                    );
-                    const asset = await uploadProjectAsset({
-                      projectId,
-                      createdById: session.user.id,
-                      bytes: imgRes.bytes,
-                      mediaType: imgRes.mediaType,
-                      prompt: dir.imagePrompt,
-                      source: 'generated',
-                    });
-                    await db.designDirection.update({
-                      where: { id: dir.id },
-                      data: { status: 'ready', previewAssetId: asset.id },
-                    });
-                    return { directionId: dir.id, assetId: asset.id, publicUrl: asset.publicUrl };
-                  } catch (err) {
-                    await db.designDirection.update({
-                      where: { id: dir.id },
-                      data: {
-                        status: 'failed',
-                        errorMessage:
-                          err instanceof Error ? err.message : 'Preview generation failed',
-                      },
-                    });
-                    return null;
-                  }
-                }),
-              );
-
-              // If no direction ended up ready, the set is unusable — mark it failed
-              // so the UI can show a clear state instead of a set of broken cards.
-              const readyCount = settled.filter(
-                (r) => r.status === 'fulfilled' && r.value !== null,
-              ).length;
-              const setStatus = readyCount > 0 ? 'ready' : 'failed';
-
-              await db.designDirectionSet.update({
-                where: { id: directionSet.id },
-                data: { status: setStatus },
-              });
-
-              const updatedSet = await db.designDirectionSet.findUnique({
-                where: { id: directionSet.id },
-                include: {
-                  directions: {
-                    orderBy: { orderNumber: 'asc' },
-                    include: { previewAsset: true },
-                  },
-                },
-              });
-
-              const completedAt = new Date();
-              emitStep({
-                ...dirStep,
-                status: setStatus === 'ready' ? 'complete' : 'failed',
-                detail:
-                  setStatus === 'ready'
-                    ? 'Generating preview moodboards for concepts'
-                    : 'All design previews failed to generate',
-                completedAt: completedAt.toISOString(),
-                durationMs: completedAt.getTime() - new Date(dirStep.startedAt).getTime(),
-              });
-
-              send('design-directions', {
-                id: directionSet.id,
-                status: setStatus,
-                originalRequest: prompt ?? '',
-                directions: updatedSet?.directions ?? [],
-              });
-
-              const assistantMsg = await db.chatMessage.create({
-                data: {
-                  projectId,
-                  role: 'assistant',
-                  content: 'Proposed 3 design directions for user selection.',
-                  model: `${providerName}:${body.modelName}`,
-                  tokenUsage: finalUsage,
-                  toolCalls: runSteps as never,
-                },
-              });
-
-              send('ready', {
-                userMessage: messageRecord(userMessage),
-                assistantMessage: messageRecord(assistantMsg),
-                files: [...files].map(([p, c]) => ({ path: p, content: c })),
-                versionNumber: latestVersion,
-              });
               return;
             }
-          }
-          // F-10: commit all buffered file mutations of this turn together
-          let autofixNote: string | null = null;
-          if (pendingBatch.length > 0) {
-            await flushPendingBatch();
-            try {
-              const autofix = applyStackContract(files);
-              if (autofix.changes.length > 0) {
-                await persistAutofix(autofix.changes);
-                files.clear();
-                for (const [path, content] of autofix.files) files.set(path, content);
-                autofixNote = autofix.syntheticToolResult;
+            const changes = persistable.map((b) => b.change);
+            const version = await db.$transaction(async (tx) => {
+              for (const ch of changes) {
+                if (ch.operation === 'delete') {
+                  await tx.projectFile.deleteMany({ where: { projectId, path: ch.file } });
+                } else {
+                  const content = ch.after ?? '';
+                  const contentHash = createHash('sha256').update(content).digest('hex');
+                  await tx.projectFile.upsert({
+                    where: { projectId_path: { projectId, path: ch.file } },
+                    create: { projectId, path: ch.file, content, contentHash },
+                    update: { content, contentHash },
+                  });
+                }
               }
-            } catch (error) {
-              console.error('generate.autofix_skipped', error);
-              autofixNote = 'autofix skipped: contract checker failed after files were saved.';
-            }
-          }
-          if (handledFilesystemMutation) {
-            consecutiveNoProgressIterations = 0;
-          } else if (!askQuestionsAction && !respondAction && !finishAction) {
-            consecutiveNoProgressIterations += 1;
-            if (consecutiveNoProgressIterations >= MAX_NO_PROGRESS_TURNS) {
-              throw new Error(
-                `The agent made no filesystem progress after ${MAX_NO_PROGRESS_TURNS} turns.`,
-              );
-            }
-          }
-
-          if (handledFilesystemAction) {
-            if (usedNativeToolCalls) {
-              streamedToolCalls.forEach((call, index) => {
-                messages.push({
-                  role: 'tool',
-                  toolCallId: call.id || `call_${index}`,
-                  content: toolResults[index] ?? toolResults.join('\n\n'),
-                });
+              return createVersion(tx, projectId, null, changes);
+            });
+            latestVersion = version.versionNumber;
+            const completedAt = new Date();
+            for (const { step } of batch) {
+              emitStep({
+                ...step,
+                status: 'complete',
+                completedAt: completedAt.toISOString(),
+                durationMs: completedAt.getTime() - new Date(step.startedAt).getTime(),
               });
-              if (autofixNote) {
-                const last = messages[messages.length - 1];
-                if (last?.role === 'tool') last.content = `${last.content}\n\n${autofixNote}`;
+            }
+            for (const { change } of persistable) {
+              send('file-operation', {
+                operation: change.operation,
+                path: change.file,
+                ...(change.after !== undefined ? { content: change.after } : {}),
+                versionNumber: latestVersion,
+              });
+              activeProvisionalOriginals.delete(change.file);
+            }
+          };
+          const persistAutofix = async (changes: StackContractChange[]) => {
+            if (changes.length === 0) return;
+            const versionDiffs: VersionDiffEntry[] = changes.map((ch) => ({
+              file: ch.path,
+              operation: ch.operation,
+              ...(ch.before !== undefined ? { before: ch.before } : {}),
+              ...(ch.content !== undefined ? { after: ch.content } : {}),
+            }));
+            const version = await db.$transaction(async (tx) => {
+              for (const ch of changes) {
+                if (ch.operation === 'delete') {
+                  await tx.projectFile.deleteMany({ where: { projectId, path: ch.path } });
+                } else {
+                  const content = ch.content ?? '';
+                  const contentHash = createHash('sha256').update(content).digest('hex');
+                  await tx.projectFile.upsert({
+                    where: { projectId_path: { projectId, path: ch.path } },
+                    create: { projectId, path: ch.path, content, contentHash },
+                    update: { content, contentHash },
+                  });
+                }
               }
-            } else {
-              if (autofixNote) toolResults.push(autofixNote);
-              messages.push({ role: 'user', content: toolResults.join('\n\n') });
+              return createVersion(tx, projectId, null, versionDiffs, { message: 'autofix' });
+            });
+            latestVersion = version.versionNumber;
+            for (const ch of changes) {
+              send('file-operation', {
+                operation: ch.operation,
+                path: ch.path,
+                ...(ch.content !== undefined ? { content: ch.content } : {}),
+                versionNumber: latestVersion,
+              });
             }
-            if (!askQuestionsAction && !respondAction && !finishAction) {
-              continue;
-            }
-          }
-
-          if (askQuestionsAction) {
-            const content = askQuestionsAction.questions
-              .map((item, index) => `${index + 1}. ${item.question}`)
-              .join('\n');
+          };
+          const completeRun = async (content: string) => {
             const assistantMessage = await db.chatMessage.create({
               data: {
                 projectId,
                 role: 'assistant',
                 content,
                 model: `${providerName}:${body.modelName}`,
+                tokenUsage: finalUsage,
                 toolCalls: runSteps as never,
               },
             });
-            send('questions', {
-              questions: askQuestionsAction.questions,
-              userMessage: messageRecord(userMessage),
-              assistantMessage: messageRecord(assistantMessage),
+            await db.apiKey.update({
+              where: { id: storedKey.id },
+              data: { lastUsedAt: new Date() },
             });
-            return;
-          }
-          if (respondAction) {
-            await completeRun(respondAction.message);
-            return;
-          }
-          if (finishAction) {
-            await completeRun(finishAction.summary);
-            return;
-          }
-        }
-        throw new Error(
-          MAX_ITERATIONS === null
-            ? 'Agent ran for an unusually long time without finishing.'
-            : `Agent exceeded ${MAX_ITERATIONS} steps without finishing`,
-        );
-      } catch (error) {
-        for (const [path, original] of activeProvisionalOriginals) {
-          send(
-            'file-preview',
-            original === null
-              ? { operation: 'delete', path }
-              : { operation: 'update', path, content: original },
-          );
-        }
-        if (stoppedByClient) {
-          send('failed', { message: 'Generation stopped. Completed changes were kept.' });
-        } else {
-          send('failed', { message: error instanceof Error ? error.message : 'Agent run failed' });
-        }
-      } finally {
-        // The run is over (finished, failed, or aborted) — free the project for
-        // the next generation.
-        await releaseGenerationLease();
-        try {
-          controller.close();
-        } catch {
-          // Stream already closed or errored (e.g. client disconnect).
-        }
-      }
-    },
-  });
+            send('ready', {
+              userMessage: messageRecord(userMessage),
+              assistantMessage: { ...messageRecord(assistantMessage), tokenUsage: finalUsage },
+              files: [...files].map(([path, content]) => ({ path, content })),
+              versionNumber: latestVersion,
+            });
+          };
+          send('phase', { phase: 'planning', label: 'Starting agent' });
+          for (
+            let iteration = 0;
+            MAX_ITERATIONS === null || iteration < MAX_ITERATIONS;
+            iteration += 1
+          ) {
+            if (abortController.signal.aborted) throw new Error('Generation stopped');
+            const iterationStartedAt = new Date();
+            const thinkingStepId = randomUUID();
+            let responseContent = '';
+            let reasoningContent = '';
+            let streamedToolCalls: ToolCall[] = [];
+            let truncatedThisTurn = false;
+            let lastThinkingEmit = 0;
+            let lastFilePreviewEmit = 0;
+            let previewSignature = '';
+            const provisionalOriginals = new Map<string, string | null>();
+            activeProvisionalOriginals = provisionalOriginals;
+            const provisionalSteps = new Map<string, AgentStep>();
+            const thinkingStep: AgentStep = {
+              id: thinkingStepId,
+              kind: 'thinking',
+              title: 'Thinking',
+              detail: 'Analyzing the request…',
+              status: 'running',
+              startedAt: iterationStartedAt.toISOString(),
+            };
+            emitStep(thinkingStep);
 
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream; charset=utf-8',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    },
-  });
+            const generator = provider.stream(
+              body.modelName!,
+              trimMessagesForContext(messages),
+              apiKey,
+              {
+                baseUrl: storedKey.baseUrl ?? undefined,
+                // No artificial per-turn cap by default ("free" runs): the provider
+                // uses its own maximum output length. Operators can still bound
+                // spend with SOVEREIGN_MAX_TOKENS. Truncated outputs are continued
+                // automatically (finishReason === 'length'), never treated as
+                // failures.
+                ...(TURN_MAX_TOKENS !== undefined ? { maxTokens: TURN_MAX_TOKENS } : {}),
+                temperature: 0.2,
+                reasoningEffort: body.reasoningEffort,
+                signal: abortController.signal,
+                ...(toolsOffered ? { tools: SOVEREIGN_TOOLS, toolChoice: 'auto' as const } : {}),
+              },
+            );
+            while (true) {
+              const next = await generator.next();
+              if (next.done) {
+                responseContent = next.value.content || responseContent;
+                if (next.value.reasoning) reasoningContent = next.value.reasoning;
+                if (next.value.finishReason === 'length') truncatedThisTurn = true;
+                if (next.value.toolCalls && next.value.toolCalls.length > 0) {
+                  streamedToolCalls = next.value.toolCalls;
+                }
+                finalUsage = {
+                  promptTokens: finalUsage.promptTokens + next.value.usage.promptTokens,
+                  completionTokens: finalUsage.completionTokens + next.value.usage.completionTokens,
+                  totalTokens: finalUsage.totalTokens + next.value.usage.totalTokens,
+                };
+                break;
+              }
+              responseContent += next.value.content;
+              if (next.value.reasoning) reasoningContent += next.value.reasoning;
+              if (next.value.toolCalls && next.value.toolCalls.length > 0) {
+                streamedToolCalls = next.value.toolCalls;
+              }
+              const streamedThought = reasoningContent || getStreamingThought(responseContent);
+              if (streamedThought) {
+                const now = Date.now();
+                if (now - lastThinkingEmit >= 75) {
+                  lastThinkingEmit = now;
+                  emitStep({ ...thinkingStep, detail: streamedThought });
+                  send('thinking', { content: streamedThought });
+                }
+              }
+              const streamedFile =
+                getStreamingFileFromToolCalls(streamedToolCalls) ??
+                getStreamingFileAction(responseContent);
+              if (streamedFile) {
+                const now = Date.now();
+                const provisionalKey = `${streamedFile.type}:${streamedFile.path}`;
+                if (!provisionalSteps.has(provisionalKey)) {
+                  const provisionalStep: AgentStep = {
+                    id: randomUUID(),
+                    kind:
+                      streamedFile.type === 'write_file' && !files.has(streamedFile.path)
+                        ? 'write'
+                        : 'edit',
+                    title: `${streamedFile.type === 'write_file' && !files.has(streamedFile.path) ? 'Creating' : 'Editing'} ${streamedFile.path}`,
+                    status: 'running',
+                    startedAt: new Date().toISOString(),
+                  };
+                  provisionalSteps.set(provisionalKey, provisionalStep);
+                  emitStep(provisionalStep);
+                }
+                let previewContent: string | null = null;
+                if (streamedFile.type === 'write_file') {
+                  previewContent = streamedFile.content;
+                } else {
+                  const existing = files.get(streamedFile.path);
+                  if (existing !== undefined) {
+                    try {
+                      previewContent = applyAgentEdit(
+                        existing,
+                        streamedFile.search,
+                        streamedFile.replace,
+                      );
+                    } catch {
+                      previewContent = null;
+                    }
+                  }
+                }
+                const signature =
+                  previewContent === null ? '' : `${streamedFile.path}:${previewContent.length}`;
+                if (
+                  previewContent !== null &&
+                  signature !== previewSignature &&
+                  now - lastFilePreviewEmit >= 75
+                ) {
+                  previewSignature = signature;
+                  lastFilePreviewEmit = now;
+                  if (!provisionalOriginals.has(streamedFile.path)) {
+                    provisionalOriginals.set(
+                      streamedFile.path,
+                      files.get(streamedFile.path) ?? null,
+                    );
+                  }
+                  send('file-preview', {
+                    operation: files.has(streamedFile.path) ? 'update' : 'create',
+                    path: streamedFile.path,
+                    content: previewContent,
+                  });
+                }
+              }
+            }
+            // The provider cut the completion off at its token ceiling (either
+            // SOVEREIGN_MAX_TOKENS or a provider-imposed limit). Parsing a
+            // truncated action would fail; ask the model to finish the output in
+            // the next turn — never counted as a failure, never aborted.
+            if (truncatedThisTurn && responseContent.trim().length > 0) {
+              messages.push({ role: 'assistant', content: responseContent });
+              messages.push({
+                role: 'user',
+                content:
+                  'Your previous output was cut off at the token limit. If you were writing a JSON action, output the COMPLETE valid JSON action now without repeating prose. Otherwise continue your previous message exactly where it stopped.',
+              });
+              emitStep({
+                ...thinkingStep,
+                title: 'Output truncated — continuing',
+                detail:
+                  'The previous completion hit its token ceiling; asking the model to continue.',
+                status: 'complete',
+                completedAt: new Date().toISOString(),
+                durationMs: Date.now() - iterationStartedAt.getTime(),
+              });
+              continue;
+            }
+            let action: AgentAction;
+            const usedNativeToolCalls = toolsOffered && streamedToolCalls.length > 0;
+            try {
+              if (usedNativeToolCalls) {
+                action = actionsFromToolCalls(streamedToolCalls);
+              } else {
+                const text = responseContent.trim();
+                if (!text) {
+                  action = { type: 'finish', summary: reasoningContent.trim() || 'Done.' };
+                } else {
+                  try {
+                    action = parseAgentAction(text);
+                  } catch {
+                    // Free-form output is a valid agent answer — a structured
+                    // action is never required for the run to complete.
+                    action = { type: 'respond', message: text };
+                  }
+                }
+              }
+              const mutationPaths = getAgentFileMutationPaths(action);
+              for (const path of provisionalOriginals.keys()) {
+                if (!mutationPaths.has(path)) {
+                  throw new Error(
+                    `Streamed file edit for ${path} was not completed as a filesystem action`,
+                  );
+                }
+              }
+              consecutiveProtocolFailures = 0;
+            } catch (error) {
+              const completedAt = new Date();
+              const message = error instanceof Error ? error.message : 'Invalid action format';
+              for (const [path, original] of provisionalOriginals) {
+                send(
+                  'file-preview',
+                  original === null
+                    ? { operation: 'delete', path }
+                    : { operation: 'update', path, content: original },
+                );
+              }
+              for (const step of provisionalSteps.values()) {
+                emitStep({
+                  ...step,
+                  status: 'failed',
+                  detail: message,
+                  completedAt: completedAt.toISOString(),
+                  durationMs: completedAt.getTime() - new Date(step.startedAt).getTime(),
+                });
+              }
+              if (usedNativeToolCalls && streamedToolCalls.length > 0) {
+                // The model called a tool we cannot execute (unknown name or
+                // malformed arguments). Feed each call back as a tool error —
+                // exactly like a real harness — so the model corrects itself
+                // instead of the run aborting after retries.
+                emitStep({
+                  ...thinkingStep,
+                  title: 'Tool call rejected',
+                  detail: message,
+                  status: 'failed',
+                  completedAt: completedAt.toISOString(),
+                  durationMs: completedAt.getTime() - iterationStartedAt.getTime(),
+                });
+                messages.push({
+                  role: 'assistant',
+                  content: responseContent,
+                  toolCalls: streamedToolCalls,
+                });
+                streamedToolCalls.forEach((call, index) => {
+                  messages.push({
+                    role: 'tool',
+                    toolCallId: call.id || `call_${index}`,
+                    content: `error: could not execute "${call.function.name}": ${message}. Only use the tools listed in the system prompt and re-issue the corrected call.`,
+                  });
+                });
+                consecutiveProtocolFailures = 0;
+                continue;
+              }
+              consecutiveProtocolFailures += 1;
+              if (consecutiveProtocolFailures >= 3) {
+                // Never hard-fail a run over formatting: surface whatever the
+                // model produced as a normal reply so the user can steer the
+                // next turn.
+                const fallbackText =
+                  responseContent.trim() ||
+                  'I could not format that step as an action. What should I try instead?';
+                if (responseContent.trim().length > 0) {
+                  messages.push({ role: 'assistant', content: responseContent });
+                }
+                emitStep({
+                  ...thinkingStep,
+                  title: 'Completing with a plain answer',
+                  detail: message,
+                  status: 'complete',
+                  completedAt: completedAt.toISOString(),
+                  durationMs: completedAt.getTime() - iterationStartedAt.getTime(),
+                });
+                await completeRun(fallbackText);
+                return;
+              }
+              emitStep({
+                ...thinkingStep,
+                title: 'Retrying action',
+                detail: message,
+                status: 'failed',
+                completedAt: completedAt.toISOString(),
+                durationMs: completedAt.getTime() - iterationStartedAt.getTime(),
+              });
+              messages.push({ role: 'assistant', content: responseContent });
+              messages.push({
+                role: 'user',
+                content: `The action could not be parsed: ${message}. Correct the format and continue. Do not explain the formatting error to the user.`,
+              });
+              continue;
+            }
+            messages.push(
+              usedNativeToolCalls
+                ? { role: 'assistant', content: responseContent, toolCalls: streamedToolCalls }
+                : { role: 'assistant', content: responseContent },
+            );
+            const startedAt = iterationStartedAt;
+
+            if (action.type === 'think') {
+              const completedAt = new Date();
+              emitStep({
+                ...thinkingStep,
+                title: action.summary,
+                detail: action.content,
+                status: 'complete',
+                completedAt: completedAt.toISOString(),
+                durationMs: completedAt.getTime() - startedAt.getTime(),
+              });
+              messages.push({
+                role: 'user',
+                content: 'Thinking recorded. Choose whichever action is useful next.',
+              });
+              // `think` makes no filesystem progress — count it so a model stuck
+              // emitting only think/respond can't burn MAX_ITERATIONS of tokens.
+              consecutiveNoProgressIterations += 1;
+              if (consecutiveNoProgressIterations >= MAX_NO_PROGRESS_TURNS) {
+                throw new Error(
+                  `The agent made no filesystem progress after ${MAX_NO_PROGRESS_TURNS} turns.`,
+                );
+              }
+              continue;
+            }
+
+            const thinkingCompletedAt = new Date();
+            emitStep({
+              ...thinkingStep,
+              title: 'Chose next action',
+              detail: reasoningContent || 'Selected the next useful action.',
+              status: 'complete',
+              completedAt: thinkingCompletedAt.toISOString(),
+              durationMs: thinkingCompletedAt.getTime() - startedAt.getTime(),
+            });
+            const actions = action.type === 'batch' ? action.actions : [action];
+            const actionGuardError = getDesignDirectionActionError(action, isExistingProject);
+            if (actionGuardError) {
+              const completedAt = new Date();
+              for (const [path, original] of provisionalOriginals) {
+                send(
+                  'file-preview',
+                  original === null
+                    ? { operation: 'delete', path }
+                    : { operation: 'update', path, content: original },
+                );
+              }
+              for (const step of provisionalSteps.values()) {
+                emitStep({
+                  ...step,
+                  status: 'failed',
+                  detail: actionGuardError,
+                  completedAt: completedAt.toISOString(),
+                  durationMs: completedAt.getTime() - new Date(step.startedAt).getTime(),
+                });
+              }
+              emitStep({
+                ...thinkingStep,
+                title: 'Blocked unsafe action',
+                detail: actionGuardError,
+                status: 'complete',
+                completedAt: completedAt.toISOString(),
+                durationMs: completedAt.getTime() - startedAt.getTime(),
+              });
+              messages.push({
+                role: 'user',
+                content: `Action blocked: ${actionGuardError} Continue by reading and editing only the files needed for the user's request.`,
+              });
+              consecutiveNoProgressIterations += 1;
+              if (consecutiveNoProgressIterations >= MAX_NO_PROGRESS_TURNS) {
+                throw new Error(
+                  `The agent repeatedly attempted an unsafe design-direction action (${MAX_NO_PROGRESS_TURNS} turns).`,
+                );
+              }
+              continue;
+            }
+            const toolResults: string[] = [];
+            let handledFilesystemAction = false;
+            let handledFilesystemMutation = false;
+            const askQuestionsAction = actions.find(
+              (a): a is Extract<AgentAction, { type: 'ask_questions' }> =>
+                a.type === 'ask_questions',
+            );
+            const respondAction = actions.find(
+              (a): a is Extract<AgentAction, { type: 'respond' }> => a.type === 'respond',
+            );
+            const finishAction = actions.find(
+              (a): a is Extract<AgentAction, { type: 'finish' }> => a.type === 'finish',
+            );
+            for (const currentAction of actions) {
+              const currentStepId = randomUUID();
+              const actionStartedAt = new Date();
+              if (currentAction.type === 'read_files') {
+                handledFilesystemAction = true;
+                const detail = currentAction.files
+                  .map((request) => {
+                    const range =
+                      request.startLine !== undefined || request.endLine !== undefined
+                        ? ` (${request.startLine ?? 1}-${request.endLine ?? 'EOF'})`
+                        : ' (full)';
+                    return `${request.path}${range}`;
+                  })
+                  .join('\n');
+                const step: AgentStep = {
+                  id: currentStepId,
+                  kind: 'read',
+                  title: `Reading ${currentAction.files.length} file${currentAction.files.length === 1 ? '' : 's'}`,
+                  detail,
+                  status: 'running',
+                  startedAt: actionStartedAt.toISOString(),
+                };
+                emitStep(step);
+                let remainingBudget = MAX_READ_RESULT_CHARS;
+                const observations = currentAction.files
+                  .map((request) => {
+                    const observation = formatReadObservation(
+                      request.path,
+                      files.get(request.path),
+                      request,
+                      remainingBudget,
+                    );
+                    remainingBudget = Math.max(0, remainingBudget - observation.length - 2);
+                    return observation;
+                  })
+                  .join('\n\n');
+                const completedAt = new Date();
+                emitStep({
+                  ...step,
+                  status: 'complete',
+                  completedAt: completedAt.toISOString(),
+                  durationMs: completedAt.getTime() - actionStartedAt.getTime(),
+                });
+                toolResults.push(`read_files result:\n${observations}`);
+                continue;
+              }
+              if (currentAction.type === 'write_file') {
+                handledFilesystemAction = true;
+                if (isForbiddenEnvPath(currentAction.path)) {
+                  toolResults.push(
+                    `write_file error: refused to write ${currentAction.path}. Use .env.example with VITE_* keys only.`,
+                  );
+                  continue;
+                }
+                handledFilesystemMutation = true;
+                const existed = files.has(currentAction.path);
+                const before = files.get(currentAction.path);
+                const step = provisionalSteps.get(`write_file:${currentAction.path}`) ?? {
+                  id: currentStepId,
+                  kind: existed ? 'edit' : 'write',
+                  title: `${existed ? 'Writing' : 'Creating'} ${currentAction.path}`,
+                  status: 'running' as const,
+                  startedAt: actionStartedAt.toISOString(),
+                };
+                if (!provisionalSteps.has(`write_file:${currentAction.path}`)) emitStep(step);
+                files.set(currentAction.path, currentAction.content);
+                pendingBatch.push({
+                  change: {
+                    file: currentAction.path,
+                    operation: existed ? 'update' : 'create',
+                    ...(before !== undefined ? { before } : {}),
+                    after: currentAction.content,
+                  },
+                  step,
+                });
+                toolResults.push(
+                  `write_file result: wrote ${currentAction.path} (${currentAction.content.length} characters).`,
+                );
+                continue;
+              }
+              if (currentAction.type === 'edit_file') {
+                handledFilesystemAction = true;
+                if (isForbiddenEnvPath(currentAction.path)) {
+                  toolResults.push(
+                    `edit_file error: refused to write ${currentAction.path}. Use .env.example with VITE_* keys only.`,
+                  );
+                  continue;
+                }
+                handledFilesystemMutation = true;
+                const before = files.get(currentAction.path);
+                if (before === undefined) {
+                  toolResults.push(
+                    `edit_file error: ${currentAction.path} does not exist. Use write_file to create it.`,
+                  );
+                  continue;
+                }
+                const step = provisionalSteps.get(`edit_file:${currentAction.path}`) ?? {
+                  id: currentStepId,
+                  kind: 'edit' as const,
+                  title: `Editing ${currentAction.path}`,
+                  status: 'running' as const,
+                  startedAt: actionStartedAt.toISOString(),
+                };
+                if (!provisionalSteps.has(`edit_file:${currentAction.path}`)) emitStep(step);
+                try {
+                  const after = applyAgentEdit(before, currentAction.search, currentAction.replace);
+                  files.set(currentAction.path, after);
+                  pendingBatch.push({
+                    change: { file: currentAction.path, operation: 'update', before, after },
+                    step,
+                  });
+                  toolResults.push(`edit_file result: updated ${currentAction.path}.`);
+                } catch (error) {
+                  const completedAt = new Date();
+                  const message = error instanceof Error ? error.message : 'Edit failed';
+                  emitStep({
+                    ...step,
+                    status: 'failed',
+                    detail: message,
+                    completedAt: completedAt.toISOString(),
+                    durationMs: completedAt.getTime() - actionStartedAt.getTime(),
+                  });
+                  toolResults.push(
+                    `edit_file error: ${message}. Read the file again before retrying.`,
+                  );
+                }
+                continue;
+              }
+              if (currentAction.type === 'delete_file') {
+                handledFilesystemAction = true;
+                handledFilesystemMutation = true;
+                const before = files.get(currentAction.path);
+                if (before === undefined) {
+                  toolResults.push(`delete_file result: ${currentAction.path} was already absent.`);
+                  continue;
+                }
+                const step: AgentStep = {
+                  id: currentStepId,
+                  kind: 'delete',
+                  title: `Deleting ${currentAction.path}`,
+                  status: 'running',
+                  startedAt: actionStartedAt.toISOString(),
+                };
+                emitStep(step);
+                files.delete(currentAction.path);
+                pendingBatch.push({
+                  change: { file: currentAction.path, operation: 'delete', before },
+                  step,
+                });
+                toolResults.push(`delete_file result: deleted ${currentAction.path}.`);
+              }
+              if (currentAction.type === 'generate_images') {
+                if (imagesGeneratedThisRun + currentAction.images.length > MAX_IMAGES_PER_RUN) {
+                  toolResults.push(
+                    `generate_images error: this run already used ${imagesGeneratedThisRun} of ${MAX_IMAGES_PER_RUN} images. Do not request more images.`,
+                  );
+                  continue;
+                }
+                imagesGeneratedThisRun += currentAction.images.length;
+                const imageResults = await mapWithConcurrency(
+                  currentAction.images,
+                  IMAGE_GENERATION_CONCURRENCY,
+                  async (spec) => {
+                    const jobId = randomUUID();
+                    const step: AgentStep = {
+                      id: jobId,
+                      kind: 'image',
+                      title: `Generating image: ${spec.semanticUse}`,
+                      detail: spec.prompt,
+                      status: 'running',
+                      startedAt: new Date().toISOString(),
+                    };
+                    emitStep(step);
+                    send('image-job', {
+                      id: jobId,
+                      status: 'running',
+                      semanticUse: spec.semanticUse,
+                      prompt: spec.prompt,
+                      placeholderToken: spec.placeholderToken,
+                    });
+
+                    try {
+                      if (!isImageGenReady || !imageConfig) {
+                        throw new Error('Image generation is unavailable');
+                      }
+                      const decryptedKey = decryptApiKey(imageConfig.encryptedKey);
+                      let lastError: unknown;
+                      for (let attempt = 1; attempt <= 2; attempt += 1) {
+                        try {
+                          const imgRes = await generateImage(
+                            imageConfig.model,
+                            spec.prompt,
+                            decryptedKey,
+                            {
+                              baseUrl: imageConfig.baseUrl,
+                              signal: abortController.signal,
+                              timeoutMs: 120_000,
+                            },
+                          );
+                          const asset = await uploadProjectAsset({
+                            projectId,
+                            createdById: session.user.id,
+                            bytes: imgRes.bytes,
+                            mediaType: imgRes.mediaType,
+                            prompt: spec.prompt,
+                            source: 'generated',
+                          });
+                          await db.imageProviderConfig.update({
+                            where: { id: imageConfig.id },
+                            data: { lastUsedAt: new Date() },
+                          });
+                          const completedAt = new Date();
+                          emitStep({
+                            ...step,
+                            status: 'complete',
+                            completedAt: completedAt.toISOString(),
+                            durationMs: completedAt.getTime() - new Date(step.startedAt).getTime(),
+                          });
+                          send('image-job', {
+                            id: jobId,
+                            status: 'complete',
+                            publicUrl: asset.publicUrl,
+                            assetId: asset.id,
+                            placeholderToken: spec.placeholderToken,
+                          });
+                          return `${spec.semanticUse}: ${asset.publicUrl}`;
+                        } catch (error) {
+                          lastError = error;
+                          if (abortController.signal.aborted) throw error;
+                          if (!isRetryableImageError(error)) break;
+                        }
+                      }
+                      throw lastError;
+                    } catch (error) {
+                      const completedAt = new Date();
+                      const message =
+                        error instanceof Error ? error.message : 'Image generation failed';
+                      emitStep({
+                        ...step,
+                        status: 'failed',
+                        detail: message,
+                        completedAt: completedAt.toISOString(),
+                        durationMs: completedAt.getTime() - new Date(step.startedAt).getTime(),
+                      });
+                      send('image-job', {
+                        id: jobId,
+                        status: 'failed',
+                        error: message,
+                        placeholderToken: spec.placeholderToken,
+                      });
+                      return `${spec.semanticUse}: FAILED (${message})`;
+                    }
+                  },
+                );
+                toolResults.push(
+                  `generate_images result:\n${imageResults.join('\n')}\nUse only the successful absolute URLs in source files. Do not write placeholder tokens for failed images.`,
+                );
+                handledFilesystemAction = true;
+                handledFilesystemMutation = true;
+              }
+              if (currentAction.type === 'propose_design_directions') {
+                // Supersede any older pending sets so `getActive` returns the newest.
+                await db.designDirectionSet.updateMany({
+                  where: { projectId, status: 'pending' },
+                  data: { status: 'skipped' },
+                });
+
+                const directionSet = await db.designDirectionSet.create({
+                  data: {
+                    projectId,
+                    originalRequest: prompt ?? '',
+                    status: 'pending',
+                    directions: {
+                      create: currentAction.directions.map((d, idx) => ({
+                        orderNumber: idx,
+                        title: d.title,
+                        visualBrief: d.visualBrief,
+                        imagePrompt: d.imagePrompt,
+                        palette: d.palette,
+                        typography: d.typography,
+                        layoutNotes: d.layoutNotes,
+                        status: 'generating',
+                      })),
+                    },
+                  },
+                  include: { directions: { orderBy: { orderNumber: 'asc' } } },
+                });
+
+                send('design-directions', {
+                  id: directionSet.id,
+                  status: 'pending',
+                  originalRequest: prompt ?? '',
+                  directions: directionSet.directions,
+                });
+
+                const dirStep: AgentStep = {
+                  id: randomUUID(),
+                  kind: 'direction',
+                  title: 'Proposing 3 design directions',
+                  detail: 'Generating preview moodboards for concepts',
+                  status: 'running',
+                  startedAt: new Date().toISOString(),
+                };
+                emitStep(dirStep);
+
+                const settled = await Promise.allSettled(
+                  directionSet.directions.map(async (dir) => {
+                    if (!isImageGenReady || !imageConfig) return null;
+                    try {
+                      const decryptedKey = decryptApiKey(imageConfig.encryptedKey);
+                      const imgRes = await generateImage(
+                        imageConfig.model,
+                        dir.imagePrompt,
+                        decryptedKey,
+                        {
+                          baseUrl: imageConfig.baseUrl,
+                          signal: abortController.signal,
+                        },
+                      );
+                      const asset = await uploadProjectAsset({
+                        projectId,
+                        createdById: session.user.id,
+                        bytes: imgRes.bytes,
+                        mediaType: imgRes.mediaType,
+                        prompt: dir.imagePrompt,
+                        source: 'generated',
+                      });
+                      await db.designDirection.update({
+                        where: { id: dir.id },
+                        data: { status: 'ready', previewAssetId: asset.id },
+                      });
+                      return { directionId: dir.id, assetId: asset.id, publicUrl: asset.publicUrl };
+                    } catch (err) {
+                      await db.designDirection.update({
+                        where: { id: dir.id },
+                        data: {
+                          status: 'failed',
+                          errorMessage:
+                            err instanceof Error ? err.message : 'Preview generation failed',
+                        },
+                      });
+                      return null;
+                    }
+                  }),
+                );
+
+                // If no direction ended up ready, the set is unusable — mark it failed
+                // so the UI can show a clear state instead of a set of broken cards.
+                const readyCount = settled.filter(
+                  (r) => r.status === 'fulfilled' && r.value !== null,
+                ).length;
+                const setStatus = readyCount > 0 ? 'ready' : 'failed';
+
+                await db.designDirectionSet.update({
+                  where: { id: directionSet.id },
+                  data: { status: setStatus },
+                });
+
+                const updatedSet = await db.designDirectionSet.findUnique({
+                  where: { id: directionSet.id },
+                  include: {
+                    directions: {
+                      orderBy: { orderNumber: 'asc' },
+                      include: { previewAsset: true },
+                    },
+                  },
+                });
+
+                const completedAt = new Date();
+                emitStep({
+                  ...dirStep,
+                  status: setStatus === 'ready' ? 'complete' : 'failed',
+                  detail:
+                    setStatus === 'ready'
+                      ? 'Generating preview moodboards for concepts'
+                      : 'All design previews failed to generate',
+                  completedAt: completedAt.toISOString(),
+                  durationMs: completedAt.getTime() - new Date(dirStep.startedAt).getTime(),
+                });
+
+                send('design-directions', {
+                  id: directionSet.id,
+                  status: setStatus,
+                  originalRequest: prompt ?? '',
+                  directions: updatedSet?.directions ?? [],
+                });
+
+                const assistantMsg = await db.chatMessage.create({
+                  data: {
+                    projectId,
+                    role: 'assistant',
+                    content: 'Proposed 3 design directions for user selection.',
+                    model: `${providerName}:${body.modelName}`,
+                    tokenUsage: finalUsage,
+                    toolCalls: runSteps as never,
+                  },
+                });
+
+                send('ready', {
+                  userMessage: messageRecord(userMessage),
+                  assistantMessage: messageRecord(assistantMsg),
+                  files: [...files].map(([p, c]) => ({ path: p, content: c })),
+                  versionNumber: latestVersion,
+                });
+                return;
+              }
+            }
+            // F-10: commit all buffered file mutations of this turn together
+            let autofixNote: string | null = null;
+            if (pendingBatch.length > 0) {
+              await flushPendingBatch();
+              try {
+                const autofix = applyStackContract(files);
+                if (autofix.changes.length > 0) {
+                  await persistAutofix(autofix.changes);
+                  files.clear();
+                  for (const [path, content] of autofix.files) files.set(path, content);
+                  autofixNote = autofix.syntheticToolResult;
+                }
+              } catch (error) {
+                console.error('generate.autofix_skipped', error);
+                autofixNote = 'autofix skipped: contract checker failed after files were saved.';
+              }
+            }
+            if (handledFilesystemMutation) {
+              consecutiveNoProgressIterations = 0;
+            } else if (!askQuestionsAction && !respondAction && !finishAction) {
+              consecutiveNoProgressIterations += 1;
+              if (consecutiveNoProgressIterations >= MAX_NO_PROGRESS_TURNS) {
+                throw new Error(
+                  `The agent made no filesystem progress after ${MAX_NO_PROGRESS_TURNS} turns.`,
+                );
+              }
+            }
+
+            if (handledFilesystemAction) {
+              if (usedNativeToolCalls) {
+                streamedToolCalls.forEach((call, index) => {
+                  messages.push({
+                    role: 'tool',
+                    toolCallId: call.id || `call_${index}`,
+                    content: toolResults[index] ?? toolResults.join('\n\n'),
+                  });
+                });
+                if (autofixNote) {
+                  const last = messages[messages.length - 1];
+                  if (last?.role === 'tool') last.content = `${last.content}\n\n${autofixNote}`;
+                }
+              } else {
+                if (autofixNote) toolResults.push(autofixNote);
+                messages.push({ role: 'user', content: toolResults.join('\n\n') });
+              }
+              if (!askQuestionsAction && !respondAction && !finishAction) {
+                continue;
+              }
+            }
+
+            if (askQuestionsAction) {
+              const content = askQuestionsAction.questions
+                .map((item, index) => `${index + 1}. ${item.question}`)
+                .join('\n');
+              const assistantMessage = await db.chatMessage.create({
+                data: {
+                  projectId,
+                  role: 'assistant',
+                  content,
+                  model: `${providerName}:${body.modelName}`,
+                  toolCalls: runSteps as never,
+                },
+              });
+              send('questions', {
+                questions: askQuestionsAction.questions,
+                userMessage: messageRecord(userMessage),
+                assistantMessage: messageRecord(assistantMessage),
+              });
+              return;
+            }
+            if (respondAction) {
+              await completeRun(respondAction.message);
+              return;
+            }
+            if (finishAction) {
+              await completeRun(finishAction.summary);
+              return;
+            }
+          }
+          throw new Error(
+            MAX_ITERATIONS === null
+              ? 'Agent ran for an unusually long time without finishing.'
+              : `Agent exceeded ${MAX_ITERATIONS} steps without finishing`,
+          );
+        } catch (error) {
+          for (const [path, original] of activeProvisionalOriginals) {
+            send(
+              'file-preview',
+              original === null
+                ? { operation: 'delete', path }
+                : { operation: 'update', path, content: original },
+            );
+          }
+          if (stoppedByClient) {
+            send('failed', { message: 'Generation stopped. Completed changes were kept.' });
+          } else {
+            send('failed', {
+              message: error instanceof Error ? error.message : 'Agent run failed',
+            });
+          }
+        } finally {
+          // The run is over (finished, failed, or aborted) — free the project for
+          // the next generation.
+          await releaseGenerationLease();
+          try {
+            controller.close();
+          } catch {
+            // Stream already closed or errored (e.g. client disconnect).
+          }
+        }
+      },
+    });
+
+    const response = new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      },
+    });
+    // From here on the stream owns the lease and releases it in its own
+    // `finally`; the outer handler must not release it early.
+    leaseTransferredToStream = true;
+    return response;
+  } finally {
+    if (!leaseTransferredToStream) {
+      await releaseGenerationLease();
+    }
+  }
 }

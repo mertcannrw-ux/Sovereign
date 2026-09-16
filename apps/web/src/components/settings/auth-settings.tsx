@@ -23,6 +23,7 @@ import { Separator } from '@/components/ui/separator';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@app-builder/ui/utils';
+import { trpc } from '@/lib/trpc/client';
 
 /* ── Types ───────────────────────────────────────────────── */
 
@@ -62,8 +63,8 @@ interface AppUser {
   name: string | null;
   role: string;
   isActive: boolean;
-  lastLoginAt: string | null;
-  createdAt: string;
+  lastLoginAt: Date | null;
+  createdAt: Date;
 }
 
 /* ── Props ──────────────────────────────────────────────────── */
@@ -80,6 +81,10 @@ const ACTIONS: PermissionDef['action'][] = ['create', 'read', 'update', 'delete'
 /* ── Component ──────────────────────────────────────────────── */
 
 export function AuthSettings({ projectId }: AuthSettingsProps) {
+  // tRPC's typed client handles the HTTP method and superjson envelope for us;
+  // the previous hand-rolled fetches POSTed queries (405) and read the tRPC v10
+  // `result.data` shape, so config, users and saves all silently failed.
+  const utils = trpc.useUtils();
   const [config, setConfig] = useState<AuthConfig | null>(null);
   const [users, setUsers] = useState<AppUser[]>([]);
   const [isLoadingConfig, setIsLoadingConfig] = useState(true);
@@ -119,23 +124,15 @@ export function AuthSettings({ projectId }: AuthSettingsProps) {
   const loadConfig = async () => {
     setIsLoadingConfig(true);
     try {
-      const response = await fetch('/api/trpc/appAuth.getConfig', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId }),
-      });
-      const data = await response.json();
-      if (data.result?.data) {
-        const c = data.result.data as AuthConfig;
-        setConfig(c);
-        setRoles(c.roles as RoleDef[]);
-        setPermissions(c.permissions as PermissionDef[]);
-        setBranding(c.branding ?? {});
-      } else {
-        setError('Failed to load auth configuration');
-      }
+      const data = (await utils.client.appAuth.getConfig.query({
+        projectId,
+      })) as unknown as AuthConfig;
+      setConfig(data);
+      setRoles(data.roles);
+      setPermissions(data.permissions);
+      setBranding(data.branding ?? {});
     } catch {
-      setError('Failed to connect to server');
+      setError('Failed to load auth configuration');
     } finally {
       setIsLoadingConfig(false);
     }
@@ -144,15 +141,8 @@ export function AuthSettings({ projectId }: AuthSettingsProps) {
   const loadUsers = async () => {
     setIsLoadingUsers(true);
     try {
-      const response = await fetch('/api/trpc/appAuth.listUsers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId }),
-      });
-      const data = await response.json();
-      if (data.result?.data) {
-        setUsers(data.result.data as AppUser[]);
-      }
+      const data = await utils.client.appAuth.listUsers.query({ projectId });
+      setUsers(data);
     } catch {
       // silently fail
     } finally {
@@ -164,37 +154,30 @@ export function AuthSettings({ projectId }: AuthSettingsProps) {
     setIsSaving(true);
     setSaveResult(null);
     try {
-      const response = await fetch('/api/trpc/appAuth.updateConfig', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId,
-          config: {
-            ...(config && {
-              emailAuth: config.emailAuth,
-              googleAuth: config.googleAuth,
-              githubAuth: config.githubAuth,
-              magicLinkAuth: config.magicLinkAuth,
-              sessionDuration: config.sessionDuration,
-            }),
-            roles,
-            permissions,
-            branding,
-          },
-        }),
+      const data = (await utils.client.appAuth.updateConfig.mutate({
+        projectId,
+        config: {
+          ...(config && {
+            emailAuth: config.emailAuth,
+            googleAuth: config.googleAuth,
+            githubAuth: config.githubAuth,
+            magicLinkAuth: config.magicLinkAuth,
+            sessionDuration: config.sessionDuration,
+          }),
+          roles,
+          permissions,
+          branding,
+        },
+      })) as unknown as AuthConfig;
+      setConfig(data);
+      setSaveResult({ success: true, message: 'Auth settings saved successfully' });
+      clearTimeout(saveResultTimerRef.current);
+      saveResultTimerRef.current = window.setTimeout(() => setSaveResult(null), 3000);
+    } catch (error) {
+      setSaveResult({
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to save',
       });
-      const data = await response.json();
-      if (data.result?.data) {
-        setConfig(data.result.data as AuthConfig);
-        setSaveResult({ success: true, message: 'Auth settings saved successfully' });
-        clearTimeout(saveResultTimerRef.current);
-        saveResultTimerRef.current = window.setTimeout(() => setSaveResult(null), 3000);
-      } else {
-        const errorMessage = data.error?.message ?? 'Failed to save';
-        setSaveResult({ success: false, message: errorMessage });
-      }
-    } catch {
-      setSaveResult({ success: false, message: 'Failed to connect to server' });
     } finally {
       setIsSaving(false);
     }
@@ -204,31 +187,21 @@ export function AuthSettings({ projectId }: AuthSettingsProps) {
     if (!newUserEmail.trim()) return;
     setIsCreatingUser(true);
     try {
-      const response = await fetch('/api/trpc/appAuth.createUser', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId,
-          email: newUserEmail.trim(),
-          name: newUserName.trim() || undefined,
-          password: newUserPassword || undefined,
-          role: newUserRole,
-        }),
+      await utils.client.appAuth.createUser.mutate({
+        projectId,
+        email: newUserEmail.trim(),
+        name: newUserName.trim() || undefined,
+        password: newUserPassword || undefined,
+        role: newUserRole as 'user' | 'admin' | 'owner',
       });
-      const data = await response.json();
-      if (data.result?.data) {
-        setShowNewUser(false);
-        setNewUserEmail('');
-        setNewUserName('');
-        setNewUserPassword('');
-        setNewUserRole('user');
-        await loadUsers();
-      } else {
-        const errorMessage = data.error?.message ?? 'Failed to create user';
-        setError(errorMessage);
-      }
-    } catch {
-      setError('Failed to create user');
+      setShowNewUser(false);
+      setNewUserEmail('');
+      setNewUserName('');
+      setNewUserPassword('');
+      setNewUserRole('user');
+      await loadUsers();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Failed to create user');
     } finally {
       setIsCreatingUser(false);
     }
@@ -236,16 +209,9 @@ export function AuthSettings({ projectId }: AuthSettingsProps) {
 
   const handleDeleteUser = async (userId: string) => {
     try {
-      const response = await fetch('/api/trpc/appAuth.deleteUser', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId, userId }),
-      });
-      const data = await response.json();
-      if (data.result?.data?.success) {
-        setDeleteUserId(null);
-        await loadUsers();
-      }
+      await utils.client.appAuth.deleteUser.mutate({ projectId, userId });
+      setDeleteUserId(null);
+      await loadUsers();
     } catch {
       // silently fail
     }

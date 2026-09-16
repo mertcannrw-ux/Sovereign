@@ -70,19 +70,101 @@ function isLoopbackIPv6(ip: string): boolean {
   return groups.slice(0, 7).every((g) => /^0+$/.test(g)) && /^0*1$/.test(groups[7]!);
 }
 
-function isPrivateIPv6(ip: string): boolean {
-  const lower = ip.toLowerCase();
-  // Loopback (F-12: handles ::1 and uncompressed forms)
-  if (isLoopbackIPv6(lower)) return true;
-  // Link-local
-  if (lower.startsWith('fe80:')) return true;
-  // Unique Local Address (ULA fc00::/7)
-  if (lower.startsWith('fc') || lower.startsWith('fd')) return true;
-  // IPv4-mapped IPv6
-  if (lower.startsWith('::ffff:')) {
-    const ipv4 = lower.slice(7);
-    if (isIPv4(ipv4)) return isPrivateIPv4(ipv4);
+/**
+ * Parse an IPv6 address into its eight 16-bit groups. Handles compressed
+ * (`::`), fully expanded, zone-scoped (`fe80::1%eth0`) and IPv4-embedded
+ * (`::ffff:127.0.0.1`) forms. Returns null when the address is unparseable.
+ */
+function parseIPv6Groups(ip: string): number[] | null {
+  let value = ip.toLowerCase();
+  const zone = value.indexOf('%');
+  if (zone >= 0) value = value.slice(0, zone);
+
+  // Rewrite a trailing dotted-quad as two hex groups so the rest of the
+  // parser only deals with colon-separated groups.
+  const lastColon = value.lastIndexOf(':');
+  const tail = lastColon >= 0 ? value.slice(lastColon + 1) : value;
+  if (tail.includes('.')) {
+    const octets = tail.split('.');
+    if (
+      octets.length !== 4 ||
+      octets.some((part) => !/^\d{1,3}$/.test(part) || Number(part) > 255)
+    ) {
+      return null;
+    }
+    const [a, b, c, d] = octets.map(Number) as [number, number, number, number];
+    const high = (((a << 8) | b) >>> 0).toString(16);
+    const low = (((c << 8) | d) >>> 0).toString(16);
+    value = `${value.slice(0, lastColon + 1)}${high}:${low}`;
   }
+
+  const halves = value.split('::');
+  if (halves.length > 2) return null;
+  const left = halves[0] ? halves[0].split(':').filter((part) => part !== '') : [];
+  const right =
+    halves.length === 2 && halves[1] ? halves[1].split(':').filter((part) => part !== '') : [];
+  if (halves.length === 2) {
+    if (8 - left.length - right.length < 0) return null;
+  } else if (left.length !== 8) {
+    return null;
+  }
+  const groups = [
+    ...left,
+    ...Array.from({ length: halves.length === 2 ? 8 - left.length - right.length : 0 }, () => '0'),
+    ...right,
+  ];
+  if (groups.length !== 8) return null;
+
+  const parsed = groups.map((group) =>
+    /^[0-9a-f]{1,4}$/.test(group) ? Number.parseInt(group, 16) : Number.NaN,
+  );
+  return parsed.some((group) => Number.isNaN(group)) ? null : parsed;
+}
+
+function groupsToIPv4(high: number, low: number): string {
+  return `${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`;
+}
+
+/**
+ * IPv6 private/reserved detection. Uses the parsed groups rather than string
+ * prefixes so compressed, uncompressed, IPv4-embedded and NAT64/6to4/Teredo
+ * forms cannot slip past the check.
+ */
+function isPrivateIPv6(ip: string): boolean {
+  const groups = parseIPv6Groups(ip);
+  // Fail closed: an address we cannot parse must not reach the network.
+  if (!groups) return true;
+
+  const g0 = groups[0]!;
+  const g1 = groups[1]!;
+  const g2 = groups[2]!;
+  const g3 = groups[3]!;
+  const g4 = groups[4]!;
+  const g5 = groups[5]!;
+  const g6 = groups[6]!;
+  const g7 = groups[7]!;
+
+  // ::/96 — unspecified `::`, loopback `::1`, and deprecated IPv4-compatible
+  // forms (`::127.0.0.1`, `::7f00:1`).
+  if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0) return true;
+  // ::ffff:0:0/96 — IPv4-mapped; inspect the embedded IPv4 address.
+  if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0xffff) {
+    return isPrivateIPv4(groupsToIPv4(g6, g7));
+  }
+  // Link-local fe80::/10 and deprecated site-local fec0::/10.
+  if ((g0 & 0xffc0) === 0xfe80 || (g0 & 0xffc0) === 0xfec0) return true;
+  // Unique local fc00::/7.
+  if ((g0 & 0xfe00) === 0xfc00) return true;
+  // Multicast ff00::/8.
+  if ((g0 & 0xff00) === 0xff00) return true;
+  // NAT64 64:ff9b::/96 — inspect the embedded IPv4 address.
+  if (g0 === 0x64 && g1 === 0xff9b && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0) {
+    return isPrivateIPv4(groupsToIPv4(g6, g7));
+  }
+  // 6to4 2002::/16 — the next 32 bits carry the embedded IPv4 address.
+  if (g0 === 0x2002) return isPrivateIPv4(groupsToIPv4(g1, g2));
+  // Teredo 2001:0000::/32 — the next 32 bits carry the Teredo server IPv4.
+  if (g0 === 0x2001 && g1 === 0x0000) return isPrivateIPv4(groupsToIPv4(g2, g3));
   return false;
 }
 

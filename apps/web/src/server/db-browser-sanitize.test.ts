@@ -101,6 +101,52 @@ describe('sanitizeSqlForTenant — blocked statements', () => {
   });
 });
 
+describe('sanitizeSqlForTenant — table-reference bypass regressions', () => {
+  const OTHER = 'p_fedcba9876543210fedcba9876543210';
+
+  const blocked: Array<[string, string]> = [
+    ['ONLY before the schema', `SELECT * FROM ONLY ${OTHER}.users`],
+    ['ONLY inside a subquery', `SELECT * FROM (SELECT * FROM ONLY ${OTHER}.users) q`],
+    ['ONLY after a JOIN', `SELECT * FROM users u JOIN ONLY ${OTHER}.secrets s ON true`],
+    ['parenthesized table reference', `SELECT * FROM (${OTHER}.users)`],
+    ['comma-separated table list', `SELECT * FROM users, ${OTHER}.secrets`],
+    [
+      'comma after an ON clause',
+      `SELECT * FROM users u JOIN notes n ON true, ONLY ${OTHER}.secrets`,
+    ],
+    ['subquery column list with a comma', `SELECT * FROM (SELECT a, b FROM ${OTHER}.users) q`],
+    ['CTE that hides the outer table', `WITH x AS (SELECT 1) SELECT * FROM ${OTHER}.users`],
+    ['missing whitespace before FROM', `SELECT * FROM (SELECT 1)FROM ${OTHER}.users`],
+    ['missing whitespace after FROM', `SELECT *FROM ${OTHER}.users`],
+    ['leading keyword without whitespace', `SELECT*FROM ${OTHER}.users`],
+    ['quoted schema with a keyword-named table', `SELECT * FROM "${OTHER}"."from"`],
+    ['quoted schema and table', `SELECT * FROM "${OTHER}"."users"`],
+  ];
+
+  for (const [label, sql] of blocked) {
+    it(`blocks ${label}`, () => {
+      expect(sanitizeSqlForTenant(sql, TENANT)).toBeNull();
+    });
+  }
+
+  const allowed: Array<[string, string]> = [
+    ['self-qualified ONLY', `SELECT * FROM ONLY ${TENANT}.users`],
+    ['self-qualified parenthesized reference', `SELECT * FROM (${TENANT}.users)`],
+    ['self-qualified comma list', `SELECT * FROM ${TENANT}.users, ${TENANT}.notes`],
+    ['self-qualified reference without whitespace', `SELECT *FROM ${TENANT}.users`],
+    ['parenthesized subquery with a comma', `SELECT * FROM (SELECT a, b FROM ${TENANT}.users) q`],
+    ['quoted keyword table name', 'SELECT * FROM "from"'],
+    ['quoted alias named from', 'SELECT * FROM users AS "from" WHERE "from".id = 1'],
+    ['set-returning function with a comma', 'SELECT * FROM generate_series(1, 3) AS n'],
+  ];
+
+  for (const [label, sql] of allowed) {
+    it(`allows ${label}`, () => {
+      expect(sanitizeSqlForTenant(sql, TENANT)).not.toBeNull();
+    });
+  }
+});
+
 describe('quotePgIdent', () => {
   it('quotes valid identifiers', () => {
     expect(quotePgIdent('users')).toBe('"users"');

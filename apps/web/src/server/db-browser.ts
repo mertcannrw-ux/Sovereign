@@ -12,6 +12,8 @@ import { z } from 'zod';
 const IDENTIFIER_REGEX = /^[a-z][a-z0-9_]*$/;
 const MAX_IDENTIFIER_LENGTH = 63;
 const MAX_ROWS = 100;
+/** Upper bound on the SQL text the tokenizer below is asked to scan. */
+const MAX_SQL_LENGTH = 200_000;
 
 const identifierSchema = z
   .string()
@@ -176,44 +178,187 @@ const FORBIDDEN_FUNCTIONS = [
   'current_setting',
 ];
 
+// ─── Table-reference scanning ─────────────────────────────
+//
+// Tenant schema names are deterministic (`p_<project uuid>`), so a foreign
+// schema reference must be caught no matter which valid SQL syntax hides it:
+// `FROM ONLY`, parenthesized table references, comma lists, subqueries, or
+// missing whitespace around keywords. Regex captures over the raw text cannot
+// do this safely — a capture that ends in the wrong place swallows every later
+// `FROM` — so this scanner tokenizes the already-stripped SQL (string literals
+// and comments are gone) and only treats whole unquoted tokens as keywords.
+
+type SqlToken = { kind: 'word'; value: string; quoted: boolean } | { kind: 'punct'; value: string };
+
+/** Reserved clause keywords that terminate a FROM clause's table list. */
+const TABLE_LIST_TERMINATORS = new Set([
+  'where',
+  'group',
+  'having',
+  'window',
+  'union',
+  'intersect',
+  'except',
+  'order',
+  'limit',
+  'offset',
+  'fetch',
+  'for',
+  'join',
+]);
+
+function isIdentifierToken(
+  token: SqlToken | undefined,
+): token is Extract<SqlToken, { kind: 'word' }> {
+  if (!token || token.kind !== 'word') return false;
+  return token.quoted || /^[A-Za-z_]/.test(token.value);
+}
+
+function tokenizeSql(source: string): SqlToken[] {
+  const tokens: SqlToken[] = [];
+  let index = 0;
+  while (index < source.length) {
+    const character = source[index]!;
+    if (/\s/.test(character)) {
+      index += 1;
+      continue;
+    }
+    if (character === '"') {
+      let value = '';
+      index += 1;
+      while (index < source.length) {
+        if (source[index] === '"') {
+          if (source[index + 1] === '"') {
+            value += '"';
+            index += 2;
+            continue;
+          }
+          index += 1;
+          break;
+        }
+        value += source[index];
+        index += 1;
+      }
+      tokens.push({ kind: 'word', value, quoted: true });
+      continue;
+    }
+    if (/[A-Za-z_]/.test(character)) {
+      let value = '';
+      while (index < source.length && /[A-Za-z0-9_$]/.test(source[index]!)) {
+        value += source[index];
+        index += 1;
+      }
+      tokens.push({ kind: 'word', value, quoted: false });
+      continue;
+    }
+    if (/[0-9]/.test(character)) {
+      let value = '';
+      while (index < source.length && /[0-9.]/.test(source[index]!)) {
+        value += source[index];
+        index += 1;
+      }
+      tokens.push({ kind: 'word', value, quoted: false });
+      continue;
+    }
+    tokens.push({ kind: 'punct', value: character });
+    index += 1;
+  }
+  return tokens;
+}
+
+/** True when the token at `index` starts a `schema.table` table reference. */
+function isForeignQualifiedName(
+  tokens: SqlToken[],
+  index: number,
+  tenantSchema: string | undefined,
+): boolean {
+  const schema = tokens[index];
+  const dot = tokens[index + 1];
+  const table = tokens[index + 2];
+  if (!isIdentifierToken(schema) || !isIdentifierToken(table)) return false;
+  if (!dot || dot.kind !== 'punct' || dot.value !== '.') return false;
+  return !tenantSchema || schema.value.toLowerCase() !== tenantSchema.toLowerCase();
+}
+
 /**
  * Detect schema-qualified table references in FROM/JOIN clauses that point to a
  * schema other than the tenant's own. Unqualified names are safe (they resolve
- * via search_path); `tenantSchema.` prefixes are allowed as self-qualification.
- * Column references like `alias.column` in SELECT/WHERE are not table
- * references and are deliberately left untouched. Returns true on a foreign
- * schema reference.
+ * via search_path); a `tenantSchema.` prefix is allowed as self-qualification.
+ * Column references like `alias.column` in SELECT/WHERE never appear directly
+ * after FROM, JOIN or a table-list comma, so they are left untouched. Returns
+ * true on a foreign schema reference.
  */
 function referencesForeignSchema(stripped: string, tenantSchema?: string): boolean {
-  // Match the table list following FROM/JOIN. The capture group allows
-  // parentheses so parenthesized subqueries and CTEs are scanned, not just
-  // flat table lists. Parenthesized captures are pushed onto a stack and
-  // re-scanned for their own FROM/JOIN references.
-  const clauseRe =
-    /\b(FROM|JOIN)\s+([\s\S]*?)(?=\s+(?:WHERE|GROUP\s+BY|ORDER\s+BY|HAVING|LIMIT|OFFSET|UNION|INTERSECT|EXCEPT|JOIN)\b|$)/gi;
-  const stack: string[] = [stripped];
-  while (stack.length > 0) {
-    const source = stack.pop()!;
-    clauseRe.lastIndex = 0;
-    let m: RegExpExecArray | null;
-    while ((m = clauseRe.exec(source)) !== null) {
-      const tableList = m[2];
-      if (!tableList) continue;
-      // Split on commas that are NOT inside parentheses (subquery column lists).
-      for (const part of tableList.split(',')) {
-        // Accept optional double quotes around each identifier segment so
-        // "schema"."table" references are caught as well as schema.table.
-        const q = /^\s*"?([A-Za-z_][A-Za-z0-9_]*)"?\s*\.\s*"?([A-Za-z_][A-Za-z0-9_]*)"?\b/.exec(
-          part,
-        );
-        if (!q) {
-          // Parenthesized subquery or CTE: scan inside for its own FROM/JOIN
-          // references instead of giving up on the leading parenthesis.
-          if (part.includes('(')) stack.push(part);
-          continue;
+  const tokens = tokenizeSql(stripped);
+  const isTableModifier = (token: SqlToken): boolean =>
+    token.kind === 'word' &&
+    !token.quoted &&
+    (token.value.toLowerCase() === 'only' || token.value.toLowerCase() === 'lateral');
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]!;
+    if (token.kind !== 'word' || token.quoted) continue;
+    const keyword = token.value.toLowerCase();
+    if (keyword !== 'from' && keyword !== 'join') continue;
+
+    // Skip table-item modifiers and parenthesized table references so both
+    // `FROM ONLY other.users` and `FROM (other.users)` are inspected.
+    let itemStart = index + 1;
+    let depth = 0;
+    while (itemStart < tokens.length) {
+      const next = tokens[itemStart]!;
+      if (isTableModifier(next)) {
+        itemStart += 1;
+        continue;
+      }
+      if (next.kind === 'punct' && next.value === '(') {
+        depth += 1;
+        itemStart += 1;
+        continue;
+      }
+      break;
+    }
+    if (isForeignQualifiedName(tokens, itemStart, tenantSchema)) return true;
+
+    // Every top-level comma in a FROM clause introduces another table item, so
+    // inspect the reference following each one until the clause ends.
+    for (let cursor = itemStart; cursor < tokens.length; cursor += 1) {
+      const current = tokens[cursor]!;
+      if (current.kind === 'word') {
+        if (
+          depth === 0 &&
+          !current.quoted &&
+          TABLE_LIST_TERMINATORS.has(current.value.toLowerCase())
+        ) {
+          break;
         }
-        const schema = q[1]!.toLowerCase();
-        if (!tenantSchema || schema !== tenantSchema.toLowerCase()) return true;
+        continue;
+      }
+      if (current.value === '(') {
+        depth += 1;
+        continue;
+      }
+      if (current.value === ')') {
+        if (depth === 0) break;
+        depth -= 1;
+        continue;
+      }
+      if (current.value === ';') break;
+      if (current.value === ',' && depth === 0) {
+        let nextItem = cursor + 1;
+        while (nextItem < tokens.length) {
+          const candidate = tokens[nextItem]!;
+          if (isTableModifier(candidate)) {
+            nextItem += 1;
+            continue;
+          }
+          if (candidate.kind === 'punct' && candidate.value === '(') {
+            nextItem += 1;
+            continue;
+          }
+          break;
+        }
+        if (isForeignQualifiedName(tokens, nextItem, tenantSchema)) return true;
       }
     }
   }
@@ -228,6 +373,7 @@ function referencesForeignSchema(stripped: string, tenantSchema?: string): boole
  */
 export function sanitizeSqlForTenant(sql: string, tenantSchema?: string): string | null {
   const raw = sql.trim();
+  if (raw.length > MAX_SQL_LENGTH) return null;
   // Inspect the structural SQL with string literals, dollar-quoted bodies, and
   // comments removed, so legitimate quoted values are allowed.
   const stripped = stripSqlLiterals(raw).trim();

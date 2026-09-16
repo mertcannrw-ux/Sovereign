@@ -91,4 +91,33 @@ describe('validateOutboundUrl', () => {
       /Private IP address blocked/,
     );
   });
+
+  // Regression: string-prefix checks missed unspecified (`::`), compressed
+  // IPv4-compatible (`::127.0.0.1`, `::7f00:1`), site-local, multicast, NAT64,
+  // 6to4 and Teredo forms. Every case below previously passed validation.
+  const privateIpv6Literals: Array<[string, string]> = [
+    ['unspecified', '::'],
+    ['IPv4-compatible loopback', '::127.0.0.1'],
+    ['IPv4-compatible hex loopback', '::7f00:1'],
+    ['IPv4-mapped hex loopback', '::ffff:7f00:1'],
+    ['link-local inside fe80::/10', 'fe90::1'],
+    ['deprecated site-local', 'fec0::1'],
+    ['multicast', 'ff02::1'],
+    ['NAT64-mapped loopback', '64:ff9b::127.0.0.1'],
+    ['6to4-embedded loopback', '2002:7f00:0001::1'],
+    ['Teredo-embedded loopback', '2001:0000:7f00:0001::1'],
+  ];
+
+  for (const [label, address] of privateIpv6Literals) {
+    it(`blocks ${label} IPv6 address ${address}`, async () => {
+      lookup.mockResolvedValue([{ address, family: 6 }]);
+      await expect(validateOutboundUrl(`https://[${address}]/`)).rejects.toThrow(SsrfError);
+    });
+  }
+
+  it('still allows public IPv6 addresses', async () => {
+    lookup.mockResolvedValue([{ address: '2606:4700:4700::1111', family: 6 }]);
+    const result = await validateOutboundUrl('https://[2606:4700:4700::1111]/');
+    expect(result.addresses).toEqual(['2606:4700:4700::1111']);
+  });
 });

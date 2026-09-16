@@ -38,6 +38,7 @@ import {
 } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@app-builder/ui/utils';
+import { trpc } from '@/lib/trpc/client';
 
 /* ── Types ───────────────────────────────────────────────── */
 
@@ -89,6 +90,8 @@ const COLUMN_TYPES = [
   'UUID',
 ] as const;
 
+type ColumnType = (typeof COLUMN_TYPES)[number];
+
 /* ── Props ──────────────────────────────────────────────────── */
 
 interface DatabasePanelProps {
@@ -98,6 +101,10 @@ interface DatabasePanelProps {
 /* ── Component ──────────────────────────────────────────────── */
 
 export function DatabasePanel({ projectId }: DatabasePanelProps) {
+  // tRPC's typed client handles the HTTP method and superjson envelope for us;
+  // the previous hand-rolled fetches POSTed queries (405) and read the tRPC v10
+  // `result.data` shape, so every call in this panel silently failed.
+  const utils = trpc.useUtils();
   const [tables, setTables] = useState<TableInfo[]>([]);
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [tableSchema, setTableSchema] = useState<{
@@ -142,19 +149,10 @@ export function DatabasePanel({ projectId }: DatabasePanelProps) {
     setIsLoadingTables(true);
     setLoadError(null);
     try {
-      const response = await fetch('/api/trpc/database.listTables', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId }),
-      });
-      const data = await response.json();
-      if (data.result?.data) {
-        setTables(data.result.data);
-      } else {
-        setLoadError('Failed to load tables');
-      }
+      const data = await utils.client.database.listTables.query({ projectId });
+      setTables(data);
     } catch {
-      setLoadError('Failed to connect to server');
+      setLoadError('Failed to load tables');
     } finally {
       setIsLoadingTables(false);
     }
@@ -165,16 +163,9 @@ export function DatabasePanel({ projectId }: DatabasePanelProps) {
     setSelectedTable(tableName);
     setIsLoadingSchema(true);
     try {
-      const response = await fetch('/api/trpc/database.getTableSchema', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId, tableName }),
-      });
-      const data = await response.json();
+      const data = await utils.client.database.getTableSchema.query({ projectId, tableName });
       if (requestId !== schemaRequestIdRef.current || !isMountedRef.current) return;
-      if (data.result?.data) {
-        setTableSchema(data.result.data);
-      }
+      setTableSchema(data);
     } catch {
       // silently fail
     } finally {
@@ -188,35 +179,25 @@ export function DatabasePanel({ projectId }: DatabasePanelProps) {
     if (!newTableName.trim() || newColumns.length === 0) return;
     setIsCreating(true);
     try {
-      const response = await fetch('/api/trpc/database.createTable', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId,
-          tableName: newTableName.trim(),
-          columns: newColumns,
-        }),
+      await utils.client.database.createTable.mutate({
+        projectId,
+        tableName: newTableName.trim(),
+        columns: newColumns.map((column) => ({ ...column, type: column.type as ColumnType })),
       });
-      const data = await response.json();
-      if (data.result?.data?.success) {
-        setShowCreateDialog(false);
-        setNewTableName('');
-        setNewColumns([
-          {
-            name: 'id',
-            type: 'UUID',
-            nullable: false,
-            unique: true,
-            defaultValue: 'gen_random_uuid()',
-          },
-        ]);
-        await loadTables();
-      } else {
-        const errorMessage = data.error?.message ?? 'Failed to create table';
-        setLoadError(errorMessage);
-      }
-    } catch {
-      setLoadError('Failed to create table');
+      setShowCreateDialog(false);
+      setNewTableName('');
+      setNewColumns([
+        {
+          name: 'id',
+          type: 'UUID',
+          nullable: false,
+          unique: true,
+          defaultValue: 'gen_random_uuid()',
+        },
+      ]);
+      await loadTables();
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : 'Failed to create table');
     } finally {
       setIsCreating(false);
     }
@@ -225,13 +206,8 @@ export function DatabasePanel({ projectId }: DatabasePanelProps) {
   const handleDeleteTable = async (tableName: string) => {
     setIsDeleting(true);
     try {
-      const response = await fetch('/api/trpc/database.deleteTable', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId, tableName }),
-      });
-      const data = await response.json();
-      if (data.result?.data?.success) {
+      const data = await utils.client.database.deleteTable.mutate({ projectId, tableName });
+      if (data.success) {
         setDeleteConfirm(null);
         if (selectedTable === tableName) {
           setSelectedTable(null);
@@ -252,20 +228,13 @@ export function DatabasePanel({ projectId }: DatabasePanelProps) {
     setQueryResult(null);
     setQueryError(null);
     try {
-      const response = await fetch('/api/trpc/database.executeQuery', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId, sql: querySql }),
+      const data = await utils.client.database.executeQuery.mutate({
+        projectId,
+        sql: querySql,
       });
-      const data = await response.json();
-      if (data.result?.data) {
-        setQueryResult(data.result.data);
-      } else {
-        const errorMessage = data.error?.message ?? 'Query failed';
-        setQueryError(errorMessage);
-      }
-    } catch {
-      setQueryError('Failed to execute query');
+      setQueryResult(data);
+    } catch (error) {
+      setQueryError(error instanceof Error ? error.message : 'Failed to execute query');
     } finally {
       setIsQuerying(false);
     }

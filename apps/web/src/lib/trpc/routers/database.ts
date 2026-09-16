@@ -198,10 +198,14 @@ export const databaseRouter = router({
 
   /**
    * Execute a read-only SQL query against the project's database schema.
+   *
+   * Exposed as a mutation (POST) rather than a query (GET) so the statement
+   * travels in the request body instead of the URL query string — SQL consoles
+   * routinely exceed practical URL length limits and URLs are logged.
    */
   executeQuery: protectedProcedure
     .input(z.object({ projectId: z.string(), sql: z.string().min(1) }))
-    .query(async ({ ctx, input }) => {
+    .mutation(async ({ ctx, input }) => {
       await requireProjectRole(ctx, input.projectId, 'VIEWER');
 
       const rate = await checkRateLimit('dbQuery', ctx.user.id);
