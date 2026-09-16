@@ -213,6 +213,7 @@ CREATE TABLE "projects" (
     "published_at" TIMESTAMP(3),
     "vercel_project_id" TEXT,
     "generation_started_at" TIMESTAMP(3),
+    "generation_lease_token" TEXT,
 
     CONSTRAINT "projects_pkey" PRIMARY KEY ("id")
 );

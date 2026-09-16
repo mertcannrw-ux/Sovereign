@@ -57,11 +57,24 @@ async function getContainer(): Promise<WebContainer> {
  * A rejected `WebContainer.boot` never recovers, so this is the only way back
  * from a failed boot. Any diagnostics listener bound to the discarded container
  * is detached here; subscriptions are re-established by the next boot.
+ *
+ * The discarded instance must also be torn down: `WebContainer.boot` allows a
+ * single live instance, so merely dropping the cached promise made every later
+ * `boot()` reject with "Only a single WebContainer instance can be booted" and
+ * the preview's Retry button could never recover. `boot()` itself waits for a
+ * pending teardown, so a retry that races this is still ordered correctly.
  */
 function resetContainer(): void {
   diagnosticsUnsubscribe?.();
   diagnosticsUnsubscribe = null;
+  const discarded = containerPromise;
   containerPromise = null;
+  if (!discarded) return;
+  void discarded
+    .then((container) => container.teardown())
+    .catch(() => {
+      // Never booted (or already torn down) — nothing to release.
+    });
 }
 
 async function ensureParentDirectories(container: WebContainer, path: string) {

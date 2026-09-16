@@ -357,7 +357,12 @@ model Project {
   // on one project would interleave their file writes (last write wins) and
   // produce a corrupt mixed tree, so a run claims this and releases it when it
   // finishes. Stale values (crashed runs) are reclaimed after a timeout.
-  generationStartedAt DateTime? @map("generation_started_at")
+  //
+  // `generationLeaseToken` identifies the run holding the lease: release and
+  // renewal are conditional on it, so a run that was reclaimed cannot clear or
+  // extend the lease of the run that replaced it.
+  generationStartedAt  DateTime? @map("generation_started_at")
+  generationLeaseToken String?   @map("generation_lease_token")
 
   owner         User                  @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   organization  Organization          @relation(fields: [organizationId], references: [id], onDelete: Restrict)

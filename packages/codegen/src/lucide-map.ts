@@ -58,7 +58,18 @@ const EXTRA_ALIASES: Record<string, string> = {
 const LIB_PREFIX =
   /^(?:HiOutline|HiSolid|HiMini|Io5|Fa6|Fa|Md|Hi|Bs|Bi|Io|Ri|Ti|Gi|Cg|Tb|Fi|Rx|Pi|Sl|Si|Di|Im|Gr|Ai|Go|Lu)/;
 
-const LUCIDE_FROM_RE = /import\s+(?:type\s+)?([\s\S]*?)\s+from\s+(['"])lucide-react\2\s*;?/g;
+/**
+ * The import-clause grammar `rewriteImportClause` understands. Kept explicit
+ * (rather than a lazy `[\s\S]*?`) so a match can never begin at an earlier
+ * `import` in the file: the lazy form spanned every statement up to the lucide
+ * one, and the rewrite then replaced all of them — deleting the file's other
+ * imports and collapsing the lucide import to a bare fallback.
+ */
+const IMPORT_CLAUSE = String.raw`(?:[\w$]+\s*,\s*)?(?:\{[^}]*\}|\*\s+as\s+[\w$]+|[\w$]+)`;
+const LUCIDE_FROM_RE = new RegExp(
+  String.raw`(?<![\w$.])import\s+(type\s+)?(${IMPORT_CLAUSE})\s+from\s+(['"])lucide-react\3[ \t]*;?`,
+  'g',
+);
 
 interface NamedSpecifier {
   imported: string;
@@ -109,12 +120,14 @@ function resolveKnown(name: string): string | null {
 export function rewriteLucideSource(source: string): { source: string; changed: boolean } {
   if (!fileImportsLucide(source)) return { source, changed: false };
 
-  const next = source.replace(LUCIDE_FROM_RE, (full, clause: string, quote: string) => {
-    const rewritten = rewriteImportClause(clause);
-    const endedWithSemi = /;\s*$/.test(full);
-    const keyword = /^\s*import\s+type\s+/.test(full) ? 'import type' : 'import';
-    return `${keyword} ${rewritten} from ${quote}lucide-react${quote}${endedWithSemi ? ';' : ''}`;
-  });
+  const next = source.replace(
+    LUCIDE_FROM_RE,
+    (full, typeKeyword: string | undefined, clause: string, quote: string) => {
+      const rewritten = rewriteImportClause(clause);
+      const endedWithSemi = /;\s*$/.test(full);
+      return `${typeKeyword ? 'import type' : 'import'} ${rewritten} from ${quote}lucide-react${quote}${endedWithSemi ? ';' : ''}`;
+    },
+  );
 
   return { source: next, changed: next !== source };
 }

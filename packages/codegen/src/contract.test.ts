@@ -61,6 +61,37 @@ describe('applyStackContract', () => {
     expect(result.repaired).toEqual(expect.arrayContaining(['package.json', 'tsconfig.json']));
   });
 
+  it('normalizes a foreign module entry instead of appending a second one', () => {
+    const result = applyStackContract(
+      new Map([
+        [
+          'index.html',
+          '<html><head></head><body><div id="root"></div><script type="module" src="/src/index.tsx"></script></body></html>',
+        ],
+        ['src/App.tsx', 'export default function App() { return <main />; }'],
+      ]),
+    );
+
+    const html = result.files.get('index.html')!;
+    expect(html.match(/type="module"/g)).toHaveLength(1);
+    expect(html).toContain('src="/src/main.tsx"');
+    expect(html).not.toContain('/src/index.tsx');
+  });
+
+  it('recognizes a module entry whose src precedes the type attribute', () => {
+    const result = applyStackContract(
+      new Map([
+        ['index.html', '<html><body><script src="./main.ts" type="module"></script></body></html>'],
+        ['src/App.tsx', 'export default function App() { return <main />; }'],
+      ]),
+    );
+
+    const html = result.files.get('index.html')!;
+    expect(html.match(/type="module"/g)).toHaveLength(1);
+    expect(html).toContain('src="/src/main.tsx"');
+    expect(html).not.toContain('./main.ts');
+  });
+
   it('rewrites lucide-react imports and adds the locked dependency', () => {
     const result = applyStackContract(
       new Map([

@@ -14,6 +14,12 @@ export interface ProviderCompleteOptions {
   reasoningEffort?: string;
   /** Optional abort signal — cancels the upstream request when aborted. */
   signal?: AbortSignal;
+  /**
+   * Stable identifier for the conversation this request belongs to. Sent as
+   * `x-opencode-session` to OpenCode's gateway, which routes and caches per
+   * session and rejects requests that omit it; other providers ignore it.
+   */
+  sessionId?: string;
   tools?: {
     type: 'function';
     function: {

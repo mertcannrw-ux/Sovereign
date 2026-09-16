@@ -39,6 +39,7 @@ describe('visual editor', () => {
     window.dispatchEvent(
       new MessageEvent('message', {
         data: { source: 'sovereign-visual-editor', type: 'set-edit-mode', enabled: true },
+        source: window,
       }),
     );
 
@@ -106,5 +107,36 @@ describe('visual editor', () => {
     const capped = capA11yViolations(many);
     expect(capped.violations).toHaveLength(25);
     expect(capped.serialized.length).toBeLessThanOrEqual(4000);
+  });
+
+  // Runs last: each runtime instance installs document/window listeners that
+  // outlive the DOM reset above, so the instances left by earlier tests are
+  // parked first — otherwise one of them answers the click below.
+  it('ignores an edit-mode toggle that does not come from the workspace frame', () => {
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { source: 'sovereign-visual-editor', type: 'set-edit-mode', enabled: false },
+        source: window,
+      }),
+    );
+
+    const frame = document.createElement('iframe');
+    document.body.appendChild(frame);
+    Function(VISUAL_EDITOR_SCRIPT)();
+
+    // A script inside the preview posts with the preview's own window as source.
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { source: 'sovereign-visual-editor', type: 'set-edit-mode', enabled: true },
+        source: frame.contentWindow,
+      }),
+    );
+
+    expect(document.documentElement).not.toHaveAttribute('data-sovereign-edit-mode');
+
+    const heading = document.querySelector('h1');
+    heading?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    expect(heading).not.toHaveAttribute('data-sovereign-selected');
   });
 });

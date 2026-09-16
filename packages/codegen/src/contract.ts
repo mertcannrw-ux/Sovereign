@@ -81,9 +81,22 @@ function ensureIndexHtml(content: string): string {
   if (!/<title[\s>]/i.test(html)) {
     injectHead('<title>App</title>');
   }
-  const mainScriptSrc = /src\s*=\s*["'](?:\.\/)?\/?src\/main\.tsx["']/i;
-  if (mainScriptSrc.test(html)) {
-    html = html.replace(/src\s*=\s*["'](?:\.\/)?\/?src\/main\.tsx["']/gi, 'src="/src/main.tsx"');
+  // Any module script pointing at a local file is the app entry. Appending a
+  // second one (the previous behaviour whenever the entry was not `main.tsx`)
+  // produced two roots — the generated entry plus the seeded `src/main.tsx` —
+  // and mounted the app twice. Normalize the existing entry to the locked path
+  // instead, and append only when the document has no local entry at all.
+  const localModuleSrc = /\bsrc\s*=\s*["'](?!\/\/)(?![a-z][a-z0-9+.-]*:)[^"']+["']/i;
+  const entry = [...html.matchAll(/<script\b[^>]*>/gi)].find(
+    (tag) =>
+      tag.index !== undefined &&
+      /\btype\s*=\s*["']module["']/i.test(tag[0]) &&
+      localModuleSrc.test(tag[0]),
+  );
+  const entryIndex = entry?.index;
+  if (entry && entryIndex !== undefined) {
+    const normalized = entry[0].replace(/(\bsrc\s*=\s*["'])[^"']*(["'])/i, '$1/src/main.tsx$2');
+    html = `${html.slice(0, entryIndex)}${normalized}${html.slice(entryIndex + entry[0].length)}`;
   } else if (/<\/body>/i.test(html)) {
     html = html.replace(
       /<\/body>/i,

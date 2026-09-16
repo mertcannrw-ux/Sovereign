@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ProviderError } from './types';
-import { ssrfFetch } from './provider';
+import { readResponseBytes, readResponseText, ssrfFetch } from './provider';
 import { validateOutboundUrl, SsrfError } from './ssrf';
 
 export interface GenerateImageOptions {
@@ -172,15 +172,12 @@ export async function generateImage(
     );
   }
 
-  const rawText = await response.text();
-  if (rawText.length > MAX_IMAGE_RESPONSE_BYTES) {
-    throw new ProviderError(
-      'openai',
-      413,
-      'response_too_large',
-      'Image response payload exceeded size limit',
-    );
-  }
+  const rawText = await readResponseText('openai', response, {
+    maxBytes: MAX_IMAGE_RESPONSE_BYTES,
+    timeoutMs: options?.timeoutMs ?? 60_000,
+    tooLargeStatus: 413,
+    tooLargeMessage: 'Image response payload exceeded size limit',
+  });
 
   let json: unknown;
   try {
@@ -260,16 +257,12 @@ export async function generateImage(
       );
     }
 
-    const arrayBuffer = await imgResponse.arrayBuffer();
-    const bytes = new Uint8Array(arrayBuffer);
-    if (bytes.length > MAX_IMAGE_RESPONSE_BYTES) {
-      throw new ProviderError(
-        'openai',
-        413,
-        'response_too_large',
-        'Downloaded image exceeded size limit',
-      );
-    }
+    const bytes = await readResponseBytes('openai', imgResponse, {
+      maxBytes: MAX_IMAGE_RESPONSE_BYTES,
+      timeoutMs: 30_000,
+      tooLargeStatus: 413,
+      tooLargeMessage: 'Downloaded image exceeded size limit',
+    });
     const contentTypeHeader = imgResponse.headers.get('content-type') ?? undefined;
     const mediaType = detectMediaType(bytes, contentTypeHeader);
     return { bytes, mediaType, revisedPrompt };

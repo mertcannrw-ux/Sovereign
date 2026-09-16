@@ -37,6 +37,7 @@ import { trimMessagesForContext, type AgentMessage } from '@/lib/context-window'
 import {
   createVersion,
   tryClaimGenerationLease,
+  renewGenerationLease,
   clearGenerationLease,
   type VersionDiffEntry,
 } from '@/lib/versioning';
@@ -291,9 +292,12 @@ export async function POST(request: NextRequest) {
   // matches neither run, so the second caller is rejected outright.
   //
   // The claim is a conditional update, not a read-then-write, so it is atomic
-  // across server instances. A lease older than MAX_RUN_MS + slack belongs to a
-  // crashed run and is reclaimed.
-  const claimed = await tryClaimGenerationLease(db, projectId);
+  // across server instances. A lease whose heartbeat is older than
+  // GENERATION_LEASE_STALE_MS belongs to a crashed run and is reclaimed. The
+  // token identifies this run: only it may renew or release the lease, so a run
+  // that aged out cannot free the lease of the run that replaced it.
+  const leaseToken = randomUUID();
+  const claimed = await tryClaimGenerationLease(db, projectId, leaseToken);
   if (!claimed) {
     return Response.json(
       {
@@ -308,7 +312,7 @@ export async function POST(request: NextRequest) {
     if (leaseReleased) return;
     leaseReleased = true;
     try {
-      await clearGenerationLease(db, projectId);
+      await clearGenerationLease(db, projectId, leaseToken);
     } catch (error) {
       // Failing to release only blocks the project until the stale cutoff
       // passes; never mask the run's own outcome with this error.
@@ -474,6 +478,14 @@ export async function POST(request: NextRequest) {
           const files = new Map(project.files.map((file) => [file.path, file.content]));
           const provider = getProvider(providerName);
           const toolsOffered = nativeToolsEnabled(providerName);
+          // OpenCode's gateway routes and caches per conversation and rejects
+          // requests without a session id. Derive it from the project so every
+          // turn of one conversation reuses the same id, without handing the
+          // provider our raw internal identifier.
+          const providerSessionId = createHash('sha256')
+            .update(projectId)
+            .digest('hex')
+            .slice(0, 32);
           const messages: AgentMessage[] = [
             { role: 'system', content: buildAgentSystemPrompt(toolsOffered) },
             ...history.reverse().map((message) => ({
@@ -629,6 +641,17 @@ export async function POST(request: NextRequest) {
           send('phase', { phase: 'planning', label: 'Starting agent' });
           for (let iteration = 0; iteration < MAX_ITERATIONS; iteration += 1) {
             if (abortController.signal.aborted) throw new Error('Generation stopped');
+            // Heartbeat the lease. It is only reclaimable once its timestamp
+            // goes stale (20 min), and a 40-iteration run can legitimately
+            // outlive that. Renewal happens per iteration rather than on a
+            // timer, so a run stuck between turns stops renewing and still ages
+            // out. Losing the lease means another run took over: writing on
+            // would interleave two runs' file writes, so stop instead.
+            if (!(await renewGenerationLease(db, projectId, leaseToken))) {
+              throw new Error(
+                'This generation lost its project lock to another run, so it stopped to avoid interleaving writes.',
+              );
+            }
             const iterationStartedAt = new Date();
             const thinkingStepId = randomUUID();
             let responseContent = '';
@@ -657,6 +680,7 @@ export async function POST(request: NextRequest) {
               apiKey,
               {
                 baseUrl: storedKey.baseUrl ?? undefined,
+                sessionId: providerSessionId,
                 // No artificial per-turn cap by default ("free" runs): the provider
                 // uses its own maximum output length. Operators can still bound
                 // spend with SOVEREIGN_MAX_TOKENS. Truncated outputs are continued

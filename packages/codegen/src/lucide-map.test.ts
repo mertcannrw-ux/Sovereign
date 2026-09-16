@@ -45,6 +45,45 @@ describe('resolveLucideExport', () => {
 });
 
 describe('rewriteLucideSource', () => {
+  it('rewrites only the lucide import and keeps every preceding statement', () => {
+    const source = `import { useState } from 'react';
+import './styles.css';
+const initialCount = 0;
+import {
+  Home,
+  GhostWidget,
+} from 'lucide-react';
+export const App = () => <Home />;
+`;
+    const result = rewriteLucideSource(source);
+
+    expect(result).toEqual({
+      source: `import { useState } from 'react';
+import './styles.css';
+const initialCount = 0;
+import { House as Home, Circle as GhostWidget } from 'lucide-react';
+export const App = () => <Home />;
+`,
+      changed: true,
+    });
+  });
+
+  it('keeps a semicolon-less statement and the line break above the lucide import', () => {
+    const source = `const initialCount = 0
+import { Home } from 'lucide-react'
+export const App = () => <Home />
+`;
+    const result = rewriteLucideSource(source);
+
+    expect(result).toEqual({
+      source: `const initialCount = 0
+import { House as Home } from 'lucide-react'
+export const App = () => <Home />
+`,
+      changed: true,
+    });
+  });
+
   it('aliases remapped exports so local JSX and value uses stay valid', () => {
     const source = `import { HomeIcon, MagnifyingGlassIcon, GhostWidget } from 'lucide-react';
 

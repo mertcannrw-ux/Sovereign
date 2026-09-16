@@ -218,7 +218,9 @@ function visualEditorRuntime() {
 
   function submit() {
     const prompt = input.value.trim();
-    if (!selected || !prompt) return;
+    // Edit mode is the user's switch, not the preview's: a script inside the
+    // generated app must not be able to post an edit request on its own.
+    if (!enabled || !selected || !prompt) return;
     window.parent.postMessage(
       {
         source: MESSAGE_SOURCE,
@@ -310,6 +312,9 @@ function visualEditorRuntime() {
   window.addEventListener('scroll', positionEditor, true);
   window.addEventListener('resize', positionEditor);
   window.addEventListener('message', (event) => {
+    // Only the workspace frame toggles edit mode; the preview's own scripts must
+    // not be able to enable it for themselves.
+    if (event.source !== window.parent) return;
     if (!event.data || event.data.source !== MESSAGE_SOURCE || event.data.type !== 'set-edit-mode')
       return;
     enabled = Boolean(event.data.enabled);

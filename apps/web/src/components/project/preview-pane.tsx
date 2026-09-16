@@ -164,6 +164,10 @@ export function PreviewPane({
         return;
       }
       if (event.data.type === 'edit-request') {
+        // The payload arrives from the preview frame, which runs generated code.
+        // Honor it only while the user has edit mode switched on — otherwise any
+        // script in the preview could start a billable agent run.
+        if (!isEditMode) return;
         const element = event.data.element as SelectedPreviewElement | undefined;
         const prompt = typeof event.data.prompt === 'string' ? event.data.prompt : '';
         if (element && prompt && onQuickEdit) {

@@ -210,8 +210,34 @@ export interface Provider {
 // ─── SSRF protection helpers ──────────────────────────────
 
 const MAX_BODY_BYTES = 10 * 1024 * 1024; // 10 MB
+const MAX_ERROR_BODY_BYTES = 64 * 1024; // 64 KB — error payloads only need the message
 const DEFAULT_TIMEOUT_MS = 60_000; // 60s for non-streaming requests
 const STREAM_TIMEOUT_MS = 120_000; // 120s timeout for streaming connection/headers
+
+/**
+ * Sent on every outbound provider request. Upstream gateways fingerprint
+ * generic SDK/HTTP-library user agents and expect a named client, so undici's
+ * default is replaced with this app's own identifier.
+ */
+const CLIENT_USER_AGENT = 'sovereign/1.0';
+
+/** OpenCode's Zen/Go gateway (see https://opencode.ai/docs/go). */
+const OPENCODE_HOST_RE = /(^|\.)opencode\.ai$/i;
+
+/**
+ * `x-opencode-session` carries a stable id per conversation so the gateway can
+ * optimize routing and prompt caching; it rejects chat requests without one.
+ * Returns the hostname when `url` targets that gateway, null otherwise (or when
+ * the URL is unparseable, which `ssrfFetch` reports properly further down).
+ */
+function opencodeHostname(url: string): string | null {
+  try {
+    const hostname = new URL(url).hostname;
+    return OPENCODE_HOST_RE.test(hostname) ? hostname : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * SSRF-safe fetch wrapper with URL validation, timeouts, and redirect capping.
@@ -268,6 +294,9 @@ export async function ssrfFetch(
     const mergedHeaders: Record<string, string> = {
       ...((init?.headers as Record<string, string> | undefined) ?? {}),
     };
+    if (!Object.keys(mergedHeaders).some((name) => name.toLowerCase() === 'user-agent')) {
+      mergedHeaders['User-Agent'] = CLIENT_USER_AGENT;
+    }
     const response = await fetch(fetchUrl, {
       ...init,
       ...(Object.keys(mergedHeaders).length ? { headers: mergedHeaders } : {}),
@@ -304,6 +333,100 @@ function createBodySizeLimit(maxBytes: number): TransformStream<Uint8Array, Uint
       }
     },
   });
+}
+
+/**
+ * Limits applied while reading a response body.
+ *
+ * `ssrfFetch` clears its abort timer as soon as the headers arrive, so without
+ * these a stalled endpoint can dribble a body forever (holding the caller's
+ * generation lease) and a large one is buffered in full before any size check.
+ */
+export interface ReadResponseOptions {
+  /** Byte cap for the body. Defaults to {@link MAX_BODY_BYTES}. */
+  maxBytes?: number;
+  /** Wall-clock budget for the whole body. Defaults to {@link DEFAULT_TIMEOUT_MS}. */
+  timeoutMs?: number;
+  /** Status reported on the size-limit error — non-streaming reads report 0. */
+  tooLargeStatus?: number;
+  /** Message reported on the size-limit error. */
+  tooLargeMessage?: string;
+}
+
+/**
+ * Reads a response body, aborting once it exceeds `maxBytes` or outlives
+ * `timeoutMs`. This replaces `response.text()` / `response.arrayBuffer()` /
+ * `response.json()` on non-streaming responses, which buffer an unbounded body
+ * before any check and inherit no deadline from `ssrfFetch`.
+ */
+export async function readResponseBytes(
+  providerName: AIProvider,
+  response: Response,
+  options?: ReadResponseOptions,
+): Promise<Uint8Array> {
+  const maxBytes = options?.maxBytes ?? MAX_BODY_BYTES;
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const body = response.body;
+  if (!body) return new Uint8Array(0);
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(new ProviderError(providerName, 0, 'request_timeout', 'Response body timed out')),
+      timeoutMs,
+    );
+  });
+
+  try {
+    for (;;) {
+      const read = reader.read();
+      // The deadline can win the race; mark the losing read as handled so the
+      // cancellation below cannot surface as an unhandled rejection.
+      read.catch(() => {});
+      const { done, value } = await Promise.race([read, expired]);
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        throw new ProviderError(
+          providerName,
+          options?.tooLargeStatus ?? 0,
+          'response_too_large',
+          options?.tooLargeMessage ??
+            `Response body exceeds ${Math.round(maxBytes / (1024 * 1024))} MB limit`,
+        );
+      }
+      chunks.push(value);
+    }
+  } finally {
+    clearTimeout(timer);
+    try {
+      await reader.cancel();
+      reader.releaseLock();
+    } catch {
+      // The reader is discarded either way — the body is never read again.
+    }
+  }
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+/** UTF-8 text form of {@link readResponseBytes} — the safe `response.text()`. */
+export async function readResponseText(
+  providerName: AIProvider,
+  response: Response,
+  options?: ReadResponseOptions,
+): Promise<string> {
+  return new TextDecoder().decode(await readResponseBytes(providerName, response, options));
 }
 
 // ─── Provider Interface ───────────────────────────────────
@@ -346,7 +469,7 @@ abstract class OpenAICompatibleProvider implements Provider {
       url,
       {
         method: 'POST',
-        headers: this.authHeaders(apiKey),
+        headers: this.authHeaders(apiKey, { url, sessionId: options?.sessionId }),
         body: JSON.stringify(this.buildPayload(model, messages, options, false)),
       },
       { validateUrl: hasCustomEndpoint, signal: options?.signal },
@@ -356,16 +479,7 @@ abstract class OpenAICompatibleProvider implements Provider {
       throw await this.parseError(response);
     }
 
-    const text = await response.text();
-    if (text.length > MAX_BODY_BYTES) {
-      throw new ProviderError(
-        this.name,
-        0,
-        'response_too_large',
-        'Response body exceeds 10 MB limit',
-      );
-    }
-    const data: unknown = JSON.parse(text);
+    const data: unknown = JSON.parse(await readResponseText(this.name, response));
     return this.parseNonStreamingResponse(data);
   }
 
@@ -387,7 +501,7 @@ abstract class OpenAICompatibleProvider implements Provider {
       url,
       {
         method: 'POST',
-        headers: this.authHeaders(apiKey),
+        headers: this.authHeaders(apiKey, { url, sessionId: options?.sessionId }),
         body: JSON.stringify(this.buildPayload(model, messages, options, true)),
       },
       { validateUrl: hasCustomEndpoint, timeout: STREAM_TIMEOUT_MS, signal: options?.signal },
@@ -501,11 +615,18 @@ abstract class OpenAICompatibleProvider implements Provider {
 
   // ── Shared helpers ──
 
-  protected authHeaders(apiKey: string): Record<string, string> {
-    return {
+  protected authHeaders(
+    apiKey: string,
+    request?: { url: string; sessionId?: string },
+  ): Record<string, string> {
+    const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
     };
+    if (request?.sessionId && opencodeHostname(request.url)) {
+      headers['x-opencode-session'] = request.sessionId;
+    }
+    return headers;
   }
 
   protected buildPayload(
@@ -544,7 +665,9 @@ abstract class OpenAICompatibleProvider implements Provider {
     let message = `HTTP ${response.status}: ${response.statusText}`;
     let code = 'unknown';
     try {
-      const body: unknown = await response.json();
+      const body: unknown = JSON.parse(
+        await readResponseText(this.name, response, { maxBytes: MAX_ERROR_BODY_BYTES }),
+      );
       if (isObject(body)) {
         const error = body['error'];
         if (isObject(error)) {
@@ -624,16 +747,7 @@ abstract class OpenAICompatibleProvider implements Provider {
       throw await this.parseError(response);
     }
 
-    const text = await response.text();
-    if (text.length > MAX_BODY_BYTES) {
-      throw new ProviderError(
-        this.name,
-        0,
-        'response_too_large',
-        'Response body exceeds 10 MB limit',
-      );
-    }
-    const data: unknown = JSON.parse(text);
+    const data: unknown = JSON.parse(await readResponseText(this.name, response));
     if (!isObject(data)) throw new Error('Invalid models response');
 
     const rawData = data['data'];
@@ -704,16 +818,7 @@ export class AnthropicProvider implements Provider {
       throw await this.parseError(response);
     }
 
-    const text = await response.text();
-    if (text.length > MAX_BODY_BYTES) {
-      throw new ProviderError(
-        this.name,
-        0,
-        'response_too_large',
-        'Response body exceeds 10 MB limit',
-      );
-    }
-    const data: unknown = JSON.parse(text);
+    const data: unknown = JSON.parse(await readResponseText(this.name, response));
     return this.parseNonStreamingResponse(data);
   }
   // ── Streaming ──
@@ -889,7 +994,9 @@ export class AnthropicProvider implements Provider {
     let message = `HTTP ${response.status}: ${response.statusText}`;
     let code = 'unknown';
     try {
-      const body: unknown = await response.json();
+      const body: unknown = JSON.parse(
+        await readResponseText(this.name, response, { maxBytes: MAX_ERROR_BODY_BYTES }),
+      );
       if (isObject(body)) {
         const error = body['error'];
         if (isObject(error)) {
@@ -936,16 +1043,7 @@ export class AnthropicProvider implements Provider {
       },
       { signal },
     );
-    const text = await response.text();
-    if (text.length > MAX_BODY_BYTES) {
-      throw new ProviderError(
-        this.name,
-        0,
-        'response_too_large',
-        'Response body exceeds 10 MB limit',
-      );
-    }
-    const data: unknown = JSON.parse(text);
+    const data: unknown = JSON.parse(await readResponseText(this.name, response));
     if (!isObject(data)) throw new Error('Invalid models response');
     const rawData = data['data'];
     if (!Array.isArray(rawData)) return [];
@@ -987,16 +1085,7 @@ export class GoogleProvider implements Provider {
       throw await this.parseError(response);
     }
 
-    const text = await response.text();
-    if (text.length > MAX_BODY_BYTES) {
-      throw new ProviderError(
-        this.name,
-        0,
-        'response_too_large',
-        'Response body exceeds 10 MB limit',
-      );
-    }
-    const data: unknown = JSON.parse(text);
+    const data: unknown = JSON.parse(await readResponseText(this.name, response));
     return this.parseResponse(data);
   }
 
@@ -1150,7 +1239,9 @@ export class GoogleProvider implements Provider {
     let message = `HTTP ${response.status}: ${response.statusText}`;
     let code = 'unknown';
     try {
-      const body: unknown = await response.json();
+      const body: unknown = JSON.parse(
+        await readResponseText(this.name, response, { maxBytes: MAX_ERROR_BODY_BYTES }),
+      );
       if (isObject(body)) {
         const error = body['error'];
         if (isObject(error)) {
@@ -1222,16 +1313,7 @@ export class GoogleProvider implements Provider {
       { validateUrl: hasCustomEndpoint, signal },
     );
 
-    const text = await response.text();
-    if (text.length > MAX_BODY_BYTES) {
-      throw new ProviderError(
-        this.name,
-        0,
-        'response_too_large',
-        'Response body exceeds 10 MB limit',
-      );
-    }
-    const data: unknown = JSON.parse(text);
+    const data: unknown = JSON.parse(await readResponseText(this.name, response));
     if (!isObject(data)) throw new Error('Invalid models response');
     const rawData = data['models'];
     if (!Array.isArray(rawData)) return [];
@@ -1276,7 +1358,7 @@ export class OllamaProvider implements Provider {
       throw await this.parseError(response);
     }
 
-    const data: unknown = await response.json();
+    const data: unknown = JSON.parse(await readResponseText(this.name, response));
     return this.parseResponse(data);
   }
 
@@ -1378,7 +1460,9 @@ export class OllamaProvider implements Provider {
     let message = `HTTP ${response.status}: ${response.statusText}`;
     let code = 'unknown';
     try {
-      const body: unknown = await response.json();
+      const body: unknown = JSON.parse(
+        await readResponseText(this.name, response, { maxBytes: MAX_ERROR_BODY_BYTES }),
+      );
       if (isObject(body)) {
         if (isString(body['error'])) {
           message = body['error'];
@@ -1418,7 +1502,7 @@ export class OllamaProvider implements Provider {
         'unknown',
         'Failed to fetch Ollama models',
       );
-    const data: unknown = await response.json();
+    const data: unknown = JSON.parse(await readResponseText(this.name, response));
     if (!isObject(data)) throw new Error('Invalid Ollama models response');
     const rawData = data['models'];
     if (!Array.isArray(rawData)) return [];

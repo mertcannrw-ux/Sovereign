@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
+import { randomUUID } from 'node:crypto';
 import { getProvider } from '@app-builder/ai-gateway';
 import { AIProvider } from '@app-builder/shared';
 import { protectedProcedure, router } from '../trpc';
@@ -41,7 +42,8 @@ export const chatRouter = router({
       // ── 1. Validate project access ──────────────────────────────
       await requireProjectRole(ctx, input.projectId, 'EDITOR');
 
-      const claimed = await tryClaimGenerationLease(ctx.db, input.projectId);
+      const leaseToken = randomUUID();
+      const claimed = await tryClaimGenerationLease(ctx.db, input.projectId, leaseToken);
       if (!claimed) {
         throw new TRPCError({
           code: 'CONFLICT',
@@ -259,7 +261,7 @@ export const chatRouter = router({
         ...(parsingErrors.length > 0 ? { parsingErrors } : {}),
       };
       } finally {
-        await clearGenerationLease(ctx.db, input.projectId).catch((error) => {
+        await clearGenerationLease(ctx.db, input.projectId, leaseToken).catch((error) => {
           console.error('chat.send.lease_release_failed', error);
         });
       }
@@ -329,7 +331,8 @@ export const chatRouter = router({
     .mutation(async ({ ctx, input }) => {
       await requireProjectRole(ctx, input.projectId, 'EDITOR');
 
-      const claimed = await tryClaimGenerationLease(ctx.db, input.projectId);
+      const leaseToken = randomUUID();
+      const claimed = await tryClaimGenerationLease(ctx.db, input.projectId, leaseToken);
       if (!claimed) {
         throw new TRPCError({
           code: 'CONFLICT',
@@ -341,7 +344,7 @@ export const chatRouter = router({
       try {
         return await restoreVersion(input.projectId, input.versionNumber);
       } finally {
-        await clearGenerationLease(ctx.db, input.projectId).catch((error) => {
+        await clearGenerationLease(ctx.db, input.projectId, leaseToken).catch((error) => {
           console.error('chat.restoreVersion.lease_release_failed', error);
         });
       }

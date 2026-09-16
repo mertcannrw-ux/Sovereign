@@ -207,19 +207,33 @@ export const authRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      // Gate the endpoint before the expensive work: an unauthenticated caller
+      // could otherwise burn a cost-12 bcrypt hash on every fabricated token.
+      const rate = await checkRateLimit('passwordResetSubmit', ctx.ipHash);
+      if (!rate.allowed) {
+        const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: `Too many reset attempts. Try again in ${retryIn}s.`,
+        });
+      }
+
       const tokenHash = crypto.createHash('sha256').update(input.token).digest('hex');
+      const record = await ctx.db.passwordResetToken.findUnique({
+        where: { token: tokenHash },
+      });
+      if (!record || record.usedAt || record.expiresAt < new Date()) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'This reset link is invalid or has expired.',
+        });
+      }
+
       const passwordHash = await bcrypt.hash(input.password, 12);
       await ctx.db.$transaction(async (tx) => {
-        const record = await tx.passwordResetToken.findUnique({
-          where: { token: tokenHash },
-        });
-        if (!record || record.usedAt || record.expiresAt < new Date()) {
-          throw new TRPCError({
-            code: 'BAD_REQUEST',
-            message: 'This reset link is invalid or has expired.',
-          });
-        }
-
+        // Consume before writing: the conditional update keeps the token
+        // single-use even when two requests with the same valid token race past
+        // the lookup above.
         const consumed = await tx.passwordResetToken.updateMany({
           where: { id: record.id, usedAt: null },
           data: { usedAt: new Date() },

@@ -143,6 +143,7 @@ export const RATE_LIMITS = {
   signIn: { limit: 5, windowSeconds: 60 * 15 }, // 5 per 15 min
   register: { limit: 3, windowSeconds: 60 * 60 }, // 3 per hour
   passwordReset: { limit: 3, windowSeconds: 60 * 60 }, // 3 per hour
+  passwordResetSubmit: { limit: 20, windowSeconds: 60 * 15 }, // 20 per 15 min
   prompt: { limit: 30, windowSeconds: 60 }, // 30 per minute
   build: { limit: 10, windowSeconds: 60 * 5 }, // 10 per 5 min
   deploy: { limit: 5, windowSeconds: 60 * 10 }, // 5 per 10 min
