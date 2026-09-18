@@ -7,6 +7,7 @@ import { isIP } from 'node:net';
 import { getDb } from './db';
 import { canAdoptAccountByEmail } from './account-linking';
 import { checkRateLimit, hashIp } from '@/server/rate-limit';
+import { ensurePersonalOrganization } from '@/server/onboarding';
 
 export function oauthProvidersEnabled(): { google: boolean; github: boolean } {
   return {
@@ -93,14 +94,13 @@ function buildProviders(): NextAuthOptions['providers'] {
  * Resolve the caller's real IP for sign-in rate limiting. Only meaningful when
  * `TRUSTED_PROXY` is set; otherwise returns null so callers keep their existing
  * keying (per-email) instead of collapsing onto a single global bucket.
+ *
+ * Kept behaviourally identical to `getClientIp` in `lib/trpc/context.ts`.
  */
 function trustedProxyClientIp(req: unknown): string | null {
   if (process.env.TRUSTED_PROXY !== 'true') return null;
   const headers = (req as { headers?: Headers })?.headers;
   if (!headers || typeof headers.get !== 'function') return null;
-
-  const realIp = headers.get('x-real-ip')?.trim();
-  if (realIp && isIP(realIp)) return realIp;
 
   const forwarded = headers.get('x-forwarded-for');
   if (forwarded) {
@@ -108,11 +108,37 @@ function trustedProxyClientIp(req: unknown): string | null {
       .split(',')
       .map((entry) => entry.trim())
       .filter(Boolean);
-    // Right-most entry is appended by our trusted proxy.
+    // Right-most entry is appended by our trusted proxy. Earlier entries are
+    // client-supplied and spoofable, so they are never used for the key.
     const last = entries[entries.length - 1];
     if (last && isIP(last)) return last;
   }
+
+  // X-Forwarded-For wins: if the proxy appends to XFF without setting
+  // X-Real-IP, honouring a client-supplied `X-Real-IP` first would hand out a
+  // fresh rate-limit bucket per request. Only used when XFF is absent.
+  const realIp = headers.get('x-real-ip')?.trim();
+  if (realIp && isIP(realIp)) return realIp;
+
   return null;
+}
+
+/**
+ * Best-effort onboarding at sign-in: `projects.create` requires an
+ * organizationId, so an account without any organization dead-ends at
+ * "No workspace found". `ensurePersonalOrganization` is idempotent and creates
+ * the personal workspace only when the user has none.
+ *
+ * Deliberately swallows failures: a provisioning problem (missing table,
+ * transient database error) must never block an otherwise valid sign-in, and
+ * the next sign-in retries.
+ */
+async function ensureWorkspaceForSignIn(userId: string, name?: string | null): Promise<void> {
+  try {
+    await ensurePersonalOrganization(getDb(), userId, name);
+  } catch (error) {
+    console.error('[auth] failed to ensure personal organization for user', userId, error);
+  }
 }
 
 /**
@@ -132,7 +158,12 @@ export const authOptions: NextAuthOptions = {
   providers: buildProviders(),
   callbacks: {
     async signIn({ user, account, profile }) {
-      if (!account || account.provider === 'credentials') return true;
+      if (!account || account.provider === 'credentials') {
+        // Password sign-in can be a brand-new user's first successful session
+        // (registration is best-effort above), so provision here too.
+        if (user.id) await ensureWorkspaceForSignIn(user.id, user.name);
+        return true;
+      }
       const email = user.email?.trim().toLowerCase();
       if (!email) return false;
 
@@ -155,6 +186,9 @@ export const authOptions: NextAuthOptions = {
         }
         user.id = existing.id;
         user.email = existing.email;
+        // Existing rows may predate onboarding, and an adopted OAuth identity
+        // still needs a workspace it can create projects in.
+        await ensureWorkspaceForSignIn(existing.id, existing.name ?? user.name);
         if (user.name && user.name !== existing.name) {
           await db.user.update({
             where: { id: existing.id },
@@ -178,6 +212,7 @@ export const authOptions: NextAuthOptions = {
       user.id = created.id;
       user.email = created.email;
       user.sessionVersion = created.sessionVersion;
+      await ensureWorkspaceForSignIn(created.id, created.name ?? user.name);
       return true;
     },
     async session({ session, token }) {

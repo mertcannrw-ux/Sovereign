@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getProvider, readResponseBytes, readResponseText } from './provider';
+import {
+  getProvider,
+  readAnthropicSSE,
+  readJSONLines,
+  readResponseBytes,
+  readResponseText,
+  readSSEStream,
+} from './provider';
 import type { GatewayMessage } from './tool-calls';
 
 // DNS is resolved by the SSRF layer; stub it so these tests never touch the
@@ -144,5 +151,126 @@ describe('outbound provider headers', () => {
     });
 
     expect(requests[0]!.headers['x-opencode-session']).toBeUndefined();
+  });
+});
+
+/**
+ * Feeds `chunks` verbatim and then ends the stream — deliberately never
+ * appending a newline, since streams in the wild end on the final event.
+ */
+function byteStream(chunks: (string | Uint8Array)[]): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  const encoded = chunks.map((chunk) =>
+    typeof chunk === 'string' ? encoder.encode(chunk) : chunk,
+  );
+  let index = 0;
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (index < encoded.length) {
+        controller.enqueue(encoded[index]!);
+        index += 1;
+        return;
+      }
+      controller.close();
+    },
+  });
+}
+
+async function collect<T>(source: AsyncGenerator<T>): Promise<T[]> {
+  const items: T[] = [];
+  for await (const item of source) items.push(item);
+  return items;
+}
+
+// Regression: the readers used to drop the residual buffer on `done`, losing
+// the final event (typically the usage/finish frame) whenever the stream did
+// not end with a newline.
+describe('stream readers', () => {
+  describe('readSSEStream', () => {
+    it('yields a final event that has no trailing newline', async () => {
+      const events = await collect(readSSEStream(byteStream(['data: {"a":1}\n\ndata: {"b":2}'])));
+
+      expect(events).toEqual(['{"a":1}', '{"b":2}']);
+    });
+
+    it('splits one event across chunks and still yields the unterminated tail', async () => {
+      const events = await collect(readSSEStream(byteStream(['data: {"a"', ':1}\ndata: {"b":2}'])));
+
+      expect(events).toEqual(['{"a":1}', '{"b":2}']);
+    });
+
+    it('flushes a multi-byte character split across the final chunk', async () => {
+      const bytes = new TextEncoder().encode('data: {"t":"é"}');
+      // Split inside the two-byte `é`: the decoder must carry the lead byte
+      // across chunks and the residual buffer holds the unterminated event.
+      const split = bytes.length - 3;
+
+      const events = await collect(
+        readSSEStream(byteStream([bytes.slice(0, split), bytes.slice(split)])),
+      );
+
+      expect(events).toEqual(['{"t":"é"}']);
+    });
+
+    it('accepts `data:` without a space after the colon', async () => {
+      const events = await collect(readSSEStream(byteStream(['data:{"a":1}\ndata: [DONE]\n'])));
+
+      expect(events).toEqual(['{"a":1}']);
+    });
+  });
+
+  describe('readJSONLines', () => {
+    it('yields a final line that has no trailing newline', async () => {
+      const lines = await collect(readJSONLines(byteStream(['{"a":1}\n{"b":2}'])));
+
+      expect(lines).toEqual(['{"a":1}', '{"b":2}']);
+    });
+
+    it('splits one line across chunks and still yields the unterminated tail', async () => {
+      const lines = await collect(readJSONLines(byteStream(['{"a":1}\n{"b"', ':2}'])));
+
+      expect(lines).toEqual(['{"a":1}', '{"b":2}']);
+    });
+  });
+
+  describe('readAnthropicSSE', () => {
+    it('yields a final event that has no trailing newline', async () => {
+      const events = await collect(
+        readAnthropicSSE(
+          byteStream([
+            'event: content_block_delta\ndata: {"i":1}\n\nevent: message_delta\ndata: {"s":2}',
+          ]),
+        ),
+      );
+
+      expect(events).toEqual([
+        { event: 'content_block_delta', data: '{"i":1}' },
+        { event: 'message_delta', data: '{"s":2}' },
+      ]);
+    });
+
+    it('splits one event across chunks and still yields the unterminated tail', async () => {
+      const events = await collect(
+        readAnthropicSSE(
+          byteStream([
+            'event: content_block_delta\ndata: {"i"',
+            ':1}\nevent: message_delta\ndata: {"s":2}',
+          ]),
+        ),
+      );
+
+      expect(events).toEqual([
+        { event: 'content_block_delta', data: '{"i":1}' },
+        { event: 'message_delta', data: '{"s":2}' },
+      ]);
+    });
+
+    it('accepts `event:` and `data:` without a space after the colon', async () => {
+      const events = await collect(
+        readAnthropicSSE(byteStream(['event:message_delta\ndata:{"s":2}'])),
+      );
+
+      expect(events).toEqual([{ event: 'message_delta', data: '{"s":2}' }]);
+    });
   });
 });

@@ -632,9 +632,7 @@ function ProjectWorkspace() {
           <Button
             size="sm"
             className="shadow-lg"
-            onClick={() =>
-              setMobilePane((pane) => (pane === 'chat' ? 'workspace' : 'chat'))
-            }
+            onClick={() => setMobilePane((pane) => (pane === 'chat' ? 'workspace' : 'chat'))}
           >
             {mobilePane === 'chat' ? (
               <>

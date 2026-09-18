@@ -13,6 +13,11 @@ concurrency:
 env:
   NODE_VERSION: '24'
   SKIP_ENV_VALIDATION: 'true'
+  # `prisma generate` loads prisma.config.ts, which requires DATABASE_URL to be
+  # set. Generate only reads the value to resolve the datasource — it never
+  # connects, so a dummy value is enough. The e2e job overrides this with the
+  # same value pointing at its real PostgreSQL service container.
+  DATABASE_URL: postgresql://testuser:testpass@localhost:5432/testdb
 
 jobs:
   # ── Static checks ────────────────────────────────

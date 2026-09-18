@@ -5,12 +5,7 @@ export type { Provider } from './gateway';
 // ─── Provider Registry ───────────────────────────────────
 export { getProvider } from './provider';
 export { ssrfFetch } from './provider';
-export {
-  validateUrl,
-  validateOutboundUrl,
-  loopbackProvidersAllowed,
-  SsrfError,
-} from './ssrf';
+export { validateUrl, validateOutboundUrl, loopbackProvidersAllowed, SsrfError } from './ssrf';
 export type { ValidateUrlOptions } from './ssrf';
 export {
   OpenAIProvider,

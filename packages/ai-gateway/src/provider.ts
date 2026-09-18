@@ -58,14 +58,34 @@ function createPinnedIpDispatcher(parsed: URL, pinnedIp: string): Dispatcher {
 }
 
 /**
- * Reads a `ReadableStream<Uint8Array>` and yields each `data: …` line
- * as a decoded string, stripping the `data: ` prefix. The standard
- * SSE format used by OpenAI, Mistral, Groq, and (with `alt=sse`) Google.
+ * Reads a `ReadableStream<Uint8Array>` and yields each `data:` line
+ * as a decoded string, stripping the prefix. The standard SSE format
+ * used by OpenAI, Mistral, Groq, and (with `alt=sse`) Google.
+ *
+ * Exported so the framing rules (unterminated final event, `data:` with or
+ * without a space, split multi-byte characters) can be tested directly.
  */
-async function* readSSEStream(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+export async function* readSSEStream(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+
+  // Shared by the read loop and the final flush. The last event of a stream is
+  // frequently not newline-terminated; parsing the residual buffer inline would
+  // duplicate these rules and let the two copies drift apart.
+  function* parseLines(lines: string[]): Generator<string> {
+    for (const line of lines) {
+      const trimmed = line.trim();
+      // The SSE spec allows `data:` with or without a space after the colon.
+      if (trimmed.startsWith('data:')) {
+        const payload = trimmed.slice(5).trim();
+        if (payload === '' || payload === '[DONE]') {
+          continue;
+        }
+        yield payload;
+      }
+    }
+  }
 
   try {
     while (true) {
@@ -78,17 +98,15 @@ async function* readSSEStream(body: ReadableStream<Uint8Array>): AsyncGenerator<
       const lines = buffer.split('\n');
       buffer = lines.pop() ?? '';
 
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed.startsWith('data: ')) {
-          const payload = trimmed.slice(6).trim();
-          if (payload === '' || payload === '[DONE]') {
-            continue;
-          }
-          yield payload;
-        }
-      }
+      yield* parseLines(lines);
     }
+
+    // Flush the decoder (a trailing multi-byte UTF-8 sequence may still be
+    // pending) and the residual buffer. Without this the final event — usually
+    // the usage or finish frame — is silently dropped when the stream does not
+    // end with a newline.
+    buffer += decoder.decode();
+    yield* parseLines(buffer.split('\n'));
   } finally {
     try {
       await reader.cancel();
@@ -99,12 +117,26 @@ async function* readSSEStream(body: ReadableStream<Uint8Array>): AsyncGenerator<
 
 /**
  * Reads a `ReadableStream<Uint8Array>` where each line is a standalone
- * JSON object (no `data: ` prefix). Used by Ollama.
+ * JSON object (no `data:` prefix). Used by Ollama.
+ *
+ * Exported so the unterminated-final-line and split-character handling can be
+ * tested directly.
  */
-async function* readJSONLines(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+export async function* readJSONLines(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+
+  // Shared by the read loop and the final flush (same pattern as readSSEStream).
+  function* parseLines(lines: string[]): Generator<string> {
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed === '') {
+        continue;
+      }
+      yield trimmed;
+    }
+  }
 
   try {
     while (true) {
@@ -117,14 +149,14 @@ async function* readJSONLines(body: ReadableStream<Uint8Array>): AsyncGenerator<
       const lines = buffer.split('\n');
       buffer = lines.pop() ?? '';
 
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed === '') {
-          continue;
-        }
-        yield trimmed;
-      }
+      yield* parseLines(lines);
     }
+
+    // Flush the decoder and the residual buffer so a final JSON line that is
+    // not newline-terminated (typically the `done` frame carrying usage) is
+    // still parsed.
+    buffer += decoder.decode();
+    yield* parseLines(buffer.split('\n'));
   } finally {
     try {
       await reader.cancel();
@@ -137,14 +169,36 @@ async function* readJSONLines(body: ReadableStream<Uint8Array>): AsyncGenerator<
  * Reads a `ReadableStream<Uint8Array>` for Anthropic's event-based SSE.
  * Each event consists of an `event: …` line followed by `data: …`.
  * Yields `{ event, data }` tuples.
+ *
+ * Exported so the unterminated-final-event and `event:`/`data:` spacing rules
+ * can be tested directly.
  */
-async function* readAnthropicSSE(
+export async function* readAnthropicSSE(
   body: ReadableStream<Uint8Array>,
 ): AsyncGenerator<{ event: string; data: string }> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
   let currentEvent = '';
+
+  // Shared by the read loop and the final flush (same pattern as readSSEStream).
+  // `currentEvent` lives in the enclosing scope so an `event:` line read in one
+  // chunk still applies to the `data:` line in the next.
+  function* parseLines(lines: string[]): Generator<{ event: string; data: string }> {
+    for (const line of lines) {
+      const trimmed = line.trim();
+      // The SSE spec allows `event:`/`data:` with or without a space.
+      if (trimmed.startsWith('event:')) {
+        currentEvent = trimmed.slice(6).trim();
+      } else if (trimmed.startsWith('data:')) {
+        const payload = trimmed.slice(5).trim();
+        if (payload !== '') {
+          yield { event: currentEvent, data: payload };
+        }
+        currentEvent = '';
+      }
+    }
+  }
 
   try {
     while (true) {
@@ -157,19 +211,13 @@ async function* readAnthropicSSE(
       const lines = buffer.split('\n');
       buffer = lines.pop() ?? '';
 
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed.startsWith('event: ')) {
-          currentEvent = trimmed.slice(7).trim();
-        } else if (trimmed.startsWith('data: ')) {
-          const payload = trimmed.slice(6).trim();
-          if (payload !== '') {
-            yield { event: currentEvent, data: payload };
-          }
-          currentEvent = '';
-        }
-      }
+      yield* parseLines(lines);
     }
+
+    // Flush the decoder and the residual buffer: the final `message_delta`
+    // (usage/stop reason) often arrives without a trailing newline.
+    buffer += decoder.decode();
+    yield* parseLines(buffer.split('\n'));
   } finally {
     try {
       await reader.cancel();

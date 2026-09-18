@@ -1,0 +1,20 @@
+# Normalize text files to LF in the repository. Windows checkouts may still show
+# CRLF in the working tree (core.autocrlf), but Git always stores LF — which is
+# what Prettier's format check expects.
+* text=auto eol=lf
+
+# Binary files — never apply text conversions.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.icns binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.eot binary
+*.pdf binary
+*.zip binary

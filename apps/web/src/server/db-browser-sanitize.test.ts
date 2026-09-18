@@ -1,6 +1,11 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
-import { sanitizeSqlForTenant, quotePgIdent, isSafeDefault } from './db-browser';
+import {
+  sanitizeSqlForTenant,
+  quotePgIdent,
+  isSafeDefault,
+  referencesForeignSchema,
+} from './db-browser';
 
 const TENANT = 'p_0123456789abcdef0123456789abcdef';
 
@@ -121,6 +126,16 @@ describe('sanitizeSqlForTenant — table-reference bypass regressions', () => {
     ['leading keyword without whitespace', `SELECT*FROM ${OTHER}.users`],
     ['quoted schema with a keyword-named table', `SELECT * FROM "${OTHER}"."from"`],
     ['quoted schema and table', `SELECT * FROM "${OTHER}"."users"`],
+    // `TABLE relation_expr` is a second SELECT form: it names a relation with no
+    // FROM/JOIN token at all, so a position-based scan that only looks after
+    // FROM/JOIN/comma never inspects it. Confirmed exploitable before the fix
+    // (PostgreSQL executes these and returns the other schema's rows).
+    ['TABLE select form in a subquery', `SELECT * FROM (TABLE ${OTHER}.users) x`],
+    ['TABLE select form behind EXISTS', `SELECT 1 WHERE EXISTS (TABLE ${OTHER}.users)`],
+    ['TABLE select form inside a CTE', `WITH x AS (TABLE ${OTHER}.users) SELECT * FROM x`],
+    ['bare TABLE statement', `TABLE ${OTHER}.users`],
+    ['TABLE select form after ONLY', `SELECT * FROM (TABLE ONLY ${OTHER}.users) x`],
+    ['TABLE select form with a quoted schema', `SELECT * FROM (TABLE "${OTHER}".users) x`],
   ];
 
   for (const [label, sql] of blocked) {
@@ -145,6 +160,38 @@ describe('sanitizeSqlForTenant — table-reference bypass regressions', () => {
       expect(sanitizeSqlForTenant(sql, TENANT)).not.toBeNull();
     });
   }
+});
+
+describe('referencesForeignSchema — scanner layer', () => {
+  const OTHER = 'p_fedcba9876543210fedcba9876543210';
+
+  // These assert the table-reference scanner directly, so the guard still holds
+  // if `TABLE` is ever removed from FORBIDDEN_SQL_KEYWORDS. `sanitizeSqlForTenant`
+  // rejects these too, but via the keyword backstop rather than the scanner.
+  it('detects a foreign schema introduced by the TABLE select form', () => {
+    expect(referencesForeignSchema(`SELECT * FROM (TABLE ${OTHER}.users) x`, TENANT)).toBe(true);
+    expect(referencesForeignSchema(`SELECT 1 WHERE EXISTS (TABLE ${OTHER}.users)`, TENANT)).toBe(
+      true,
+    );
+    expect(
+      referencesForeignSchema(`WITH x AS (TABLE ${OTHER}.users) SELECT * FROM x`, TENANT),
+    ).toBe(true);
+    expect(referencesForeignSchema(`TABLE ${OTHER}.users`, TENANT)).toBe(true);
+    expect(referencesForeignSchema(`SELECT * FROM (TABLE ONLY ${OTHER}.users) x`, TENANT)).toBe(
+      true,
+    );
+  });
+
+  it('does not flag unqualified names or the tenant own schema', () => {
+    expect(referencesForeignSchema(`SELECT * FROM (TABLE ${TENANT}.users) x`, TENANT)).toBe(false);
+    expect(referencesForeignSchema('SELECT * FROM users', TENANT)).toBe(false);
+    expect(referencesForeignSchema('SELECT u.id FROM users u WHERE u.id = 1', TENANT)).toBe(false);
+    expect(referencesForeignSchema(`SELECT * FROM ${TENANT}.users, ${TENANT}.notes`, TENANT)).toBe(
+      false,
+    );
+    // `table` is not an identifier here — only the reserved-word form is scanned.
+    expect(referencesForeignSchema('SELECT table_name FROM users', TENANT)).toBe(false);
+  });
 });
 
 describe('quotePgIdent', () => {

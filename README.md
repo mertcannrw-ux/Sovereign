@@ -54,13 +54,15 @@ npm install
 
 ### 3. Environment Setup
 
-Copy the `.env.example` file to `.env`:
+Copy the `.env.example` file into the app directory as `apps/web/.env`. Next.js resolves env files from the app directory, not the monorepo root, so `.env` only works when it lives next to `apps/web`:
 
 ```bash
-cp .env.example .env
+cp .env.example apps/web/.env
 ```
 
-_(Note: The default `.env` is configured for local development using the embedded PostgreSQL socket server)._
+On Windows PowerShell use `Copy-Item .env.example apps/web/.env`.
+
+_(Note: The default `apps/web/.env` is configured for local development using the embedded PostgreSQL socket server. `prisma.config.ts` loads the same file, so `npm run db:push`, `db:seed`, and `db:studio` work from the repository root.)_
 
 > **Production — rate limiting:** when deployed behind a reverse proxy (Vercel, Cloudflare, Nginx, …), set `TRUSTED_PROXY="true"`. Without it the app sees every request as `127.0.0.1`, so pre-auth rate limits (`register`/`signIn`) collapse into a single global bucket shared by all users. See `.env.example`.
 
@@ -78,7 +80,15 @@ npm run db:start
 
 _This starts a PostgreSQL server on `127.0.0.1:5433` using `.pglite_data`._
 
-### 2. Seed Initial Admin & Demo Data
+### 2. Push the Prisma Schema
+
+Apply the schema to the running database:
+
+```bash
+npm run db:push
+```
+
+### 3. Seed Initial Admin & Demo Data
 
 In a separate terminal window, populate the database:
 
@@ -86,14 +96,14 @@ In a separate terminal window, populate the database:
 npm run db:seed
 ```
 
-#### 🔑 Local Admin Credentials (from .env)
+#### 🔑 Local Admin Credentials (from `apps/web/.env`)
 
-| Field            | Credential                                                             |
-| :--------------- | :--------------------------------------------------------------------- |
-| **Sign-in URL**  | [http://localhost:3000/auth/signin](http://localhost:3000/auth/signin) |
-| **Email**        | Set by `SEED_ADMIN_EMAIL` in `.env` (default `admin@appbuilder.local`) |
-| **Password**     | Set by `SEED_ADMIN_PASSWORD` in `.env`                                 |
-| **Organization** | `Admin's Organization`                                                 |
+| Field            | Credential                                                                      |
+| :--------------- | :------------------------------------------------------------------------------ |
+| **Sign-in URL**  | [http://localhost:3000/auth/signin](http://localhost:3000/auth/signin)          |
+| **Email**        | Set by `SEED_ADMIN_EMAIL` in `apps/web/.env` (default `admin@appbuilder.local`) |
+| **Password**     | Set by `SEED_ADMIN_PASSWORD` in `apps/web/.env`                                 |
+| **Organization** | `Admin's Organization`                                                          |
 
 ---
 
@@ -151,4 +161,4 @@ The Playwright config starts the app automatically (dev server locally,
 
 ## 🔒 Security & Environment Protection
 
-All sensitive environment files (`.env`, `.env.local`), database data directories (`.pglite_data/`), and build artifacts are strictly ignored in `.gitignore` to prevent credential exposure. Always use `.env.example` as a template for production deployment configs.
+All sensitive environment files (`apps/web/.env`, `.env.local`), database data directories (`.pglite_data/`), and build artifacts are strictly ignored in `.gitignore` to prevent credential exposure. Always use `.env.example` as a template for production deployment configs.

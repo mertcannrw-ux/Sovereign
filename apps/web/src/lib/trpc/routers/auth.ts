@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { TRPCError } from '@trpc/server';
 import { publicProcedure, protectedProcedure, router } from '../trpc';
 import { checkRateLimit } from '@/server/rate-limit';
+import { ensurePersonalOrganization } from '@/server/onboarding';
 import { oauthProvidersEnabled } from '@/lib/auth';
 import { env } from '@/env';
 
@@ -57,6 +58,17 @@ export const authRouter = router({
           passwordHash: hashedPassword,
         },
       });
+
+      try {
+        // A fresh account owns no organization and projects.create requires one,
+        // so without this the new user dead-ends at "No workspace found".
+        // Best-effort: the account already exists, so failing here must not turn
+        // a successful signup into an error. The idempotent version in the
+        // sign-in callback repairs the account on the next successful login.
+        await ensurePersonalOrganization(ctx.db, user.id, user.name, ctx.ipHash);
+      } catch (error) {
+        console.error('[auth] failed to provision personal organization for new user', error);
+      }
 
       return {
         id: user.id,
@@ -128,7 +140,14 @@ export const authRouter = router({
   requestPasswordReset: publicProcedure
     .input(z.object({ email: z.string().email() }))
     .mutation(async ({ ctx, input }) => {
-      const rate = await checkRateLimit('passwordReset', ctx.ipHash);
+      const email = input.email.trim().toLowerCase();
+      // Bucket per IP+email (see register). Keying on `ctx.ipHash` alone would
+      // put every caller behind one bucket whenever no trusted proxy header is
+      // present (getClientIp returns a constant 127.0.0.1), so a single
+      // anonymous attacker could exhaust the shared limit and block password
+      // resets for all users.
+      const identity = process.env.TRUSTED_PROXY === 'true' ? `${ctx.ipHash}:${email}` : email;
+      const rate = await checkRateLimit('passwordReset', identity);
       if (!rate.allowed) {
         const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
         throw new TRPCError({
@@ -137,7 +156,6 @@ export const authRouter = router({
         });
       }
 
-      const email = input.email.trim().toLowerCase();
       const user = await ctx.db.user.findFirst({
         where: { email: { equals: email, mode: 'insensitive' } },
       });
@@ -207,9 +225,19 @@ export const authRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      const tokenHash = crypto.createHash('sha256').update(input.token).digest('hex');
       // Gate the endpoint before the expensive work: an unauthenticated caller
       // could otherwise burn a cost-12 bcrypt hash on every fabricated token.
-      const rate = await checkRateLimit('passwordResetSubmit', ctx.ipHash);
+      // There is no email/account input here, so the token itself is the only
+      // meaningful identity. Under a trusted proxy we can additionally separate
+      // callers by IP; without one every request is seen as 127.0.0.1, so the
+      // key must stay a single shared bucket (never per-request, which would
+      // let a caller reset the limiter at will). Using the token hash prefix —
+      // not the raw token — also keeps tokens out of rate-limit keys/logs, and
+      // the 20/15min budget is unchanged in both modes.
+      const identity =
+        process.env.TRUSTED_PROXY === 'true' ? `${ctx.ipHash}:${tokenHash.slice(0, 16)}` : 'global';
+      const rate = await checkRateLimit('passwordResetSubmit', identity);
       if (!rate.allowed) {
         const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
         throw new TRPCError({
@@ -218,7 +246,6 @@ export const authRouter = router({
         });
       }
 
-      const tokenHash = crypto.createHash('sha256').update(input.token).digest('hex');
       const record = await ctx.db.passwordResetToken.findUnique({
         where: { token: tokenHash },
       });

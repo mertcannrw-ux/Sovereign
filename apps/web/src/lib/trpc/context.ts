@@ -20,9 +20,6 @@ function generateRequestId(): string {
 
 function getClientIp(req: Request): string {
   if (process.env.TRUSTED_PROXY === 'true') {
-    const realIp = req.headers.get('x-real-ip')?.trim();
-    if (realIp && isIP(realIp)) return realIp;
-
     const forwarded = req.headers.get('x-forwarded-for');
     if (forwarded) {
       const entries = forwarded
@@ -35,6 +32,13 @@ function getClientIp(req: Request): string {
       const last = entries[entries.length - 1];
       if (last && isIP(last)) return last;
     }
+
+    // X-Forwarded-For wins: a proxy/CDN that appends to XFF but does not set
+    // X-Real-IP (a common default) would otherwise let any client mint a fresh
+    // rate-limit bucket by sending an arbitrary `X-Real-IP` header. Only fall
+    // back to it when XFF is absent, and validate it just the same.
+    const realIp = req.headers.get('x-real-ip')?.trim();
+    if (realIp && isIP(realIp)) return realIp;
   }
 
   return '127.0.0.1';

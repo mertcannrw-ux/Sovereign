@@ -24,12 +24,38 @@ interface RateLimitResult {
 
 // ─── In-memory fallback (dev/test only) ──────────────────
 
+// Hard cap on tracked fallback buckets. Without Redis this Map IS the limiter
+// state, and identifiers are attacker-chosen (e.g. a unique email per sign-up),
+// so an unbounded Map would let a single client OOM the instance. 10k keys is
+// far above the number of live keys the short pre-auth windows can legitimately
+// hold, so the cap is only ever reached under abuse.
+const MAX_TRACKED_BUCKETS = 10_000;
+
 const devBuckets = new Map<string, { count: number; resetAt: number }>();
 
 function evictExpiredDevBuckets(now: number): void {
   for (const [key, bucket] of devBuckets) {
     if (now > bucket.resetAt) devBuckets.delete(key);
   }
+}
+
+/**
+ * Drop least-recently-used buckets until the map is back under `maxSize`.
+ * `devBuckets` is a Map, so iteration order is insertion order; every access
+ * re-inserts its bucket (see touchDevBucket) which makes that order
+ * least-recently-accessed-first.
+ */
+function evictOldestDevBuckets(maxSize: number): void {
+  for (const key of devBuckets.keys()) {
+    if (devBuckets.size <= maxSize) break;
+    devBuckets.delete(key);
+  }
+}
+
+/** Re-insert so recency ordering survives `set` on an existing key. */
+function touchDevBucket(key: string, bucket: { count: number; resetAt: number }): void {
+  devBuckets.delete(key);
+  devBuckets.set(key, bucket);
 }
 
 function devSlidingWindow(key: string, config: RateLimitConfig): RateLimitResult {
@@ -39,11 +65,17 @@ function devSlidingWindow(key: string, config: RateLimitConfig): RateLimitResult
   const bucket = devBuckets.get(key);
 
   if (!bucket || now > bucket.resetAt) {
-    devBuckets.set(key, { count: 1, resetAt: now + windowMs });
-    return { allowed: true, remaining: config.limit - 1, resetAt: now + windowMs };
+    // Only a brand-new key can grow the map, so make room for it here. Expired
+    // buckets are already gone (evictExpiredDevBuckets above); if the map is
+    // still full it is full of live buckets and the oldest ones are dropped.
+    if (devBuckets.size >= MAX_TRACKED_BUCKETS) evictOldestDevBuckets(MAX_TRACKED_BUCKETS - 1);
+    const fresh = { count: 1, resetAt: now + windowMs };
+    devBuckets.set(key, fresh);
+    return { allowed: true, remaining: config.limit - 1, resetAt: fresh.resetAt };
   }
 
   bucket.count++;
+  touchDevBucket(key, bucket);
   const allowed = bucket.count <= config.limit;
   return {
     allowed,
@@ -54,16 +86,19 @@ function devSlidingWindow(key: string, config: RateLimitConfig): RateLimitResult
 
 // ─── Upstash sliding window ──────────────────────────────
 
-// Emitted once per process: an Upstash outage must not lock every user out of
+// Emitted once per process: an Upstash outage — or a deployment that
+// deliberately runs without Redis — must not lock every user out of
 // sign-in/registration, so we fall back to the in-memory limiter (per-instance,
-// still functional) instead of denying everything in production.
+// still functional) instead of denying everything in production. Warning only
+// once keeps the degraded state visible without flooding production logs on
+// every request.
 let warnedUpstashDown = false;
 
 function onUpstashUnavailable(reason: string): void {
   if (process.env.NODE_ENV === 'production' && !warnedUpstashDown) {
     warnedUpstashDown = true;
     console.warn(
-      `[rate-limit] Upstash unreachable (${reason}); falling back to per-instance in-memory limits.`,
+      `[rate-limit] Upstash unavailable (${reason}); falling back to per-instance in-memory limits.`,
     );
   }
 }
@@ -76,6 +111,7 @@ async function upstashSlidingWindow(
   const token = env.UPSTASH_REDIS_REST_TOKEN;
 
   if (!url || !token) {
+    onUpstashUnavailable('not configured');
     return devSlidingWindow(key, config);
   }
 

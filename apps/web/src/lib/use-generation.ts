@@ -16,6 +16,7 @@ import type {
   GenerationPhaseEvent,
 } from '@/lib/generation-stream';
 import type { ClarifyingQuestion } from '@/lib/generation-protocol';
+import { isSovereignOverlayPath } from '@/lib/preview-startup';
 import type { UsePreviewRuntimeResult } from '@/lib/use-preview-runtime';
 
 export interface GenerateDirectionResponse {
@@ -67,6 +68,9 @@ export interface UseGenerationOptions {
     | 'applyFileOperation'
     | 'applyFiles'
     | 'applyImmediateWrite'
+    // The live mirror is read (never written) to snapshot the content a streamed
+    // file had before the run touched it — see `trackProvisional` in `send`.
+    | 'files'
     | 'flushPendingWrites'
     | 'handleRuntimeRequest'
   >;
@@ -102,6 +106,12 @@ export interface UseGenerationResult {
   setClarificationStep: Dispatch<SetStateAction<number>>;
   activeDesignDirections: DesignDirectionsEventData | null;
   setActiveDesignDirections: Dispatch<SetStateAction<DesignDirectionsEventData | null>>;
+  /**
+   * Starts a run. A send that is rejected before it starts (no prompt or
+   * direction response, no model/provider, or a run already in flight) is a
+   * no-op that leaves the user's prompt and attachments untouched — the prompt
+   * bar mirrors these same guards so it never clears what was not sent.
+   */
   send: (
     messageOverride?: string,
     directionResponseOverride?: GenerateDirectionResponse,
@@ -124,6 +134,22 @@ function isTokenUsage(value: unknown): value is ChatMessage['tokenUsage'] {
     'totalTokens' in value &&
     typeof value.totalTokens === 'number'
   );
+}
+
+/** Cap for the raw provider text kept in a failure message's detail. */
+const MAX_ERROR_DETAIL_CHARS = 2000;
+
+/**
+ * Provider failures arrive as raw JSON/HTML bodies — a rejected API key dumps the
+ * whole response. The chat shows a clean sentence instead; the unfiltered text is
+ * only kept in the message's collapsed `thinking` detail, truncated so a huge
+ * provider dump cannot bloat the transcript.
+ */
+function formatErrorDetail(detail: string): string {
+  const trimmed = detail.trim();
+  return trimmed.length > MAX_ERROR_DETAIL_CHARS
+    ? `${trimmed.slice(0, MAX_ERROR_DETAIL_CHARS)}…`
+    : trimmed;
 }
 
 function mapHistoryMessage(message: GenerationHistoryMessage): ChatMessage {
@@ -177,6 +203,13 @@ export function useGeneration({
     useState<DesignDirectionsEventData | null>(null);
 
   const abortControllerRef = useRef<AbortController | null>(null);
+  // Set synchronously on acceptance, unlike `isSending`: two sends in the same
+  // tick would both read the pre-render `isSending === false`.
+  const inFlightRef = useRef(false);
+  // The server never persists a failure notice, so a failed run's message has to
+  // survive the history refetch that the same failure triggers. Without this the
+  // notice would flash and be wiped by the next history sync.
+  const runFailureRef = useRef<ChatMessage | null>(null);
   const seenProjectIdRef = useRef(projectId);
   const previewRef = useRef(preview);
   previewRef.current = preview;
@@ -200,6 +233,10 @@ export function useGeneration({
     seenProjectIdRef.current = projectId;
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
+    // The old run's `finally` will bail out (it is no longer the current run), so
+    // the in-flight flag has to be released here or every later send is rejected.
+    inFlightRef.current = false;
+    runFailureRef.current = null;
     setIsSending(false);
     setGenerationPhase(null);
     setActiveFile(null);
@@ -218,7 +255,9 @@ export function useGeneration({
   }, [projectId]);
 
   useEffect(() => {
-    setLocalMessages((history ?? []).map(mapHistoryMessage));
+    const fromHistory = (history ?? []).map(mapHistoryMessage);
+    const failure = runFailureRef.current;
+    setLocalMessages(failure ? [...fromHistory, failure] : fromHistory);
   }, [history]);
 
   const stop = useCallback(() => {
@@ -245,14 +284,75 @@ export function useGeneration({
       attachments?: GenerationAttachment[],
     ) => {
       const text = messageOverride?.trim() ?? '';
-      if ((!text && !directionResponseOverride) || isSending || !selectedModel || !selectedProvider)
+      if (
+        (!text && !directionResponseOverride) ||
+        inFlightRef.current ||
+        isSending ||
+        !selectedModel ||
+        !selectedProvider
+      ) {
         return;
+      }
       const abortController = new AbortController();
       abortControllerRef.current = abortController;
+      inFlightRef.current = true;
       // An explicit override (in-preview quick edit) wins; otherwise use the
       // currently selected element (if any) as the edit target.
       const currentEditTarget = editTargetOverride ?? editTargetRef.current;
       const runtime = previewRef.current;
+
+      // Streamed file content reaches the sandbox before the filesystem action
+      // that commits it does, so a run stopped mid-file would otherwise leave a
+      // syntactically incomplete file behind. This mirrors the server's own
+      // provisional-originals bookkeeping: the first optimistic write for a path
+      // records the content the client last knew as committed (null when the file
+      // did not exist) so that path can be rolled back.
+      const provisionalOriginals = new Map<string, string | null>();
+      // Only a server terminal event (`ready` / `questions`) proves the buffered
+      // previews match something the server accepts.
+      let serverSettled = false;
+
+      const trackProvisional = (path: string) => {
+        if (provisionalOriginals.has(path)) return;
+        // Injected preview scripts never come from the server; recording one as
+        // "new" would make a rollback delete it from the container.
+        if (isSovereignOverlayPath(path)) return;
+        provisionalOriginals.set(path, runtime.files.get(path) ?? null);
+      };
+
+      const discardProvisionalWrites = () => {
+        if (provisionalOriginals.size === 0) return;
+        const originals = new Map(provisionalOriginals);
+        provisionalOriginals.clear();
+        // Re-queueing the committed content replaces the buffered fragments, and
+        // the throttled write path pushes the committed text back into the
+        // container — a fragment that already landed there is repaired this way.
+        for (const [path, original] of originals) {
+          runtime.applyFilePreview(
+            original === null
+              ? { operation: 'delete', path }
+              : { operation: 'update', path, content: original },
+          );
+        }
+        // The code pane reads `activeFile`, not the file mirror, so the streamed
+        // fragment has to be replaced there too.
+        setActiveFile((current) => {
+          if (!current || !originals.has(current.path)) return current;
+          const original = originals.get(current.path) ?? null;
+          return original === null ? null : { ...current, content: original, line: 1, column: 0 };
+        });
+      };
+
+      const resyncFromServer = () => {
+        // Deliberately not awaited: the refetches must not hold `isSending` true
+        // until they settle, and a failing refetch must not replace the run's own
+        // error with a query error.
+        void Promise.all([
+          onVersionsRefetchRef.current(),
+          onHistoryRefetchRef.current(),
+          onFilesRefetchRef.current(),
+        ]).catch(() => undefined);
+      };
 
       const optimisticId = crypto.randomUUID();
       const userMessage: ChatMessage = {
@@ -266,6 +366,7 @@ export function useGeneration({
       setLocalMessages((previous) => [...previous, userMessage]);
       onClearInputRef.current?.();
       if (!editTargetOverride) onClearEditTargetRef.current?.();
+      runFailureRef.current = null;
       setIsSending(true);
       setAgentLiveMessage('Agent started');
       setGenerationPhase({ phase: 'planning', label: 'Planning your app' });
@@ -307,6 +408,9 @@ export function useGeneration({
             return;
           }
           if (event.type === 'file-operation') {
+            // The server persisted this path as part of a completed file action,
+            // so it is no longer provisional: an abort must not roll it back.
+            provisionalOriginals.delete(event.data.path);
             const label =
               event.data.operation === 'delete'
                 ? `Deleting ${event.data.path}`
@@ -331,6 +435,7 @@ export function useGeneration({
               return;
             }
             if (event.data.content !== undefined) {
+              trackProvisional(event.data.path);
               setActiveFile({
                 path: event.data.path,
                 content: event.data.content,
@@ -350,6 +455,11 @@ export function useGeneration({
             return;
           }
           if (event.type === 'questions') {
+            // Server terminal event: the buffered previews are not fragments to
+            // be thrown away, and a stale failure notice must not come back.
+            serverSettled = true;
+            discardProvisionalWrites();
+            runFailureRef.current = null;
             setClarifyingQuestions(event.data.questions);
             setClarificationAnswers([]);
             setClarificationStep(0);
@@ -381,6 +491,7 @@ export function useGeneration({
             return;
           }
           if (event.type === 'file-progress') {
+            trackProvisional(event.data.path);
             setActiveFile(event.data);
             runtime.applyFilePreview({
               operation: 'update',
@@ -396,6 +507,11 @@ export function useGeneration({
           if (event.type === 'failed') throw new Error(event.data.message);
 
           if (event.type !== 'ready') return;
+          // The event carries the full authoritative file set: nothing that was
+          // streamed is provisional any more, and nothing is left to roll back.
+          serverSettled = true;
+          provisionalOriginals.clear();
+          runFailureRef.current = null;
           await runtime.applyFiles(event.data.files);
           const primaryFile =
             event.data.files.find((file) => file.path === 'index.html') ??
@@ -435,29 +551,48 @@ export function useGeneration({
             onFilesRefetchRef.current(),
           ]);
         });
+
+        // A stream that ends without a terminal event (dropped connection, server
+        // restart) leaves the buffered previews unverified — treat that like a
+        // stop rather than flushing a possibly truncated fragment.
+        if (!serverSettled) {
+          if (abortControllerRef.current === abortController) discardProvisionalWrites();
+          resyncFromServer();
+        }
       } catch (error) {
         setLocalMessages((previous) => previous.filter((message) => message.id !== optimisticId));
-        if (
-          error instanceof Error &&
-          (error.name === 'AbortError' || abortController.signal.aborted)
-        ) {
-          return;
+        const aborted =
+          (error instanceof Error && error.name === 'AbortError') || abortController.signal.aborted;
+        if (abortControllerRef.current === abortController) {
+          // A run superseded by a newer one must not touch the runtime: the newer
+          // run is already streaming its own previews into it.
+          discardProvisionalWrites();
         }
-        onRestoreInputRef.current?.(text);
-        const message = error instanceof Error ? error.message : 'Failed to generate the app.';
-        setLocalMessages((previous) => [
-          ...previous,
-          {
+        if (!aborted) {
+          onRestoreInputRef.current?.(text);
+          const detail = error instanceof Error ? error.message : 'Failed to generate the app.';
+          const failureMessage: ChatMessage = {
             id: crypto.randomUUID(),
             role: 'system',
-            content: `**Error:** ${message}`,
+            // Provider failures are raw JSON/HTML dumps; the transcript gets a
+            // clean sentence, with the unfiltered text only in the collapsed
+            // detail below.
+            content: 'Generation failed. Check your API key and model settings, then try again.',
             timestamp: new Date(),
             model: `${selectedProvider}:${selectedModel}`,
-          },
-        ]);
+            thinking: formatErrorDetail(detail),
+          };
+          runFailureRef.current = failureMessage;
+          setLocalMessages((previous) => [...previous, failureMessage]);
+        }
+        // The server commits files and versions mid-run and keeps them on failure
+        // ("Completed changes were kept"), so the code pane, preview and version
+        // timeline are stale until they are refetched.
+        resyncFromServer();
       } finally {
         if (abortControllerRef.current === abortController) {
           abortControllerRef.current = null;
+          inFlightRef.current = false;
           setIsSending(false);
           setGenerationPhase(null);
           setLiveThinking(null);
@@ -466,10 +601,16 @@ export function useGeneration({
             setAgentLiveMessage('Agent finished');
           }
         }
-        try {
-          await runtime.flushPendingWrites();
-        } catch {
-          // WC write failure must not leave send UI stuck or clobber a newer run.
+        // Only a run that ended on a server terminal event may write its buffered
+        // previews. After a stop — or a run superseded by a newer one — the buffer
+        // still holds a truncated fragment the server never committed, and
+        // flushing it is what left an unparseable file in the sandbox.
+        if (serverSettled && !abortController.signal.aborted) {
+          try {
+            await runtime.flushPendingWrites();
+          } catch {
+            // WC write failure must not leave send UI stuck or clobber a newer run.
+          }
         }
       }
     },

@@ -143,8 +143,16 @@ export interface PromptBarProps {
   selectedPreviewElement: SelectedPreviewElement | null;
   onClearSelectedElement: () => void;
   clarifyingLocked: boolean;
-  /** Receives the typed text plus any readable attachments, then clears them. */
-  onSend: (message: string, attachments: GenerationAttachment[]) => void;
+  /**
+   * Receives the typed text plus any readable attachments. Returns `false` when
+   * the send was rejected (a run is already in flight, no model/provider), so the
+   * composer only clears what the hook actually accepted. `undefined` keeps the
+   * legacy fire-and-forget behaviour.
+   */
+  onSend: (
+    message: string,
+    attachments: GenerationAttachment[],
+  ) => boolean | Promise<boolean> | void;
   onStop: () => void;
 }
 
@@ -171,6 +179,7 @@ export function PromptBar({
   const [modelSearchQuery, setModelSearchQuery] = useState('');
   const [attachedFiles, setAttachedFiles] = useState<PromptBarAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
   const [activeOptionIndex, setActiveOptionIndex] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -333,20 +342,57 @@ export function PromptBar({
         setAttachedFiles((previous) => [...previous, ...accepted]);
       }
       setAttachmentError(errors.length > 0 ? errors.join(' ') : null);
+      setSendError(null);
     },
     [attachedFiles],
   );
 
   const send = useCallback(
     (message: string) => {
-      onSend(
+      // Mirror the hook's own guards here, synchronously: clearing the composer
+      // before knowing the send was accepted silently dropped the user's
+      // attachments when Enter was pressed during a running generation.
+      if (!message.trim()) {
+        // The hook ignores an empty prompt. Saying so only matters when the user
+        // attached something and could think it went out with the keystroke.
+        if (attachedFiles.length > 0) {
+          setSendError('Add a message to send with your attachments.');
+        }
+        return;
+      }
+      if (isSending) {
+        setSendError('Wait for the current response to finish before sending.');
+        return;
+      }
+      if (!selectedModel || !selectedProvider) {
+        setSendError('Select a model before sending.');
+        return;
+      }
+      const pendingFiles = attachedFiles;
+      const accepted = onSend(
         message,
-        attachedFiles.map((file) => ({ path: file.name, content: file.content })),
+        pendingFiles.map((file) => ({ path: file.name, content: file.content })),
       );
+      if (accepted === false) {
+        setSendError('Could not start the generation. Try again.');
+        return;
+      }
       setAttachedFiles([]);
       setAttachmentError(null);
+      setSendError(null);
+      if (typeof accepted === 'object' && accepted !== null) {
+        // A promise settles when the run ends, so it cannot gate the clearing
+        // above; it only repairs the composer if the hook rejected the send.
+        void accepted
+          .then((ok) => {
+            if (ok) return;
+            setAttachedFiles((previous) => (previous.length > 0 ? previous : pendingFiles));
+            setSendError('Could not start the generation. Your attachments were kept.');
+          })
+          .catch(() => undefined);
+      }
     },
-    [attachedFiles, onSend],
+    [attachedFiles, isSending, onSend, selectedModel, selectedProvider],
   );
 
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
@@ -722,12 +768,12 @@ export function PromptBar({
           </div>
 
           <div className="flex items-center gap-3">
-            {attachmentError ? (
+            {attachmentError || sendError ? (
               <p
                 role="alert"
                 className="max-w-[280px] text-right text-[11px] leading-tight text-warning"
               >
-                {attachmentError}
+                {sendError ?? attachmentError}
               </p>
             ) : null}
             <button

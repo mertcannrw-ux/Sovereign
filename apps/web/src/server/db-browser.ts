@@ -148,6 +148,14 @@ const FORBIDDEN_SQL_KEYWORDS = [
   'INTO',
   'SET_CONFIG',
   'CURRENT_SETTING',
+  // `TABLE relation_expr` is a second SELECT form that references a relation
+  // without a FROM/JOIN token, e.g. `SELECT * FROM (TABLE other.users) x`.
+  // `TABLE` is a reserved word in PostgreSQL, so it can only appear here as that
+  // command (a table actually named `table` must be written `"table"` and is
+  // rejected too — an acceptable fail-closed trade-off). This keyword block is
+  // the backstop; the scanner below also treats `TABLE` as a reference
+  // introducer so the guard still holds if this list is ever changed.
+  'TABLE',
 ];
 
 // Functions that reach outside the tenant schema (filesystem, sockets, server
@@ -281,14 +289,19 @@ function isForeignQualifiedName(
 }
 
 /**
- * Detect schema-qualified table references in FROM/JOIN clauses that point to a
- * schema other than the tenant's own. Unqualified names are safe (they resolve
- * via search_path); a `tenantSchema.` prefix is allowed as self-qualification.
- * Column references like `alias.column` in SELECT/WHERE never appear directly
- * after FROM, JOIN or a table-list comma, so they are left untouched. Returns
- * true on a foreign schema reference.
+ * Detect schema-qualified table references in FROM/JOIN/TABLE clauses that point
+ * to a schema other than the tenant's own. Unqualified names are safe (they
+ * resolve via search_path); a `tenantSchema.` prefix is allowed as
+ * self-qualification. Column references like `alias.column` in SELECT/WHERE
+ * never appear directly after FROM, JOIN or a table-list comma, so they are left
+ * untouched. Returns true on a foreign schema reference.
+ *
+ * `TABLE` is included as an introducer because `TABLE relation_expr` is a valid
+ * SELECT form that names a relation without any FROM/JOIN token — e.g.
+ * `SELECT * FROM (TABLE other.users) x`. Scanning only after FROM/JOIN/comma
+ * would miss it and let a foreign tenant schema be read.
  */
-function referencesForeignSchema(stripped: string, tenantSchema?: string): boolean {
+export function referencesForeignSchema(stripped: string, tenantSchema?: string): boolean {
   const tokens = tokenizeSql(stripped);
   const isTableModifier = (token: SqlToken): boolean =>
     token.kind === 'word' &&
@@ -299,7 +312,7 @@ function referencesForeignSchema(stripped: string, tenantSchema?: string): boole
     const token = tokens[index]!;
     if (token.kind !== 'word' || token.quoted) continue;
     const keyword = token.value.toLowerCase();
-    if (keyword !== 'from' && keyword !== 'join') continue;
+    if (keyword !== 'from' && keyword !== 'join' && keyword !== 'table') continue;
 
     // Skip table-item modifiers and parenthesized table references so both
     // `FROM ONLY other.users` and `FROM (other.users)` are inspected.

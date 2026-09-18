@@ -25,8 +25,20 @@ function emptyToolCall(): ToolCall {
 }
 
 /**
+ * Upper bound for a streamed tool-call `index`. OpenAI returns at most a
+ * handful of parallel tool calls, so anything larger is a malformed stream:
+ * honouring it would grow the accumulator array towards the value.
+ */
+const MAX_TOOL_CALL_INDEX = 256;
+
+/**
  * Assemble OpenAI streaming `delta.tool_calls` fragments by `index`.
  * Fragments may omit id/name and only append `function.arguments`.
+ *
+ * `index` is provider-controlled data, so it is validated before use: a
+ * negative, fractional, non-finite, or oversized value would index out of
+ * bounds (`current.id = …` throws on `undefined`) or spin a huge fill loop. A
+ * malformed delta is skipped rather than aborting the whole stream.
  */
 export function applyOpenAIToolCallDeltas(accumulated: ToolCall[], deltas: unknown): ToolCall[] {
   if (!Array.isArray(deltas)) return accumulated;
@@ -37,7 +49,10 @@ export function applyOpenAIToolCallDeltas(accumulated: ToolCall[], deltas: unkno
 
   for (const delta of deltas) {
     if (!isObject(delta)) continue;
-    const index = typeof delta['index'] === 'number' ? delta['index'] : 0;
+    const rawIndex = delta['index'];
+    // A delta without an index targets the first call (OpenAI behaviour).
+    const index = typeof rawIndex === 'number' ? rawIndex : 0;
+    if (!Number.isInteger(index) || index < 0 || index > MAX_TOOL_CALL_INDEX) continue;
     while (next.length <= index) next.push(emptyToolCall());
     const current = next[index]!;
     if (isString(delta['id']) && delta['id'].length > 0) current.id = delta['id'];

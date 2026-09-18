@@ -39,6 +39,64 @@ describe('applyOpenAIToolCallDeltas', () => {
   });
 });
 
+describe('applyOpenAIToolCallDeltas index validation', () => {
+  // A provider can emit any JSON, so `index` must never be trusted: a negative
+  // or fractional value used to make `current.id = …` throw, and an oversized
+  // one used to spin a multi-billion-iteration fill loop.
+  const invalidDeltas = [
+    { index: -1, id: 'neg', function: { name: 'x', arguments: 'NEGATIVE' } },
+    { index: 0.5, id: 'frac', function: { name: 'x', arguments: 'FRACTIONAL' } },
+    { index: 1e9, id: 'huge', function: { name: 'x', arguments: 'HUGE' } },
+    { index: Number.NaN, function: { arguments: 'NAN' } },
+  ];
+
+  it('ignores deltas with a negative, fractional, NaN, or oversized index', () => {
+    const seeded = applyOpenAIToolCallDeltas(
+      [],
+      [{ index: 0, id: 'call_1', function: { name: 'write_file', arguments: '{"a":' } }],
+    );
+
+    const calls = applyOpenAIToolCallDeltas(seeded, invalidDeltas);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual({
+      id: 'call_1',
+      type: 'function',
+      function: { name: 'write_file', arguments: '{"a":' },
+    });
+  });
+
+  it('never throws on a malformed index', () => {
+    expect(() => applyOpenAIToolCallDeltas([], invalidDeltas)).not.toThrow();
+    expect(applyOpenAIToolCallDeltas([], invalidDeltas)).toEqual([]);
+  });
+
+  it('still accumulates arguments for a valid index', () => {
+    let calls = applyOpenAIToolCallDeltas(
+      [],
+      [{ index: 0, id: 'call_1', function: { name: 'write_file', arguments: '{"a":' } }],
+    );
+    calls = applyOpenAIToolCallDeltas(calls, [{ index: 0, function: { arguments: '1}' } }]);
+    calls = applyOpenAIToolCallDeltas(calls, [
+      { index: 1, id: 'call_2', function: { name: 'read_files', arguments: '{}' } },
+    ]);
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.function.arguments).toBe('{"a":1}');
+    expect(calls[1]).toEqual({
+      id: 'call_2',
+      type: 'function',
+      function: { name: 'read_files', arguments: '{}' },
+    });
+  });
+
+  it('treats a missing index as the first tool call', () => {
+    const calls = applyOpenAIToolCallDeltas([], [{ function: { arguments: '{}' } }]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.function.arguments).toBe('{}');
+  });
+});
+
 describe('parseOpenAIToolCalls', () => {
   it('reads a non-streaming message.tool_calls array', () => {
     expect(
