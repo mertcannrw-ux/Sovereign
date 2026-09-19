@@ -829,7 +829,32 @@ export async function POST(request: NextRequest) {
               } else {
                 const text = responseContent.trim();
                 if (!text) {
-                  action = { type: 'finish', summary: reasoningContent.trim() || 'Done.' };
+                  // Reasoning models (DeepSeek/Kimi-style gateways) sometimes end
+                  // a turn with only `reasoning_content` and empty `content`. That
+                  // reasoning is already surfaced in the collapsed step; promoting
+                  // it to the transcript would present internal thinking as the
+                  // assistant's answer. Ask for real output instead, and let the
+                  // no-progress guard bound a model that never produces any.
+                  emitStep({
+                    ...thinkingStep,
+                    title: 'No user-facing output — asking again',
+                    detail: reasoningContent.trim() || 'The model returned no output.',
+                    status: 'complete',
+                    completedAt: new Date().toISOString(),
+                    durationMs: Date.now() - iterationStartedAt.getTime(),
+                  });
+                  messages.push({
+                    role: 'user',
+                    content:
+                      'Your last turn produced no user-facing output. Emit the next action now, or a short user-facing reply via respond.',
+                  });
+                  consecutiveNoProgressIterations += 1;
+                  if (consecutiveNoProgressIterations >= MAX_NO_PROGRESS_TURNS) {
+                    throw new Error(
+                      `The model produced no user-facing output after ${MAX_NO_PROGRESS_TURNS} turns.`,
+                    );
+                  }
+                  continue;
                 } else {
                   try {
                     action = parseAgentAction(text);
