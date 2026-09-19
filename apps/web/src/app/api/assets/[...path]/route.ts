@@ -4,14 +4,29 @@ import path from 'node:path';
 import { getVerifiedSession } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { requireProjectRole } from '@/server/authz';
-import { LOCAL_ASSET_ROOT, verifyAssetToken } from '@/server/assets/r2';
+import {
+  LOCAL_ASSET_ROOT,
+  downloadAssetBytes,
+  getR2ConfigStatus,
+  verifyAssetToken,
+} from '@/server/assets/r2';
 import type { Context } from '@/lib/trpc/context';
 
-// Local-disk fallback storage keeps assets under `.private-assets/projects/<projectId>/assets/...`
-// (never `public/`, so Next.js cannot serve them statically). This route serves ONLY files that
-// have a matching ProjectAsset record — and only to authenticated users who can view the owning
-// project. R2-hosted assets are served directly from the configured public URL and never hit this
-// route.
+/** Media-type allowlist mirrored from uploadProjectAsset's magic-byte check. */
+function assetContentType(objectKey: string): string {
+  if (objectKey.endsWith('.png')) return 'image/png';
+  if (objectKey.endsWith('.jpg') || objectKey.endsWith('.jpeg')) return 'image/jpeg';
+  if (objectKey.endsWith('.webp')) return 'image/webp';
+  if (objectKey.endsWith('.gif')) return 'image/gif';
+  return 'application/octet-stream';
+}
+
+// Storage backend details live in `server/assets/r2.ts`; this route serves ONLY
+// files that have a matching ProjectAsset record. Local-disk assets are read
+// from `.private-assets/projects/<projectId>/assets/...` (never `public/`, so
+// Next.js cannot serve them statically); R2-backed assets are fetched through
+// this same route behind the same checks. Legacy ProjectAsset rows that stored
+// a bucket public URL still point directly at R2 and never reach this route.
 
 export async function GET(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
   const { path: segments } = await context.params;
@@ -30,8 +45,9 @@ export async function GET(request: NextRequest, context: { params: Promise<{ pat
 
   // Signed URL bypass for cross-origin WebContainer preview:
   // `publicUrl` is minted as `/api/assets/<key>?expires=&sig=` (HMAC of
-  // `objectKey:expires` with NEXTAUTH_SECRET). If present and valid, it
-  // authorizes the request without a cookie. Query is ignored for R2 URLs.
+  // `objectKey:expires` with NEXTAUTH_SECRET) for BOTH storage backends. If
+  // present and valid, it authorizes the request without a cookie; without it
+  // the caller needs a session plus VIEWER access to the owning project.
   const url = new URL(request.url);
   const tokenExpires = url.searchParams.get('expires');
   const tokenSig = url.searchParams.get('sig');
@@ -72,15 +88,13 @@ export async function GET(request: NextRequest, context: { params: Promise<{ pat
   // strict allowlist of the media types uploads are restricted to (magic bytes
   // are verified in uploadProjectAsset); anything else is served as octet-stream
   // and never as HTML/SVG to avoid any stored-XSS surface.
-  const fullPath = resolved;
+  const contentType = assetContentType(relativePath);
   try {
-    const fileBuffer = await fs.promises.readFile(fullPath);
-    let contentType = 'application/octet-stream';
-    if (relativePath.endsWith('.png')) contentType = 'image/png';
-    else if (relativePath.endsWith('.jpg') || relativePath.endsWith('.jpeg'))
-      contentType = 'image/jpeg';
-    else if (relativePath.endsWith('.webp')) contentType = 'image/webp';
-    else if (relativePath.endsWith('.gif')) contentType = 'image/gif';
+    const fileBuffer =
+      getR2ConfigStatus().storageMode === 'r2'
+        ? await downloadAssetBytes(relativePath)
+        : await fs.promises.readFile(resolved);
+    if (!fileBuffer) return new NextResponse('Asset not found', { status: 404 });
 
     return new NextResponse(fileBuffer, {
       status: 200,

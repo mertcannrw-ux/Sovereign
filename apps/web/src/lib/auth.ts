@@ -186,6 +186,9 @@ export const authOptions: NextAuthOptions = {
         }
         user.id = existing.id;
         user.email = existing.email;
+        // Carry the database-minted version so getVerifiedSession can compare
+        // it: an OAuth login must not re-mint a token that starts back at 0.
+        user.sessionVersion = existing.sessionVersion;
         // Existing rows may predate onboarding, and an adopted OAuth identity
         // still needs a workspace it can create projects in.
         await ensureWorkspaceForSignIn(existing.id, existing.name ?? user.name);

@@ -15,7 +15,8 @@ const isIPv4 = (ip: string) => IPV4_RE.test(ip);
 const isIPv6 = (ip: string) => !isIPv4(ip) && ip.includes(':');
 
 /**
- * RFC 1918, loopback, link-local, multicast, and cloud metadata ranges.
+ * RFC 1918, loopback, link-local, multicast, CGNAT, benchmarking, reserved,
+ * and cloud metadata ranges.
  *
  * Checks use packed integer comparison for IPv4.
  */
@@ -32,6 +33,12 @@ const PRIVATE_RANGES = [
   { start: [169, 254, 0, 0], end: [169, 254, 255, 255] },
   // Multicast
   { start: [224, 0, 0, 0], end: [239, 255, 255, 255] },
+  // CGNAT (RFC 6598) — includes the Alibaba Cloud metadata address 100.100.100.200
+  { start: [100, 64, 0, 0], end: [100, 127, 255, 255] },
+  // Benchmarking (RFC 2544)
+  { start: [198, 18, 0, 0], end: [198, 19, 255, 255] },
+  // Reserved (RFC 1112) — includes the 255.255.255.255 broadcast address
+  { start: [240, 0, 0, 0], end: [255, 255, 255, 255] },
   // Cloud metadata (inside link-local range, checked first)
   { start: [169, 254, 169, 254], end: [169, 254, 169, 254] },
 ];

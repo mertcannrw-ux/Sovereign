@@ -7,7 +7,12 @@ import { protectedProcedure, router } from '../trpc';
 import { requireProjectRole } from '@/server/authz';
 import { checkRateLimit } from '@/server/rate-limit';
 import { decryptApiKey } from '@/lib/crypto';
-import { parseResponse, validateChanges, validatePath } from '@app-builder/codegen';
+import {
+  isForbiddenEnvPath,
+  parseResponse,
+  validateChanges,
+  validatePath,
+} from '@app-builder/codegen';
 import {
   createVersion,
   getVersions,
@@ -186,8 +191,18 @@ export const chatRouter = router({
             .filter((d) => d.severity === 'error')
             .map((d) => d.message);
 
-          if (valid.length > 0) {
-            fileDiffs = valid.map((change) => ({
+          const allowed = valid.filter((change) => {
+            if (isForbiddenEnvPath(change.path)) {
+              parsingErrors.push(
+                `Refused to write ${change.path}: environment files are not model-generated.`,
+              );
+              return false;
+            }
+            return true;
+          });
+
+          if (allowed.length > 0) {
+            fileDiffs = allowed.map((change) => ({
               file: change.path,
               operation: change.operation.toLowerCase() as 'create' | 'update' | 'delete',
               after: change.content,
@@ -200,6 +215,12 @@ export const chatRouter = router({
             .map((entry) => {
               const validPath = validatePath(entry.file);
               if (!validPath) return null;
+              // Same policy as /api/generate: .env files never come from the
+              // model, or this weaker path could persist one.
+              if (isForbiddenEnvPath(validPath)) {
+                parsingErrors.push(`Refused to write ${validPath}: environment files are blocked.`);
+                return null;
+              }
               if (entry.after && Buffer.byteLength(entry.after, 'utf8') > 1024 * 1024) return null;
               return { ...entry, file: validPath };
             })

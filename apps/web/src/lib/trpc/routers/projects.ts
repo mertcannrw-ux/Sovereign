@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { protectedProcedure, router } from '../trpc';
 import { requireOrganizationRole, requireProjectRole } from '@/server/authz';
-import { provisionAppDatabase } from '@/server/app-database';
+import { assertTenantSchemaName, provisionAppDatabase } from '@/server/app-database';
+import { quotePgIdent } from '@/server/db-browser';
 import { persistProjectFiles } from '@/lib/project-files';
 
 function generateSlug(name: string): string {
@@ -193,7 +194,18 @@ export const projectsRouter = router({
     .mutation(async ({ ctx, input }) => {
       await requireProjectRole(ctx, input.id, 'OWNER');
 
-      await ctx.db.project.delete({ where: { id: input.id } });
+      const appDb = await ctx.db.appDatabase.findFirst({ where: { projectId: input.id } });
+      const schemaName = appDb ? assertTenantSchemaName(appDb.schemaName) : null;
+
+      await ctx.db.$transaction(async (tx) => {
+        // The tenant schema holds the end users' data; deleting the project row
+        // alone (which cascades the AppDatabase row) would orphan it on the
+        // cluster forever. Drop it in the same transaction, before the row.
+        if (schemaName) {
+          await tx.$executeRawUnsafe(`DROP SCHEMA IF EXISTS ${quotePgIdent(schemaName)} CASCADE`);
+        }
+        await tx.project.delete({ where: { id: input.id } });
+      });
 
       return { success: true as const };
     }),

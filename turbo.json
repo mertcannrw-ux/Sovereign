@@ -1,6 +1,14 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "globalDependencies": ["**/.env.*local"],
+  "globalPassThroughEnv": [
+    "DATABASE_URL",
+    "DIRECT_URL",
+    "NEXTAUTH_URL",
+    "NEXTAUTH_SECRET",
+    "API_KEY_ENCRYPTION_KEY",
+    "SKIP_ENV_VALIDATION"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

@@ -140,4 +140,22 @@ describe('validateOutboundUrl', () => {
       validateOutboundUrl('http://127.0.0.1/secret', { allowLoopback: false }),
     ).rejects.toThrow(/Loopback URLs are not allowed/);
   });
+
+  // Regression: the range table covered only RFC 1918 / loopback / link-local /
+  // multicast, so CGNAT (and the Alibaba Cloud metadata address inside it),
+  // benchmarking, and the reserved block all passed validation.
+  const privateIpv4Literals: Array<[string, string]> = [
+    ['CGNAT', '100.64.0.1'],
+    ['Alibaba Cloud metadata', '100.100.100.200'],
+    ['benchmarking', '198.18.0.1'],
+    ['reserved', '240.0.0.1'],
+    ['broadcast', '255.255.255.255'],
+  ];
+
+  for (const [label, address] of privateIpv4Literals) {
+    it(`blocks ${label} IPv4 address ${address}`, async () => {
+      lookup.mockResolvedValue([{ address, family: 4 }]);
+      await expect(validateOutboundUrl(`https://${address}/`)).rejects.toThrow(SsrfError);
+    });
+  }
 });

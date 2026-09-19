@@ -83,21 +83,40 @@ function ProjectWorkspace() {
   useEffect(() => {
     if (!isResizing) return;
 
-    const handleMouseMove = (e: MouseEvent) => {
+    // Coalesce drag samples to one React update per frame. Every update
+    // re-renders the workspace (chat transcript included), so applying raw
+    // mousemove events multiplies that work for no visual gain.
+    let frame = 0;
+    let pendingClientX = 0;
+
+    const applyWidth = () => {
+      frame = 0;
       const totalWidth = window.innerWidth;
       if (totalWidth <= 0) return;
-      const newWidthPercent = (e.clientX / totalWidth) * 100;
+      const newWidthPercent = (pendingClientX / totalWidth) * 100;
       const clamped = Math.min(Math.max(newWidthPercent, LEFT_PANEL_MIN), LEFT_PANEL_MAX);
       setLeftPanelWidth(clamped);
     };
 
+    const handleMouseMove = (e: MouseEvent) => {
+      pendingClientX = e.clientX;
+      if (frame !== 0) return;
+      frame = requestAnimationFrame(applyWidth);
+    };
+
     const handleMouseUp = () => {
+      // Flush the last sample so the pane never stops one frame behind the cursor.
+      if (frame !== 0) {
+        cancelAnimationFrame(frame);
+        applyWidth();
+      }
       setIsResizing(false);
     };
 
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
     return () => {
+      if (frame !== 0) cancelAnimationFrame(frame);
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
@@ -435,7 +454,11 @@ function ProjectWorkspace() {
 
         <div
           className={cn(
-            'flex flex-col border-r border-border bg-background transition-[width] duration-75',
+            'flex flex-col border-r border-border bg-background',
+            // The 75ms width transition smooths keyboard/double-click jumps but
+            // fights the cursor while dragging, so it is disabled during a drag
+            // (the preview still reflows live at every intermediate width).
+            isResizing ? 'transition-none' : 'transition-[width] duration-75',
             mobilePane === 'workspace' ? 'max-md:hidden' : 'flex',
             'w-full md:w-[var(--panel-width)]',
           )}

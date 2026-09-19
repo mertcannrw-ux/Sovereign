@@ -92,25 +92,24 @@ export const apiKeysRouter = router({
       }
 
       const encryptedKey = encryptApiKey(input.key);
+      // The unique key is (userId, provider, label): matching on provider alone
+      // silently overwrote (and renamed) a key stored under another label.
+      const label = input.label ?? null;
       const existing = await ctx.db.apiKey.findFirst({
-        where: { userId: ctx.user.id, provider: input.provider },
+        where: { userId: ctx.user.id, provider: input.provider, label },
       });
 
       const key = existing
         ? await ctx.db.apiKey.update({
             where: { id: existing.id },
-            data: {
-              encryptedKey,
-              label: input.label ?? null,
-              baseUrl: input.baseUrl ?? null,
-            },
+            data: { encryptedKey, label, baseUrl: input.baseUrl ?? null },
           })
         : await ctx.db.apiKey.create({
             data: {
               userId: ctx.user.id,
               provider: input.provider,
               encryptedKey,
-              label: input.label ?? null,
+              label,
               baseUrl: input.baseUrl ?? null,
             },
           });

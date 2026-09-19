@@ -58,6 +58,37 @@ function createPinnedIpDispatcher(parsed: URL, pinnedIp: string): Dispatcher {
 }
 
 /**
+ * Inactivity deadline for one stream read. `ssrfFetch` clears its timer once
+ * the response headers arrive, so a peer that stops sending mid-body would
+ * otherwise stall the agent run — and hold its project lease — until the
+ * platform kills the function. Rejects when no chunk arrives in the window;
+ * the caller's `finally` cancels the reader, closing the socket.
+ */
+function readStreamChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  idleTimeoutMs: number,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  // Start the read first: `read()` can throw synchronously (released reader),
+  // and arming the timer before that point would leak a promise that rejects
+  // with no handler once it fires.
+  const read = reader.read();
+  // The deadline can win the race; mark the losing read as handled so the
+  // cancellation in the caller's `finally` cannot surface as an unhandled
+  // rejection.
+  read.catch(() => {});
+  // Timer handle captured through a closure so the type never has to be named.
+  let clearTimer = () => {};
+  const expired = new Promise<never>((_, reject) => {
+    const timerId = setTimeout(
+      () => reject(new Error(`Stream idle for ${idleTimeoutMs}ms without data`)),
+      idleTimeoutMs,
+    );
+    clearTimer = () => clearTimeout(timerId);
+  });
+  return Promise.race([read, expired]).finally(clearTimer);
+}
+
+/**
  * Reads a `ReadableStream<Uint8Array>` and yields each `data:` line
  * as a decoded string, stripping the prefix. The standard SSE format
  * used by OpenAI, Mistral, Groq, and (with `alt=sse`) Google.
@@ -65,7 +96,10 @@ function createPinnedIpDispatcher(parsed: URL, pinnedIp: string): Dispatcher {
  * Exported so the framing rules (unterminated final event, `data:` with or
  * without a space, split multi-byte characters) can be tested directly.
  */
-export async function* readSSEStream(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+export async function* readSSEStream(
+  body: ReadableStream<Uint8Array>,
+  idleTimeoutMs = STREAM_IDLE_TIMEOUT_MS,
+): AsyncGenerator<string> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -89,7 +123,7 @@ export async function* readSSEStream(body: ReadableStream<Uint8Array>): AsyncGen
 
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readStreamChunk(reader, idleTimeoutMs);
       if (done) {
         break;
       }
@@ -122,7 +156,10 @@ export async function* readSSEStream(body: ReadableStream<Uint8Array>): AsyncGen
  * Exported so the unterminated-final-line and split-character handling can be
  * tested directly.
  */
-export async function* readJSONLines(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+export async function* readJSONLines(
+  body: ReadableStream<Uint8Array>,
+  idleTimeoutMs = STREAM_IDLE_TIMEOUT_MS,
+): AsyncGenerator<string> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -140,7 +177,7 @@ export async function* readJSONLines(body: ReadableStream<Uint8Array>): AsyncGen
 
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readStreamChunk(reader, idleTimeoutMs);
       if (done) {
         break;
       }
@@ -175,6 +212,7 @@ export async function* readJSONLines(body: ReadableStream<Uint8Array>): AsyncGen
  */
 export async function* readAnthropicSSE(
   body: ReadableStream<Uint8Array>,
+  idleTimeoutMs = STREAM_IDLE_TIMEOUT_MS,
 ): AsyncGenerator<{ event: string; data: string }> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -202,7 +240,7 @@ export async function* readAnthropicSSE(
 
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readStreamChunk(reader, idleTimeoutMs);
       if (done) {
         break;
       }
@@ -261,6 +299,8 @@ const MAX_BODY_BYTES = 10 * 1024 * 1024; // 10 MB
 const MAX_ERROR_BODY_BYTES = 64 * 1024; // 64 KB — error payloads only need the message
 const DEFAULT_TIMEOUT_MS = 60_000; // 60s for non-streaming requests
 const STREAM_TIMEOUT_MS = 120_000; // 120s timeout for streaming connection/headers
+/** Max gap between body chunks once a stream is open (see readStreamChunk). */
+const STREAM_IDLE_TIMEOUT_MS = 120_000;
 
 /**
  * Sent on every outbound provider request. Upstream gateways fingerprint
@@ -1388,8 +1428,10 @@ export class OllamaProvider implements Provider {
     options?: ProviderCompleteOptions,
   ): Promise<AICompletionResponse> {
     // Ollama doesn't use API key; `apiKey` param is ignored.
+    // Always validate: the default endpoint is loopback, which is exactly what
+    // validateUrl() gates behind ALLOW_LOOPBACK_PROVIDERS — a default must not
+    // silently bypass that policy.
     const baseUrl = options?.baseUrl ?? 'http://localhost:11434';
-    const hasCustomEndpoint = options?.baseUrl !== undefined;
 
     const response = await ssrfFetch(
       this.name,
@@ -1399,7 +1441,7 @@ export class OllamaProvider implements Provider {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(this.buildPayload(model, messages, options, false)),
       },
-      { validateUrl: hasCustomEndpoint, signal: options?.signal },
+      { validateUrl: true, signal: options?.signal },
     );
 
     if (!response.ok) {
@@ -1417,7 +1459,6 @@ export class OllamaProvider implements Provider {
     options?: ProviderCompleteOptions,
   ): AsyncGenerator<AIStreamChunk, AICompletionResponse> {
     const baseUrl = options?.baseUrl ?? 'http://localhost:11434';
-    const hasCustomEndpoint = options?.baseUrl !== undefined;
 
     const response = await ssrfFetch(
       this.name,
@@ -1427,7 +1468,7 @@ export class OllamaProvider implements Provider {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(this.buildPayload(model, messages, options, true)),
       },
-      { validateUrl: hasCustomEndpoint, timeout: STREAM_TIMEOUT_MS, signal: options?.signal },
+      { validateUrl: true, timeout: STREAM_TIMEOUT_MS, signal: options?.signal },
     );
 
     if (!response.ok) {
@@ -1539,8 +1580,10 @@ export class OllamaProvider implements Provider {
 
   async listModels(_apiKey: string, baseUrl?: string, signal?: AbortSignal): Promise<string[]> {
     const url = `${baseUrl ?? 'http://localhost:11434'}/api/tags`;
+    // validateUrl: true — the default endpoint is loopback and must go through
+    // the same ALLOW_LOOPBACK_PROVIDERS gate as a custom one.
     const response = await ssrfFetch(this.name, url, undefined, {
-      validateUrl: baseUrl !== undefined,
+      validateUrl: true,
       signal,
     });
     if (!response.ok)

@@ -15,12 +15,10 @@ async function checkDatabase(): Promise<HealthCheck> {
     await database.$queryRaw`SELECT 1`;
     return { name: 'database', status: 'ok', latencyMs: Date.now() - start };
   } catch (e) {
-    return {
-      name: 'database',
-      status: 'error',
-      latencyMs: Date.now() - start,
-      error: e instanceof Error ? e.message : 'Unknown error',
-    };
+    // Raw driver errors can embed host/connection details; keep the
+    // unauthenticated probe payload generic and log the detail server-side.
+    console.error('[health] database check failed', e);
+    return { name: 'database', status: 'error', latencyMs: Date.now() - start };
   }
 }
 
@@ -52,12 +50,9 @@ async function checkRedis(): Promise<HealthCheck> {
     });
     return { name: 'redis', status: 'ok', latencyMs: Date.now() - start };
   } catch (e) {
-    return {
-      name: 'redis',
-      status: 'error',
-      latencyMs: Date.now() - start,
-      error: e instanceof Error ? e.message : 'Unknown error',
-    };
+    // See checkDatabase: connection strings/hosts stay in the server log.
+    console.error('[health] redis check failed', e);
+    return { name: 'redis', status: 'error', latencyMs: Date.now() - start };
   }
 }
 

@@ -5,7 +5,8 @@ import { protectedProcedure, router } from '../trpc';
 import { requireProjectRole } from '@/server/authz';
 import { checkRateLimit } from '@/server/rate-limit';
 import { isSafeDefault, quotePgIdent, sanitizeSqlForTenant } from '@/server/db-browser';
-import { requireAppDatabase } from '@/server/app-database';
+import { findAppDatabase, requireAppDatabase } from '@/server/app-database';
+import type { Context } from '../context';
 
 /**
  * Schema for a single column definition.
@@ -38,6 +39,21 @@ const columnSchema = z.object({
 
 export type ColumnDef = z.infer<typeof columnSchema>;
 
+/**
+ * Read paths must not provision: opening the database panel as a VIEWER should
+ * never create a schema as a side effect. `createTable` still provisions.
+ */
+async function findAppDatabaseOrThrow(db: Context['db'], projectId: string) {
+  const appDb = await findAppDatabase(db, projectId);
+  if (!appDb) {
+    throw new TRPCError({
+      code: 'NOT_FOUND',
+      message: 'This project has no application database yet.',
+    });
+  }
+  return appDb;
+}
+
 export const databaseRouter = router({
   /**
    * List all tables in the project's database schema.
@@ -47,7 +63,7 @@ export const databaseRouter = router({
     .query(async ({ ctx, input }) => {
       await requireProjectRole(ctx, input.projectId, 'VIEWER');
 
-      const appDb = await requireAppDatabase(ctx.db, input.projectId);
+      const appDb = await findAppDatabaseOrThrow(ctx.db, input.projectId);
 
       const tables = await ctx.db.$queryRawUnsafe<
         { tablename: string; tableowner: string; tablespace: string | null }[]
@@ -75,7 +91,7 @@ export const databaseRouter = router({
     .query(async ({ ctx, input }) => {
       await requireProjectRole(ctx, input.projectId, 'VIEWER');
 
-      const appDb = await requireAppDatabase(ctx.db, input.projectId);
+      const appDb = await findAppDatabaseOrThrow(ctx.db, input.projectId);
 
       const columns = await ctx.db.$queryRawUnsafe<
         {
@@ -180,7 +196,7 @@ export const databaseRouter = router({
     .mutation(async ({ ctx, input }) => {
       await requireProjectRole(ctx, input.projectId, 'EDITOR');
 
-      const appDb = await requireAppDatabase(ctx.db, input.projectId);
+      const appDb = await findAppDatabaseOrThrow(ctx.db, input.projectId);
 
       const sql = `DROP TABLE IF EXISTS ${quotePgIdent(appDb.schemaName)}.${quotePgIdent(input.tableName)}`;
 
@@ -217,7 +233,7 @@ export const databaseRouter = router({
         });
       }
 
-      const appDb = await requireAppDatabase(ctx.db, input.projectId);
+      const appDb = await findAppDatabaseOrThrow(ctx.db, input.projectId);
 
       const statement = sanitizeSqlForTenant(input.sql, appDb.schemaName);
       if (!statement) {

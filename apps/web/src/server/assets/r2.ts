@@ -1,4 +1,9 @@
-import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  DeleteObjectCommand,
+} from '@aws-sdk/client-s3';
 import { env } from '@/env';
 
 import fs from 'node:fs';
@@ -107,26 +112,52 @@ export async function uploadToR2(opts: {
 }): Promise<string> {
   const status = getR2ConfigStatus();
   const hostUrl = (env.NEXTAUTH_URL ?? 'http://localhost:3000').replace(/\/+$/, '');
+  const key = opts.objectKey.startsWith('/') ? opts.objectKey.slice(1) : opts.objectKey;
+
   if (status.storageMode === 'local') {
-    const relativePath = opts.objectKey.startsWith('/') ? opts.objectKey.slice(1) : opts.objectKey;
-    const fullPath = path.join(LOCAL_ASSET_ROOT, relativePath);
+    const fullPath = path.join(LOCAL_ASSET_ROOT, key);
     await fs.promises.mkdir(path.dirname(fullPath), { recursive: true });
     await fs.promises.writeFile(fullPath, opts.bytes);
-    return `${hostUrl}/api/assets/${relativePath}?${signAssetUrl(relativePath)}`;
+  } else {
+    const client = getR2Client();
+    await client.send(
+      new PutObjectCommand({
+        Bucket: env.R2_BUCKET_NAME!,
+        Key: opts.objectKey,
+        Body: opts.bytes,
+        ContentType: opts.contentType,
+      }),
+    );
   }
 
-  const client = getR2Client();
-  const command = new PutObjectCommand({
-    Bucket: env.R2_BUCKET_NAME!,
-    Key: opts.objectKey,
-    Body: opts.bytes,
-    ContentType: opts.contentType,
-  });
+  // Identical signed same-origin URL for both backends. A bucket public URL
+  // would be an unauthenticated, non-revocable handle to the object; the HMAC
+  // token expires, and `/api/assets` still checks the ProjectAsset row (and,
+  // without a token, the caller's project role) on every read.
+  return `${hostUrl}/api/assets/${key}?${signAssetUrl(key)}`;
+}
 
-  await client.send(command);
-
-  const baseUrl = env.R2_PUBLIC_URL!.replace(/\/+$/, '');
-  return `${baseUrl}/${opts.objectKey}`;
+/**
+ * Fetch an object's bytes for the authenticated asset route. Returns null when
+ * the key does not exist, so callers can answer 404.
+ */
+export async function downloadAssetBytes(
+  objectKey: string,
+): Promise<Uint8Array<ArrayBuffer> | null> {
+  try {
+    const response = await getR2Client().send(
+      new GetObjectCommand({ Bucket: env.R2_BUCKET_NAME!, Key: objectKey }),
+    );
+    const body = response.Body;
+    if (!body) return null;
+    const bytes = await body.transformToByteArray();
+    // `transformToByteArray` is typed with the widest ArrayBufferLike; re-wrap
+    // so callers can hand the value to a Response body without a cast.
+    return new Uint8Array(bytes);
+  } catch (error) {
+    if (error instanceof Error && error.name === 'NoSuchKey') return null;
+    throw error;
+  }
 }
 
 export async function deleteFromR2(objectKey: string): Promise<void> {

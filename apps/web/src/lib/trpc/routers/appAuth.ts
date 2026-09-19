@@ -62,13 +62,28 @@ export const appAuthRouter = router({
     .query(async ({ ctx, input }) => {
       await requireProjectRole(ctx, input.projectId, 'VIEWER');
 
-      const config = await ctx.db.appAuthConfig.upsert({
+      // Read-only: a VIEWER opening this panel must not create a row (the old
+      // upsert also bumped updatedAt on every read). Projects without a config
+      // get schema defaults here; the first write comes from updateConfig.
+      const config = await ctx.db.appAuthConfig.findUnique({
         where: { projectId: input.projectId },
-        create: { projectId: input.projectId },
-        update: {},
       });
+      if (config) return config;
 
-      return config;
+      return {
+        id: '',
+        projectId: input.projectId,
+        emailAuth: true,
+        googleAuth: false,
+        githubAuth: false,
+        magicLinkAuth: false,
+        sessionDuration: 604800,
+        roles: [],
+        permissions: [],
+        branding: {},
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
     }),
 
   /**

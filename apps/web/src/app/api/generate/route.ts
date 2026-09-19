@@ -834,8 +834,13 @@ export async function POST(request: NextRequest) {
                   try {
                     action = parseAgentAction(text);
                   } catch {
-                    // Free-form output is a valid agent answer — a structured
-                    // action is never required for the run to complete.
+                    // Prose is a valid agent answer, but an attempted structured
+                    // action that fails to parse must not end the run as a chat
+                    // reply — rethrow so the protocol-failure strike path below
+                    // asks the model to re-emit it.
+                    if (text.startsWith('{') || /\{\s*"type"\s*:/.test(text)) {
+                      throw new Error('Model emitted an unparseable structured action');
+                    }
                     action = { type: 'respond', message: text };
                   }
                 }

@@ -24,8 +24,11 @@ function generateInviteToken(): { token: string; tokenHash: string } {
   return { token, tokenHash };
 }
 
+/** The slice of the client that both `PrismaClient` and a transaction satisfy. */
+type AuditEventDb = Pick<PrismaClient, 'auditEvent'>;
+
 async function createAuditEvent(
-  db: PrismaClient,
+  db: AuditEventDb,
   actorId: string,
   ipHash: string,
   organizationId: string,
@@ -629,25 +632,49 @@ export const organizationsRouter = router({
         });
       }
 
-      await ctx.db.organizationMember.delete({
-        where: {
-          organizationId_userId: {
-            organizationId: input.organizationId,
-            userId: input.userId,
-          },
-        },
-      });
+      // Offboarding must revoke access, not just membership: `requireProjectRole`
+      // grants OWNER from `project.ownerId` regardless of organization, so a
+      // removed member's projects are transferred to the org owner and their
+      // collaborations inside this organization are deleted — otherwise the
+      // removed account keeps full access to everything it owned here.
+      await ctx.db.$transaction(async (tx) => {
+        const projectsTransferred = await tx.project.updateMany({
+          where: { organizationId: input.organizationId, ownerId: input.userId },
+          data: { ownerId: org.ownerId },
+        });
 
-      await createAuditEvent(
-        ctx.db,
-        ctx.user.id,
-        ctx.ipHash,
-        input.organizationId,
-        'organization.member_removed',
-        'organization_member',
-        `${input.organizationId}_${input.userId}`,
-        { removedUserId: input.userId, removedRole: membership.role },
-      );
+        const collaborationsRemoved = await tx.projectCollaborator.deleteMany({
+          where: {
+            userId: input.userId,
+            project: { organizationId: input.organizationId },
+          },
+        });
+
+        await tx.organizationMember.delete({
+          where: {
+            organizationId_userId: {
+              organizationId: input.organizationId,
+              userId: input.userId,
+            },
+          },
+        });
+
+        await createAuditEvent(
+          tx,
+          ctx.user.id,
+          ctx.ipHash,
+          input.organizationId,
+          'organization.member_removed',
+          'organization_member',
+          `${input.organizationId}_${input.userId}`,
+          {
+            removedUserId: input.userId,
+            removedRole: membership.role,
+            projectsTransferred: projectsTransferred.count,
+            collaborationsRemoved: collaborationsRemoved.count,
+          },
+        );
+      });
 
       return { success: true as const };
     }),

@@ -46,3 +46,15 @@ export async function provisionAppDatabase(db: Db, projectId: string) {
 export async function requireAppDatabase(db: Db, projectId: string) {
   return provisionAppDatabase(db, projectId);
 }
+
+/**
+ * Read-only lookup. Reads must never create infrastructure: a VIEWER opening
+ * the database panel would otherwise provision a schema as a side effect.
+ * Write paths keep using {@link provisionAppDatabase}.
+ */
+export async function findAppDatabase(db: Db, projectId: string) {
+  const existing = await db.appDatabase.findFirst({ where: { projectId } });
+  if (!existing) return null;
+  assertTenantSchemaName(existing.schemaName);
+  return existing;
+}

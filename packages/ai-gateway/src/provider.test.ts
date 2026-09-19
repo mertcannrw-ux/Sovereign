@@ -217,6 +217,17 @@ describe('stream readers', () => {
 
       expect(events).toEqual(['{"a":1}']);
     });
+
+    it('aborts a stalled stream instead of waiting on the socket forever', async () => {
+      const response = streamedResponse([new TextEncoder().encode('data: {"a":1}\n\n')], 'stall');
+      const events: string[] = [];
+      const run = (async () => {
+        for await (const event of readSSEStream(response.body!, 50)) events.push(event);
+      })();
+
+      await expect(run).rejects.toThrow(/Stream idle/);
+      expect(events).toEqual(['{"a":1}']);
+    });
   });
 
   describe('readJSONLines', () => {
@@ -230,6 +241,12 @@ describe('stream readers', () => {
       const lines = await collect(readJSONLines(byteStream(['{"a":1}\n{"b"', ':2}'])));
 
       expect(lines).toEqual(['{"a":1}', '{"b":2}']);
+    });
+
+    it('aborts a stalled stream instead of waiting on the socket forever', async () => {
+      const response = streamedResponse([new TextEncoder().encode('{"a":1}\n')], 'stall');
+
+      await expect(collect(readJSONLines(response.body!, 50))).rejects.toThrow(/Stream idle/);
     });
   });
 
@@ -271,6 +288,20 @@ describe('stream readers', () => {
       );
 
       expect(events).toEqual([{ event: 'message_delta', data: '{"s":2}' }]);
+    });
+
+    it('aborts a stalled stream instead of waiting on the socket forever', async () => {
+      const response = streamedResponse(
+        [new TextEncoder().encode('event: content_block_delta\ndata: {"i":1}\n\n')],
+        'stall',
+      );
+      const events: { event: string; data: string }[] = [];
+      const run = (async () => {
+        for await (const event of readAnthropicSSE(response.body!, 50)) events.push(event);
+      })();
+
+      await expect(run).rejects.toThrow(/Stream idle/);
+      expect(events).toEqual([{ event: 'content_block_delta', data: '{"i":1}' }]);
     });
   });
 });
