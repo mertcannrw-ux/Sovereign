@@ -61,10 +61,26 @@ const statusMap: Record<DbStatus, 'draft' | 'published' | 'archived'> = {
 function DashboardContent() {
   const { data: session, status: authStatus } = useSession();
   const router = useRouter();
-  const projectsQuery = trpc.projects.list.useQuery();
+  const [search, setSearch] = useState('');
+  // Debounce the keystroke stream: each change creates a new infinite query
+  // (search is part of the key), and firing one per character spams the
+  // server with near-duplicate page fetches.
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 250);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  // Paginated newest-first, filtered server-side so search matches every
+  // project, not just the pages loaded so far.
+  const projectsQuery = trpc.projects.list.useInfiniteQuery(
+    { search: debouncedSearch || undefined },
+    {
+      getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    },
+  );
   const orgsQuery = trpc.organizations.list.useQuery();
   const createMutation = trpc.projects.create.useMutation();
-  const [search, setSearch] = useState('');
   const [showNew, setShowNew] = useState(false);
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState('');
@@ -90,7 +106,7 @@ function DashboardContent() {
   }, []);
 
   const projects = useMemo(() => {
-    const raw = projectsQuery.data ?? [];
+    const raw = projectsQuery.data?.pages.flatMap((page) => page.projects) ?? [];
     return raw.map((p) => ({
       id: p.id,
       name: p.name,
@@ -100,14 +116,10 @@ function DashboardContent() {
       accent: accentFromName(p.name),
     }));
   }, [projectsQuery.data]);
-
-  const filtered = useMemo(
-    () =>
-      projects.filter((p) =>
-        `${p.name} ${p.description}`.toLowerCase().includes(search.toLowerCase()),
-      ),
-    [projects, search],
-  );
+  // Fetch the next (older) page into the accumulated list.
+  const loadMoreProjects = () => {
+    void projectsQuery.fetchNextPage();
+  };
 
   async function createProject() {
     if (!name.trim() || isCreating) return;
@@ -283,7 +295,7 @@ function DashboardContent() {
           <div className="flex justify-center py-20">
             <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           </div>
-        ) : filtered.length === 0 ? (
+        ) : projects.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-border py-20 text-center">
             <FolderKanban className="mx-auto h-8 w-8 text-foreground-muted" />
             <h2 className="mt-5 text-lg font-semibold">
@@ -297,7 +309,7 @@ function DashboardContent() {
           </div>
         ) : view === 'grid' ? (
           <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-            {filtered.map((project) => (
+            {projects.map((project) => (
               <Link
                 key={project.id}
                 href={`/project/${project.id}`}
@@ -340,7 +352,7 @@ function DashboardContent() {
           </div>
         ) : (
           <div className="overflow-hidden rounded-xl border border-border">
-            {filtered.map((project) => (
+            {projects.map((project) => (
               <Link
                 key={project.id}
                 href={`/project/${project.id}`}
@@ -358,6 +370,19 @@ function DashboardContent() {
               </Link>
             ))}
           </div>
+        )}
+        {projectsQuery.hasNextPage && !projectsQuery.isFetchingNextPage && (
+          <div className="mt-8 flex justify-center">
+            <button
+              onClick={loadMoreProjects}
+              className="rounded-lg border border-border bg-background-subtle px-4 py-2 text-sm text-foreground-secondary transition-colors hover:border-border-strong hover:text-foreground"
+            >
+              Load more
+            </button>
+          </div>
+        )}
+        {projectsQuery.isFetchingNextPage && (
+          <div className="mt-8 flex justify-center text-sm text-foreground-muted">Loading…</div>
         )}
 
         <Link

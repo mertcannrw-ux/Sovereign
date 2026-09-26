@@ -182,6 +182,30 @@ const FORBIDDEN_FUNCTIONS = [
   'pg_start_backup',
   'pg_stop_backup',
   'pg_create_restore_point',
+  // XML-serialization family: these execute a SQL statement or walk a
+  // table/schema/database/cursor given as a *string argument*, so a
+  // foreign-schema reference hidden in a literal (invisible to
+  // stripSqlLiterals and the table-reference scanner) would serialize that
+  // data with the privileges of this console. The pure XML predicates
+  // (xpath, xpath_exists, xml_is_well_formed*) are deliberately NOT denied:
+  // they operate only on values already in the statement and have no path
+  // to another relation, so denying them only blocks tenant queries over
+  // xml-typed columns.
+  'query_to_xml',
+  'query_to_xmlschema',
+  'query_to_xml_and_xmlschema',
+  'query_to_xmltype',
+  'cursor_to_xml',
+  'cursor_to_xmlschema',
+  'table_to_xml',
+  'table_to_xml_and_xmlschema',
+  'table_to_xmlschema',
+  'database_to_xml',
+  'database_to_xml_and_xmlschema',
+  'database_to_xmlschema',
+  'schema_to_xml',
+  'schema_to_xml_and_xmlschema',
+  'schema_to_xmlschema',
   'set_config',
   'current_setting',
 ];
@@ -422,7 +446,7 @@ export function sanitizeSqlForTenant(sql: string, tenantSchema?: string): string
  * never smuggle SQL into CREATE TABLE.
  */
 const SAFE_DEFAULT_PATTERN =
-  /^(NULL|true|false|now\(\)|CURRENT_TIMESTAMP|CURRENT_DATE|CURRENT_TIME|[-+]?[0-9]+(\.[0-9]+)?|'[A-Za-z0-9 _@./:+-]*')$/i;
+  /^(NULL|true|false|now\(\)|CURRENT_TIMESTAMP|CURRENT_DATE|CURRENT_TIME|gen_random_uuid\(\)|[-+]?[0-9]+(\.[0-9]+)?|'[A-Za-z0-9 _@./:+-]*')$/i;
 
 export function isSafeDefault(value: string): boolean {
   return SAFE_DEFAULT_PATTERN.test(value);

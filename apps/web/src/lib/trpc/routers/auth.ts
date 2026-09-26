@@ -29,7 +29,7 @@ export const authRouter = router({
       // Bucket per IP+email so a missing trusted-proxy header (every request
       // seen as 127.0.0.1) can never collapse registration into ONE global
       // bucket shared by all users.
-      const identity = process.env.TRUSTED_PROXY === 'true' ? `${ctx.ipHash}:${email}` : email;
+      const identity = env.TRUSTED_PROXY ? `${ctx.ipHash}:${email}` : email;
       const rate = await checkRateLimit('register', identity);
       if (!rate.allowed) {
         const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
@@ -93,7 +93,7 @@ export const authRouter = router({
       const email = input.email.trim().toLowerCase();
       // Bucket per IP+email (see register): without a trusted proxy header the
       // fallback is per-email, never one shared global bucket.
-      const identity = process.env.TRUSTED_PROXY === 'true' ? `${ctx.ipHash}:${email}` : email;
+      const identity = env.TRUSTED_PROXY ? `${ctx.ipHash}:${email}` : email;
       const rate = await checkRateLimit('signIn', identity);
       if (!rate.allowed) {
         const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
@@ -146,13 +146,29 @@ export const authRouter = router({
       // present (getClientIp returns a constant 127.0.0.1), so a single
       // anonymous attacker could exhaust the shared limit and block password
       // resets for all users.
-      const identity = process.env.TRUSTED_PROXY === 'true' ? `${ctx.ipHash}:${email}` : email;
+      const identity = env.TRUSTED_PROXY ? `${ctx.ipHash}:${email}` : email;
       const rate = await checkRateLimit('passwordReset', identity);
       if (!rate.allowed) {
         const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',
           message: `Too many reset requests. Try again in ${retryIn}s.`,
+        });
+      }
+
+      // Check the mailer BEFORE touching the user record. Throwing only for
+      // registered password accounts (the branch below) would turn a missing
+      // RESEND_API_KEY into an account-existence oracle: every registered
+      // password account 500s while every other address returns ok:true.
+      // Failing uniformly for all inputs keeps the enumeration signal gone
+      // while still surfacing the misconfiguration loudly.
+      if (process.env.NODE_ENV === 'production' && !(env.RESEND_API_KEY && env.EMAIL_FROM)) {
+        console.error(
+          '[auth] password reset requested but RESEND_API_KEY/EMAIL_FROM are not configured',
+        );
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'Password reset is not available. Contact support.',
         });
       }
 
@@ -209,7 +225,9 @@ export const authRouter = router({
               message: 'Could not send the reset email. Try again later.',
             });
           }
-        } else if (process.env.NODE_ENV !== 'production') {
+        } else {
+          // Non-production with the mailer unconfigured: log the link so the
+          // reset flow stays usable locally. Production is rejected above.
           console.info('[auth] password reset URL (email not configured):', resetUrl);
         }
       }
@@ -235,8 +253,7 @@ export const authRouter = router({
       // let a caller reset the limiter at will). Using the token hash prefix —
       // not the raw token — also keeps tokens out of rate-limit keys/logs, and
       // the 20/15min budget is unchanged in both modes.
-      const identity =
-        process.env.TRUSTED_PROXY === 'true' ? `${ctx.ipHash}:${tokenHash.slice(0, 16)}` : 'global';
+      const identity = env.TRUSTED_PROXY ? `${ctx.ipHash}:${tokenHash.slice(0, 16)}` : 'global';
       const rate = await checkRateLimit('passwordResetSubmit', identity);
       if (!rate.allowed) {
         const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));

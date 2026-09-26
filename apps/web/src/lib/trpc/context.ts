@@ -2,6 +2,7 @@ import { isIP } from 'node:net';
 import { getVerifiedSession } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import type { Session } from 'next-auth';
+import { env } from '@/env';
 import { hashIp } from '@/server/rate-limit';
 
 export interface Context {
@@ -19,7 +20,7 @@ function generateRequestId(): string {
 }
 
 function getClientIp(req: Request): string {
-  if (process.env.TRUSTED_PROXY === 'true') {
+  if (env.TRUSTED_PROXY) {
     const forwarded = req.headers.get('x-forwarded-for');
     if (forwarded) {
       const entries = forwarded

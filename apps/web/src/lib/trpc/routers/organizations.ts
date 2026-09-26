@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import type { PrismaClient } from '@prisma-generated/prisma/client';
 import { protectedProcedure, router } from '../trpc';
 import { requireOrganizationRole } from '@/server/authz';
+import { lockOrganizationMembership } from '@/server/org-lock';
 import { OrganizationRole } from '@app-builder/shared';
 
 // ─── Helpers ──────────────────────────────────────────────
@@ -484,38 +485,74 @@ export const organizationsRouter = router({
         });
       }
 
-      // Check if the user is already a member (e.g. added by another means)
-      const existingMember = await ctx.db.organizationMember.findUnique({
-        where: {
-          organizationId_userId: {
-            organizationId: invite.organizationId,
-            userId: ctx.user.id,
+      // The membership check + create + invite-state transition must be one
+      // atomic, conditional operation: accept and revoke race each other, and
+      // a plain read-then-write lets an invite accepted/revoked in between
+      // still create a membership. The conditional updateMany is the arbiter —
+      // only the writer that flips acceptedAt from NULL wins.
+      const result = await ctx.db.$transaction(async (tx) => {
+        const accepted = await tx.organizationInvite.updateMany({
+          where: {
+            id: invite.id,
+            acceptedAt: null,
+            revokedAt: null,
+            expiresAt: { gt: new Date() },
           },
-        },
-      });
-
-      if (existingMember) {
-        // Already a member — just mark the invite as accepted for record-keeping
-        await ctx.db.organizationInvite.update({
-          where: { id: invite.id },
           data: { acceptedAt: new Date() },
         });
-        return { success: true as const, alreadyMember: true as const };
-      }
+        if (accepted.count === 0) {
+          // Lost the race to revoke, a concurrent accept, or expiry. The
+          // conditional write guaranteed no membership was created here, so
+          // claiming alreadyMember would assert a membership this call never
+          // made. Re-read the invite to report what actually happened.
+          const current = await tx.organizationInvite.findUnique({
+            where: { id: invite.id },
+            select: { revokedAt: true, expiresAt: true, acceptedAt: true },
+          });
+          if (current?.revokedAt) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'Invitation has been revoked.',
+            });
+          }
+          if (current && current.expiresAt < new Date()) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'Invitation has expired.',
+            });
+          }
+          // Still pending but this call lost it: a concurrent accept won.
+          // Confirm the membership actually exists before claiming it.
+          const membership = await tx.organizationMember.findUnique({
+            where: {
+              organizationId_userId: {
+                organizationId: invite.organizationId,
+                userId: ctx.user.id,
+              },
+            },
+          });
+          if (!membership) {
+            throw new TRPCError({
+              code: 'CONFLICT',
+              message: 'Invitation could not be accepted. Try again.',
+            });
+          }
+          return { alreadyMember: true as const };
+        }
 
-      await ctx.db.$transaction(async (tx) => {
-        const role = invite.role === 'OWNER' ? 'MEMBER' : invite.role;
-        await tx.organizationMember.create({
-          data: {
+        await tx.organizationMember.upsert({
+          where: {
+            organizationId_userId: {
+              organizationId: invite.organizationId,
+              userId: ctx.user.id,
+            },
+          },
+          create: {
             organizationId: invite.organizationId,
             userId: ctx.user.id,
-            role,
+            role: invite.role === 'OWNER' ? 'MEMBER' : invite.role,
           },
-        });
-
-        await tx.organizationInvite.update({
-          where: { id: invite.id },
-          data: { acceptedAt: new Date() },
+          update: {},
         });
 
         await tx.auditEvent.create({
@@ -528,9 +565,10 @@ export const organizationsRouter = router({
             ipHash: ctx.ipHash,
           },
         });
+        return { alreadyMember: false as const };
       });
 
-      return { success: true as const, alreadyMember: false as const };
+      return { success: true as const, alreadyMember: result.alreadyMember };
     }),
 
   /**
@@ -563,10 +601,19 @@ export const organizationsRouter = router({
           message: 'Invitation has already been revoked.',
         });
 
-      await ctx.db.organizationInvite.update({
-        where: { id: input.inviteId },
+      // Conditional write: if a concurrent acceptInvite flips acceptedAt
+      // between the read above and this write, the update matches no row and
+      // the revoke is refused instead of overwriting the acceptance.
+      const revoked = await ctx.db.organizationInvite.updateMany({
+        where: { id: input.inviteId, acceptedAt: null, revokedAt: null },
         data: { revokedAt: new Date() },
       });
+      if (revoked.count === 0) {
+        throw new TRPCError({
+          code: 'CONFLICT',
+          message: 'Invitation was accepted or revoked concurrently.',
+        });
+      }
 
       await createAuditEvent(
         ctx.db,
@@ -638,6 +685,10 @@ export const organizationsRouter = router({
       // collaborations inside this organization are deleted — otherwise the
       // removed account keeps full access to everything it owned here.
       await ctx.db.$transaction(async (tx) => {
+        // Serialize against projects.create for this org (see helper): a
+        // project created by the departing member after the transfer scan
+        // would otherwise keep them as ownerId with full OWNER access.
+        await lockOrganizationMembership(tx, input.organizationId);
         const projectsTransferred = await tx.project.updateMany({
           where: { organizationId: input.organizationId, ownerId: input.userId },
           data: { ownerId: org.ownerId },

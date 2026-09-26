@@ -50,8 +50,26 @@ function ProjectWorkspace() {
   const { status } = useSession();
 
   const projectQuery = trpc.projects.getById.useQuery({ id: projectId });
+  const utils = trpc.useUtils();
   const modelsQuery = trpc.apiKeys.listModels.useQuery();
-  const historyQuery = trpc.chat.getHistory.useQuery({ projectId });
+  // Newest page first; older pages append via loadOlderMessages below.
+  const historyQuery = trpc.chat.getHistory.useInfiniteQuery(
+    {
+      projectId,
+    },
+    {
+      getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    },
+  );
+  // Accumulated transcript across all loaded pages, oldest→newest. Pages
+  // arrive newest-first (page 0 = latest), so flatten in reverse. Memoized on
+  // data identity: use-generation syncs localMessages from `history`, so an
+  // unstable array would reset streaming state on every render.
+  const historyMessages = useMemo(() => {
+    const pages = historyQuery.data?.pages;
+    if (!pages) return undefined;
+    return [...pages].reverse().flatMap((page) => page.messages);
+  }, [historyQuery.data]);
   const versionsQuery = trpc.chat.getVersions.useQuery({ projectId });
   const filesQuery = trpc.projects.files.useQuery({ id: projectId });
   const restoreMutation = trpc.chat.restoreVersion.useMutation();
@@ -73,6 +91,7 @@ function ProjectWorkspace() {
   const [isResizing, setIsResizing] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const lastMessageTailRef = useRef<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const startResizing = useCallback((e: React.MouseEvent) => {
@@ -192,8 +211,22 @@ function ProjectWorkspace() {
     reasoningEffort,
     editTarget: selectedPreviewElement,
     preview,
-    history: historyQuery.data,
-    onHistoryRefetch: () => historyQuery.refetch(),
+    // Accumulate pages into one ascending (oldest→newest) transcript. Pages
+    // arrive newest-first, so flatten in reverse to keep chronological order.
+    history: historyMessages,
+    // A post-send refetch revalidates every loaded page sequentially (one
+    // round trip each), yet only the newest page can change — older pages
+    // are immutable history. Collapse to page 0 so one send costs one
+    // refetch; "Load older" re-fetches on demand. The compound cursor makes
+    // that walk lossless even across same-millisecond timestamps.
+    onHistoryRefetch: async () => {
+      await historyQuery.refetch();
+      utils.chat.getHistory.setInfiniteData({ projectId }, (data) =>
+        data && data.pages.length > 1
+          ? { pages: data.pages.slice(0, 1), pageParams: data.pageParams.slice(0, 1) }
+          : data,
+      );
+    },
     onVersionsRefetch: () => versionsQuery.refetch(),
     onFilesRefetch: () => filesQuery.refetch(),
     onClearEditTarget: () => setSelectedPreviewElement(null),
@@ -330,10 +363,27 @@ function ProjectWorkspace() {
     },
     [filesQuery, generation, preview, projectId, restoreMutation, versionsQuery],
   );
-
+  // Keep the transcript pinned to the latest message. Follow changes at the
+  // END (new user message, streamed assistant content - the tail signature
+  // covers both), but do NOT jump to the bottom when older pages prepend at
+  // the TOP (same tail, longer array). Browsers' native scroll anchoring
+  // (overflow-anchor) then keeps the reading position stable across prepends.
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const last = generation.localMessages[generation.localMessages.length - 1];
+    const tail = last ? `${last.id}:${last.content?.length ?? 0}` : null;
+    const prev = lastMessageTailRef.current;
+    if (generation.isSending || prev === null || tail !== prev) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+    lastMessageTailRef.current = tail;
   }, [generation.localMessages, generation.isSending]);
+
+  // Pull one older page into the transcript. Suppressed while the agent is
+  // sending: a page arrival re-syncs localMessages from `history`, which
+  // would clobber the in-flight streamed messages.
+  const loadOlderMessages = useCallback(() => {
+    void historyQuery.fetchNextPage();
+  }, [historyQuery]);
 
   useEffect(() => {
     if (projectQuery.error?.data?.code === 'NOT_FOUND') {
@@ -468,6 +518,9 @@ function ProjectWorkspace() {
             messages={generation.localMessages}
             historyLoading={historyQuery.isLoading}
             historyErrorMessage={historyQuery.error?.message}
+            hasOlderMessages={!!historyQuery.hasNextPage}
+            isLoadingOlder={historyQuery.isFetchingNextPage}
+            onLoadOlder={generation.isSending ? undefined : loadOlderMessages}
             isSending={generation.isSending}
             selectedModel={selectedModel}
             generationPhase={generation.generationPhase}

@@ -59,6 +59,7 @@ function createDbMock(options: {
         return args.data;
       }),
     },
+    $executeRaw: vi.fn(async () => 0),
     $transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) => callback(db)),
   };
 

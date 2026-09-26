@@ -39,6 +39,8 @@ import {
   tryClaimGenerationLease,
   renewGenerationLease,
   clearGenerationLease,
+  GENERATION_LEASE_STALE_MS,
+  assertGenerationLeaseOwned,
   type VersionDiffEntry,
 } from '@/lib/versioning';
 import { checkRateLimit } from '@/server/rate-limit';
@@ -303,6 +305,10 @@ export async function POST(request: NextRequest) {
       {
         error:
           'A generation is already running for this project. Wait for it to finish or stop it first.',
+        // Worst-case wait: a stale lease ages out after GENERATION_LEASE_STALE_MS
+        // from its last heartbeat. The client can stop hammering the endpoint
+        // and surface an actionable countdown instead of a bare 409.
+        retryAfterMs: GENERATION_LEASE_STALE_MS,
       },
       { status: 409 },
     );
@@ -547,6 +553,15 @@ export async function POST(request: NextRequest) {
             }
             const changes = persistable.map((b) => b.change);
             const version = await db.$transaction(async (tx) => {
+              // Lease guard: renewal is per-iteration, so between renewals a
+              // reclaimed run can still reach this flush. Refuse to write the
+              // moment ownership is gone — otherwise this run's file upserts
+              // interleave with the replacement run's tree.
+              if (!(await assertGenerationLeaseOwned(tx, projectId, leaseToken))) {
+                throw new Error(
+                  'This generation lost its project lock to another run, so it stopped to avoid interleaving writes.',
+                );
+              }
               for (const ch of changes) {
                 if (ch.operation === 'delete') {
                   await tx.projectFile.deleteMany({ where: { projectId, path: ch.file } });
@@ -591,6 +606,13 @@ export async function POST(request: NextRequest) {
               ...(ch.content !== undefined ? { after: ch.content } : {}),
             }));
             const version = await db.$transaction(async (tx) => {
+              // Lease guard, same as flushPendingBatch: an autofix batch must
+              // never interleave with a replacement run's writes.
+              if (!(await assertGenerationLeaseOwned(tx, projectId, leaseToken))) {
+                throw new Error(
+                  'This generation lost its project lock to another run, so it stopped to avoid interleaving writes.',
+                );
+              }
               for (const ch of changes) {
                 if (ch.operation === 'delete') {
                   await tx.projectFile.deleteMany({ where: { projectId, path: ch.path } });

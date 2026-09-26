@@ -48,6 +48,10 @@ apps/web/public/projects/
 # Local tooling / editor config
 .commandcode/
 
+# Playwright browser profile — contains live session cookies and saved logins
+# (Default/Network/Cookies, Default/Login Data). Never commit.
+.pw-profile/
+
 # Mixed package-manager lockfile — repo is npm-based; bun.lock is generated on
 # machines that happen to run `bun install`.
 bun.lock

@@ -18,6 +18,18 @@ export const env = createEnv({
       .string()
       .regex(/^[0-9a-f]{64}$/, 'API_KEY_ENCRYPTION_KEY must be 64 hex characters'),
 
+    // Opt-in: when "true", X-Forwarded-For/X-Real-IP are trusted verbatim for
+    // rate-limit keying. Only set this behind a reverse proxy that appends the
+    // real client IP; a default-on value lets any client mint fresh rate-limit
+    // buckets with a forged header.
+    // '' is accepted (and treated as false) so a blank `TRUSTED_PROXY=` line -
+    // common in copied .env files - doesn't crash startup the way the strict
+    // enum would; absent also means false.
+    TRUSTED_PROXY: z
+      .enum(['true', 'false', ''])
+      .optional()
+      .transform((v) => v === 'true'),
+
     // Redis
     REDIS_URL: z.string().url().optional(),
 
@@ -85,6 +97,8 @@ export const env = createEnv({
    * Map environment variables to their runtime values.
    */
   runtimeEnv: {
+    TRUSTED_PROXY: process.env.TRUSTED_PROXY,
+
     DATABASE_URL: process.env.DATABASE_URL,
     DIRECT_URL: process.env.DIRECT_URL,
     NEXTAUTH_URL: process.env.NEXTAUTH_URL,

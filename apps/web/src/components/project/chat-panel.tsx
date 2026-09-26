@@ -300,6 +300,9 @@ export interface ChatPanelProps {
   messages: ChatMessage[];
   historyLoading: boolean;
   historyErrorMessage?: string;
+  hasOlderMessages: boolean;
+  isLoadingOlder: boolean;
+  onLoadOlder?: () => void;
   isSending: boolean;
   selectedModel: string;
   generationPhase: GenerationPhaseEvent | null;
@@ -331,6 +334,9 @@ export function ChatPanel({
   messages,
   historyLoading,
   historyErrorMessage,
+  hasOlderMessages,
+  isLoadingOlder,
+  onLoadOlder,
   isSending,
   selectedModel,
   generationPhase,
@@ -396,6 +402,17 @@ export function ChatPanel({
           </div>
         )}
 
+        {onLoadOlder && hasOlderMessages && messages.length > 0 && (
+          <div className="flex justify-center py-3">
+            <button
+              onClick={onLoadOlder}
+              disabled={isLoadingOlder}
+              className="rounded-lg border border-border bg-background-subtle px-3 py-1.5 text-xs text-foreground-secondary transition-colors hover:border-border-strong hover:text-foreground disabled:opacity-60"
+            >
+              {isLoadingOlder ? 'Loading…' : 'Load older messages'}
+            </button>
+          </div>
+        )}
         {messages.map((msg) => (
           <div
             key={msg.id}

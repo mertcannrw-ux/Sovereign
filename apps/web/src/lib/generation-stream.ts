@@ -139,8 +139,15 @@ export async function consumeGenerationStream(
   onEvent: (event: GenerationEvent) => void | Promise<void>,
 ): Promise<void> {
   if (!response.ok) {
-    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-    throw new Error(payload?.error ?? `Generation failed (${response.status})`);
+    const payload = (await response.json().catch(() => null)) as {
+      error?: string;
+      retryAfterMs?: number;
+    } | null;
+    const hint =
+      typeof payload?.retryAfterMs === 'number' && payload.retryAfterMs > 0
+        ? ` (the running generation can be retried in at most ${Math.ceil(payload.retryAfterMs / 60_000)} minutes)`
+        : '';
+    throw new Error(`${payload?.error ?? `Generation failed (${response.status})`}${hint}`);
   }
   if (!response.body) throw new Error('Generation stream is unavailable');
 

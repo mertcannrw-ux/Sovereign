@@ -79,7 +79,12 @@ export async function ensurePersonalOrganization(
   return db.$transaction(async (tx) => {
     // Re-check inside the transaction: a first sign-in can be issued
     // concurrently (e.g. two tabs), and without this both would create a
-    // workspace for the same user.
+    // workspace for the same user. The re-check alone is not a lock under
+    // read-committed — both transactions can read "no membership" — so take
+    // a transaction-scoped advisory lock on the user first. That serializes
+    // provisioning per user; the second transaction's re-check then sees the
+    // first one's committed membership.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${userId}))`;
     const raced = await tx.organizationMember.findFirst({
       where: { userId },
       select: { organizationId: true },

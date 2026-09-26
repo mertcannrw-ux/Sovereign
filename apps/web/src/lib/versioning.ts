@@ -209,20 +209,64 @@ export async function clearGenerationLease(
   return cleared.count > 0;
 }
 
-export async function getVersions(db: DbClient, projectId: string): Promise<VersionSummary[]> {
-  const versions = await db.projectSnapshot.findMany({
-    where: { projectId },
-    orderBy: { versionNumber: 'asc' },
-    select: { id: true, versionNumber: true, createdAt: true, message: true, manifest: true },
-  });
+/**
+ * Assert inside a file-write transaction that this run still owns the
+ * generation lease. Renewal happens at iteration boundaries; between renewals
+ * a run that stalled past the stale cutoff can be reclaimed and replaced. A
+ * predicate on every write tx closes that gap: the replaced run's writes
+ * match zero rows and the tx aborts before any file/version row lands,
+ * instead of interleaving with the new run's tree.
+ *
+ * A plain count would still leave a TOCTOU window: a stale-lease takeover
+ * (`tryClaimGenerationLease`'s updateMany) could commit between the count and
+ * this tx's writes, letting the old run clobber the new owner. Locking the
+ * project row FOR UPDATE blocks the takeover's updateMany until this tx
+ * commits, so the ownership check holds for the whole write.
+ *
+ * Returns false when ownership was lost; callers must abort the run without
+ * writing.
+ */
+export async function assertGenerationLeaseOwned(
+  tx: DbClient,
+  projectId: string,
+  leaseToken: string,
+): Promise<boolean> {
+  // Row lock first: a concurrent claim blocks here until this tx ends.
+  const rows = await tx.$queryRaw<{ owns_lease: boolean }[]>`
+    SELECT generation_lease_token = ${leaseToken} AS owns_lease
+    FROM projects WHERE id = ${projectId} FOR UPDATE`;
+  return rows.length === 1 && rows[0]?.owns_lease === true;
+}
 
-  return versions.map((v) => ({
+export async function getVersions(db: DbClient, projectId: string): Promise<VersionSummary[]> {
+  // Manifests carry full before/after file bodies; the timeline needs only
+  // their entry count. Fetching the column ships every file body of every
+  // snapshot on each project page load, so select the metadata and compute
+  // the count in SQL (jsonb_array_length on the array) instead.
+  const rows = await db.$queryRaw<
+    {
+      id: string;
+      versionNumber: number;
+      createdAt: Date;
+      message: string | null;
+      fileCount: number;
+    }[]
+  >(
+    Prisma.sql`SELECT id, version_number AS "versionNumber", created_at AS "createdAt",
+               message,
+               COALESCE(CASE WHEN jsonb_typeof(manifest) = 'array'
+                             THEN jsonb_array_length(manifest) ELSE 0 END, 0) AS "fileCount"
+               FROM project_snapshots WHERE project_id = ${projectId}
+               ORDER BY version_number ASC`,
+  );
+
+  return rows.map((v) => ({
     id: v.id,
     versionNumber: v.versionNumber,
     createdAt: v.createdAt,
     message: v.message,
     isRestore: v.message?.startsWith(RESTORE_VERSION_MESSAGE_PREFIX) ?? false,
-    fileCount: Array.isArray(v.manifest) ? v.manifest.length : 0,
+    fileCount: Number(v.fileCount),
   }));
 }
 
@@ -263,57 +307,63 @@ export async function restoreVersion(
 ): Promise<{ id: string; versionNumber: number; files: RestoredProjectFile[] }> {
   const lockKey = projectIdToAdvisoryKey(projectId);
 
-  return db.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${lockKey})`;
+  // Replay reads every snapshot manifest and rewrites the whole tree; the 5s
+  // interactive default aborts legitimate restores on projects with long
+  // histories, so budget generously.
+  return db.$transaction(
+    async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${lockKey})`;
 
-    const files = await reconstructVersionFiles(tx, projectId, versionNumber);
-    const currentFiles = await tx.projectFile.findMany({
-      where: { projectId },
-      select: { path: true },
-    });
-    const restoredPaths = new Set(files.map((file) => file.path));
-    const manifest = [
-      ...files.map((file) => ({
-        file: file.path,
-        operation: 'update' as const,
-        after: file.content,
-      })),
-      ...currentFiles
-        .filter((file) => !restoredPaths.has(file.path))
-        .map((file) => ({ file: file.path, operation: 'delete' as const })),
-    ];
-
-    await tx.projectFile.deleteMany({ where: { projectId } });
-    if (files.length > 0) {
-      await tx.projectFile.createMany({
-        data: files.map((file) => ({
-          projectId,
-          path: file.path,
-          content: file.content,
-          contentHash: createHash('sha256').update(file.content).digest('hex'),
-        })),
+      const files = await reconstructVersionFiles(tx, projectId, versionNumber);
+      const currentFiles = await tx.projectFile.findMany({
+        where: { projectId },
+        select: { path: true },
       });
-    }
+      const restoredPaths = new Set(files.map((file) => file.path));
+      const manifest = [
+        ...files.map((file) => ({
+          file: file.path,
+          operation: 'update' as const,
+          after: file.content,
+        })),
+        ...currentFiles
+          .filter((file) => !restoredPaths.has(file.path))
+          .map((file) => ({ file: file.path, operation: 'delete' as const })),
+      ];
 
-    const latestVersion = await tx.projectSnapshot.findFirst({
-      where: { projectId },
-      orderBy: { versionNumber: 'desc' },
-      select: { versionNumber: true },
-    });
-    const newVersionNumber = (latestVersion?.versionNumber ?? 0) + 1;
-    const version = await tx.projectSnapshot.create({
-      data: {
-        projectId,
-        versionNumber: newVersionNumber,
-        manifest: manifest as Prisma.InputJsonValue,
-        sourceMessageId: null,
-        createdById: null,
-        message: `${RESTORE_VERSION_MESSAGE_PREFIX}${versionNumber}`,
-      },
-    });
+      await tx.projectFile.deleteMany({ where: { projectId } });
+      if (files.length > 0) {
+        await tx.projectFile.createMany({
+          data: files.map((file) => ({
+            projectId,
+            path: file.path,
+            content: file.content,
+            contentHash: createHash('sha256').update(file.content).digest('hex'),
+          })),
+        });
+      }
 
-    return { id: version.id, versionNumber: version.versionNumber, files };
-  });
+      const latestVersion = await tx.projectSnapshot.findFirst({
+        where: { projectId },
+        orderBy: { versionNumber: 'desc' },
+        select: { versionNumber: true },
+      });
+      const newVersionNumber = (latestVersion?.versionNumber ?? 0) + 1;
+      const version = await tx.projectSnapshot.create({
+        data: {
+          projectId,
+          versionNumber: newVersionNumber,
+          manifest: manifest as Prisma.InputJsonValue,
+          sourceMessageId: null,
+          createdById: null,
+          message: `${RESTORE_VERSION_MESSAGE_PREFIX}${versionNumber}`,
+        },
+      });
+
+      return { id: version.id, versionNumber: version.versionNumber, files };
+    },
+    { timeout: 30_000 },
+  );
 }
 
 // ─── AI Response Parsing ───────────────────────────────

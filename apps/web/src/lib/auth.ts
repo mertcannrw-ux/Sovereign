@@ -7,6 +7,7 @@ import { isIP } from 'node:net';
 import { getDb } from './db';
 import { canAdoptAccountByEmail } from './account-linking';
 import { checkRateLimit, hashIp } from '@/server/rate-limit';
+import { env } from '@/env';
 import { ensurePersonalOrganization } from '@/server/onboarding';
 
 export function oauthProvidersEnabled(): { google: boolean; github: boolean } {
@@ -98,7 +99,7 @@ function buildProviders(): NextAuthOptions['providers'] {
  * Kept behaviourally identical to `getClientIp` in `lib/trpc/context.ts`.
  */
 function trustedProxyClientIp(req: unknown): string | null {
-  if (process.env.TRUSTED_PROXY !== 'true') return null;
+  if (!env.TRUSTED_PROXY) return null;
   const headers = (req as { headers?: Headers })?.headers;
   if (!headers || typeof headers.get !== 'function') return null;
 

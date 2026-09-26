@@ -86,6 +86,19 @@ function fakeProjectDb(seed: {
 
   const db = {
     $executeRaw: vi.fn().mockResolvedValue(1),
+    // getVersions reads metadata + jsonb_array_length(manifest) in SQL; the
+    // fake answers from the seeded snapshot rows directly.
+    $queryRaw: vi.fn(async () =>
+      [...snapshots]
+        .sort((a, b) => a.versionNumber - b.versionNumber)
+        .map((snapshot) => ({
+          id: snapshot.id,
+          versionNumber: snapshot.versionNumber,
+          createdAt: snapshot.createdAt,
+          message: snapshot.message,
+          fileCount: Array.isArray(snapshot.manifest) ? snapshot.manifest.length : 0,
+        })),
+    ),
     // The real transaction boundary is a Postgres lock; the fake only has to
     // hand the same handle back so the callback's reads and writes are shared.
     $transaction: vi.fn(async (run: (tx: unknown) => Promise<unknown>) => run(db)),

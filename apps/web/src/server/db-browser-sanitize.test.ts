@@ -66,6 +66,69 @@ describe('sanitizeSqlForTenant — blocked statements', () => {
     expect(sanitizeSqlForTenant('SELECT set_config($$x$$, $$y$$, false)', TENANT)).toBeNull();
   });
 
+  it('blocks the XML-mapping family (foreign SQL hidden in a string literal)', () => {
+    // Regression: the inner query lives inside a string literal, so literal
+    // stripping + table-reference scanning never see it. Only the function
+    // denylist can stop it.
+    expect(
+      sanitizeSqlForTenant(
+        "SELECT query_to_xml('SELECT email FROM public.users', true, true, '') AS x",
+        TENANT,
+      ),
+    ).toBeNull();
+    expect(
+      sanitizeSqlForTenant(
+        "SELECT query_to_xmltype('table public.api_keys row', true, true, '')",
+        TENANT,
+      ),
+    ).toBeNull();
+    expect(sanitizeSqlForTenant("SELECT database_to_xml(true, true, '')", TENANT)).toBeNull();
+    expect(sanitizeSqlForTenant("SELECT database_to_xmlschema(true, true, '')", TENANT)).toBeNull();
+    expect(
+      sanitizeSqlForTenant("SELECT schema_to_xml('public', true, true, '')", TENANT),
+    ).toBeNull();
+    expect(
+      sanitizeSqlForTenant("SELECT cursor_to_xml('c'::refcursor, 10, true, true, '')", TENANT),
+    ).toBeNull();
+    // Whitespace/case variations must not slip past the token-boundary regex.
+    expect(
+      sanitizeSqlForTenant("SELECT QUERY_TO_XML ( 'SELECT 1', true, true, '' )", TENANT),
+    ).toBeNull();
+  });
+
+  it('still allows read-only XML predicates on values (no relation access)', () => {
+    // xpath/xml_is_well_formed* operate only on values already in the
+    // statement — they cannot execute SQL or reach another schema, so they
+    // are allowed for tenant queries over xml-typed columns.
+    expect(sanitizeSqlForTenant("SELECT xpath('/a/b', doc) FROM docs", TENANT)).not.toBeNull();
+    expect(sanitizeSqlForTenant("SELECT xml_is_well_formed('')", TENANT)).not.toBeNull();
+  });
+
+  it('still allows ordinary string literals in predicates', () => {
+    expect(
+      sanitizeSqlForTenant("SELECT * FROM users WHERE email = 'a@b.c'", TENANT),
+    ).not.toBeNull();
+  });
+
+  it('accepts the UUID default the Database panel prefills', () => {
+    // Regression: database-panel.tsx prefills `gen_random_uuid()` — the
+    // allowlist must accept what the UI advertises (and what Postgres natively
+    // provides) or every default table creation 400s.
+    expect(isSafeDefault('gen_random_uuid()')).toBe(true);
+    expect(isSafeDefault('now()')).toBe(true);
+    expect(isSafeDefault('CURRENT_TIMESTAMP')).toBe(true);
+    expect(isSafeDefault('42')).toBe(true);
+    // Still rejects anything that could smuggle SQL into CREATE TABLE.
+    expect(isSafeDefault('uuid_generate_v4()')).toBe(false);
+    expect(isSafeDefault("nextval('evil')")).toBe(false);
+    expect(isSafeDefault('1; DROP TABLE users')).toBe(false);
+  });
+
+  it('blocks advisory-lock functions (session and xact variants)', () => {
+    expect(sanitizeSqlForTenant('SELECT pg_try_advisory_lock(12345)', TENANT)).toBeNull();
+    expect(sanitizeSqlForTenant('SELECT pg_advisory_unlock(12345)', TENANT)).toBeNull();
+  });
+
   it('blocks platform schema and catalog access', () => {
     expect(sanitizeSqlForTenant('SELECT * FROM public.users', TENANT)).toBeNull();
     expect(sanitizeSqlForTenant('SELECT * FROM information_schema.tables', TENANT)).toBeNull();

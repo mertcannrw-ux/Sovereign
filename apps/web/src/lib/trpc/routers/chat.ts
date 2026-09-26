@@ -21,11 +21,79 @@ import {
   parseFileDiffsFromResponse,
   tryClaimGenerationLease,
   clearGenerationLease,
+  assertGenerationLeaseOwned,
   VersionNotFoundError,
 } from '@/lib/versioning';
 import type { VersionDiffEntry } from '@/lib/versioning';
 import { persistProjectFiles } from '@/lib/project-files';
 
+/**
+ * Split a newest-first message page (fetched with limit+1 rows) into the page
+ * to return plus the cursor for the next OLDER page.
+ *
+ * The +1 probe row tells us whether older rows exist; when it's present we
+ * drop it. The cursor names the OLDEST row kept (last element, since input is
+ * descending) as a (timestamp, id) pair. The id tiebreaker is required:
+ * timestamps are millisecond precision and not unique, so a timestamp-only
+ * cursor paired with `timestamp < cursor` makes every same-millisecond row
+ * after the page cut unreachable — the walk jumps past the whole tie group.
+ */
+export function paginateMessages<T extends { id: string; timestamp: string | Date }>(
+  rows: T[],
+  limit: number,
+): { page: T[]; nextCursor: string | null } {
+  const hasMore = rows.length === limit + 1;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  const oldest = page.at(-1);
+  return {
+    page,
+    nextCursor:
+      hasMore && oldest
+        ? JSON.stringify({ t: new Date(oldest.timestamp).toISOString(), id: oldest.id })
+        : null,
+  };
+}
+
+interface HistoryCursor {
+  t: string;
+  id: string;
+}
+
+/**
+ * Decode a cursor produced by paginateMessages. Returns null for absent or
+ * malformed input instead of throwing: a cursor only ever comes back from our
+ * own nextCursor, so a bad one means a stale client, and a 500 would turn a
+ * cosmetic staleness into a broken transcript.
+ */
+function parseHistoryCursor(raw: string | undefined): HistoryCursor | null {
+  if (!raw) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const candidate = parsed as Record<string, unknown>;
+  if (typeof candidate.t !== 'string' || typeof candidate.id !== 'string') return null;
+  const t = Date.parse(candidate.t);
+  if (Number.isNaN(t)) return null;
+  return { t: candidate.t, id: candidate.id };
+}
+
+/**
+ * Exclusive compound cursor predicate: (timestamp, id) strictly below the
+ * cursor in the same lexicographic order the query sorts by
+ * (timestamp DESC, id DESC).
+ */
+function olderThan(cursor: HistoryCursor) {
+  return {
+    OR: [
+      { timestamp: { lt: new Date(cursor.t) } },
+      { timestamp: new Date(cursor.t), id: { lt: cursor.id } },
+    ],
+  };
+}
 export const chatRouter = router({
   /**
    * Send a chat message to the AI and receive a response.
@@ -227,6 +295,17 @@ export const chatRouter = router({
             .filter((entry): entry is VersionDiffEntry => entry !== null);
         }
         const { assistantMessage, versionNumber } = await ctx.db.$transaction(async (tx) => {
+          // Same TOCTOU guard as /api/generate's write txs: between the claim
+          // above and this write a stalled run can age out and be replaced.
+          // The row lock in assertGenerationLeaseOwned blocks a concurrent
+          // takeover for the rest of this tx, so ownership holds while files
+          // and the version land.
+          if (!(await assertGenerationLeaseOwned(tx, input.projectId, leaseToken))) {
+            throw new TRPCError({
+              code: 'CONFLICT',
+              message: 'This generation was superseded by a newer run. No changes were applied.',
+            });
+          }
           const msg = await tx.chatMessage.create({
             data: {
               projectId: project.id,
@@ -291,46 +370,71 @@ export const chatRouter = router({
         });
       }
     }),
-
   /**
    * Fetch the message history for a project.
    * Validates the caller has access to the project first.
    */
   getHistory: protectedProcedure
-    .input(z.object({ projectId: z.string() }))
+    .input(
+      z.object({
+        projectId: z.string(),
+        // Cursor = JSON {t, id} of the last (oldest) message of the previous
+        // page, per paginateMessages.
+        cursor: z.string().optional(),
+        limit: z.number().int().min(1).max(200).default(100),
+      }),
+    )
     .query(async ({ ctx, input }) => {
       await requireProjectRole(ctx, input.projectId, 'VIEWER');
 
-      const messages = await ctx.db.chatMessage.findMany({
-        where: { projectId: input.projectId },
-        orderBy: { timestamp: 'asc' },
-      });
-
-      return messages.map(
-        (m: {
-          id: string;
-          role: string;
-          content: string;
-          timestamp: string | Date;
-          model: string;
-          toolCalls: unknown;
-          tokenUsage: unknown;
-          filesModified: unknown;
-          thinking?: string | null;
-        }) => ({
-          id: m.id,
-          role: m.role,
-          content: m.content,
-          timestamp: m.timestamp,
-          model: m.model,
-          toolCalls: m.toolCalls,
-          filesModified: m.filesModified,
-          tokenUsage: m.tokenUsage,
-          thinking: m.thinking,
+      // Transcripts grow without bound (every agent turn persists toolCalls
+      // JSON); returning the whole history on every project load degrades
+      // linearly. Newest-first page, reversed to chronological for the client,
+      // with a nextCursor for older pages. Newest-first fetch of limit+1 rows;
+      // see paginateMessages for the page/cursor split.
+      const cursor = parseHistoryCursor(input.cursor);
+      const { page, nextCursor } = paginateMessages(
+        await ctx.db.chatMessage.findMany({
+          where: {
+            projectId: input.projectId,
+            ...(cursor ? olderThan(cursor) : {}),
+          },
+          orderBy: [{ timestamp: 'desc' }, { id: 'desc' }],
+          take: input.limit + 1,
         }),
+        input.limit,
       );
-    }),
 
+      return {
+        messages: page
+          .slice()
+          .reverse()
+          .map(
+            (m: {
+              id: string;
+              role: string;
+              content: string;
+              timestamp: string | Date;
+              model: string;
+              toolCalls: unknown;
+              tokenUsage: unknown;
+              filesModified: unknown;
+              thinking?: string | null;
+            }) => ({
+              id: m.id,
+              role: m.role,
+              content: m.content,
+              timestamp: m.timestamp,
+              model: m.model,
+              toolCalls: m.toolCalls,
+              filesModified: m.filesModified,
+              tokenUsage: m.tokenUsage,
+              thinking: m.thinking,
+            }),
+          ),
+        nextCursor,
+      };
+    }),
   /**
    * Get the full version history timeline for a project.
    */

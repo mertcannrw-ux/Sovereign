@@ -198,11 +198,7 @@ export async function checkRateLimit(
   key: RateLimitKey,
   identifier: string,
 ): Promise<RateLimitResult> {
-  if (
-    process.env.NODE_ENV === 'production' &&
-    process.env.TRUSTED_PROXY !== 'true' &&
-    !warnedTrustedProxy
-  ) {
+  if (process.env.NODE_ENV === 'production' && !env.TRUSTED_PROXY && !warnedTrustedProxy) {
     warnedTrustedProxy = true;
     console.warn(
       '[rate-limit] TRUSTED_PROXY is not set. Requests are seen as 127.0.0.1, so pre-auth ' +
