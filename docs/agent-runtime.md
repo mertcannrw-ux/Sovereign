@@ -42,6 +42,8 @@ this notice once the corresponding code lands.
 
 ## Overview
 
+> **Historical snapshot:** This overview and the `Background & Motivation` details below describe the code when this RFC was drafted on August 30, 2026. They explain the original proposal and may not match current behavior. Use the implementation status above and the referenced source files for the current state.
+
 Sovereign already has the shape of a coding agent: a streaming loop at `POST /api/generate`, a filesystem of `ProjectFile` rows, version snapshots, a visual editor, and a browser WebContainer preview. It does **not** yet have a professional agent loop. The model is asked to dump JSON actions in prose (`AGENT_SYSTEM_PROMPT` in `apps/web/src/app/api/generate/route.ts`). The harness scrapes those objects with `parseAgentAction` (`apps/web/src/lib/agent-protocol.ts`). Native `tools` exist on `ProviderCompleteOptions` (`packages/ai-gateway/src/types.ts`) but generate never passes them, and the OpenAI-compatible stream parser never extracts `delta.tool_calls`. The agent's "computer" is an in-memory `Map<string, string>` of Prisma rows, not a runtime that can `npm install`, typecheck, or return console errors. Preview is a static Node HTTP server written into WebContainer (`.sovereign-preview.mjs` in `use-webcontainer.ts`) that does **not** run Vite, does **not** install dependencies, and does **not** feed logs back to the model. Deploy writes `https://stub.localhost/{slug}/vN`. Accessibility is a prompt hope, not a gate.
 
 This document specifies the smallest architecture that can rival Lovable, Replit Agent, and Bolt.new on a metric we can actually hit in this wave: **the preview runs a real Vite app, and a static production build can deploy to a real URL**. The sequence is explicit and incremental: native tool_calls → Vite-in-WebContainer preview → agent drives that same WebContainer → automatic verify (static lint + optional sandboxed `vite build`) → Plan vs Build → cheap autofixers → Vercel source deploy. Subagents, MCP, grep-at-scale, computer-use, and SSR/API routes are **out of this RFC**.
@@ -209,7 +211,7 @@ No 60s wait. This is how old `consumeGenerationStream` clients (which **drop** u
 
 `GenerationRun.status = WAITING_RUNTIME` while blocked. Pending columns live on `GenerationToolTrace` (`status=pending`, `requestId`, `command`, `timeoutMs`, `expiresAt`, `filesRevision`) — the poll source of truth.
 
-`socket.io` is already a dependency and **unused**. We do **not** switch generate to WebSockets in this RFC. Revisit WS only if poll p95 is unacceptable (see Alternatives).
+WebSockets add a separate client/server stack, so this RFC keeps the existing SSE+POST flow. Revisit WS only if poll p95 is unacceptable (see Alternatives).
 
 **Shared digest** (`apps/web/src/lib/files-revision.ts`, used by generate and the client; same algorithm as Prisma `contentHash` = `createHash('sha256').update(content, 'utf8').digest('hex')`):
 
@@ -898,7 +900,7 @@ Rejected as primary (cost, cold start, ops). Accepted as **E2B CI only**, option
 
 **This is the hybrid this RFC specifies** (Revision 3). Host execution is deleted. Serverless `run` waits by **polling `GenerationToolTrace`**, not Upstash REST pub/sub.
 
-### 5. WebSocket (`socket.io`, already in `apps/web`) vs SSE+POST
+### 5. WebSocket (if introduced) vs SSE+POST
 
 WS is duplex: no waiter race, natural ACK. Cost: sticky sessions on serverless, new client stack, generate is already SSE. **v1: SSE+POST; waiter = poll the pending trace every 250 ms, or in-process EventEmitter on long-lived Node, or optional TCP Redis `BRPOP`.** Revisit WS if poll p95 is poor. Do not introduce socket.io in PR 6. Do not call Upstash REST `SUBSCRIBE`.
 

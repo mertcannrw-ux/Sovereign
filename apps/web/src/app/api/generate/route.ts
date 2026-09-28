@@ -124,25 +124,69 @@ function formatReadObservation(
 ): string {
   if (content === undefined) return `--- ${path} ---\n[not found]`;
 
-  const lines = content.split(/\r?\n/);
   const firstLine = request.startLine ?? 1;
-  const requestedLastLine = request.endLine ?? lines.length;
-  if (firstLine > lines.length) {
-    return `--- ${path} (lines ${firstLine}-${requestedLastLine}) ---\n[line range is outside the file; file has ${lines.length} lines]`;
+  let lineCount = 1;
+  let firstLineStart = 0;
+  for (let index = 0; index < content.length; index += 1) {
+    if (content.charCodeAt(index) === 10) {
+      lineCount += 1;
+      if (lineCount === firstLine) firstLineStart = index + 1;
+    }
+  }
+  const requestedLastLine = request.endLine ?? lineCount;
+  if (firstLine > lineCount) {
+    return `--- ${path} (lines ${firstLine}-${requestedLastLine}) ---\n[line range is outside the file; file has ${lineCount} lines]`;
   }
 
-  const lastLine = Math.min(requestedLastLine, lines.length);
+  const lastLine = Math.min(requestedLastLine, lineCount);
   const header =
     request.startLine === undefined && request.endLine === undefined
-      ? `--- ${path} (full file, lines 1-${lines.length}) ---`
+      ? `--- ${path} (full file, lines 1-${lineCount}) ---`
       : `--- ${path} (lines ${firstLine}-${lastLine}) ---`;
-  const numbered = lines
-    .slice(firstLine - 1, lastLine)
-    .map((line, index) => `${firstLine + index}: ${line}`)
-    .join('\n');
   const suffix = '\n… [read output truncated; request a smaller line range]';
   const available = Math.max(0, budget - header.length - 1);
-  if (numbered.length <= available) {
+  // Capture one sentinel character past the limit to detect truncation without
+  // formatting the rest of a large file into a temporary string.
+  const captureLimit = available + 1;
+  let numbered = '';
+  let exceededBudget = false;
+  const appendText = (text: string) => {
+    const remaining = captureLimit - numbered.length;
+    if (text.length > remaining) {
+      numbered += text.slice(0, remaining);
+      exceededBudget = true;
+    } else {
+      numbered += text;
+    }
+  };
+  const appendSource = (start: number, end: number) => {
+    const remaining = captureLimit - numbered.length;
+    const length = end - start;
+    if (length > remaining) {
+      numbered += content.slice(start, start + remaining);
+      exceededBudget = true;
+    } else {
+      numbered += content.slice(start, end);
+    }
+  };
+
+  let lineStart = firstLineStart;
+  for (let line = firstLine; line <= lastLine; line += 1) {
+    if (line > firstLine) appendText('\n');
+    appendText(`${line}: `);
+    const newline = content.indexOf('\n', lineStart);
+    const rawLineEnd = newline < 0 ? content.length : newline;
+    const lineEnd =
+      rawLineEnd > lineStart && content.charCodeAt(rawLineEnd - 1) === 13
+        ? rawLineEnd - 1
+        : rawLineEnd;
+    appendSource(lineStart, lineEnd);
+    if (exceededBudget) break;
+    lineStart = newline < 0 ? content.length : newline + 1;
+  }
+  if (numbered.length > available) exceededBudget = true;
+
+  if (!exceededBudget) {
     return `${header}\n${numbered}`;
   }
   const bodyLimit = Math.max(0, available - suffix.length);
