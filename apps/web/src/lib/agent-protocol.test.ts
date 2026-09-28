@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyAgentEdit,
+  cursorPositionAt,
   getAgentFileMutationPaths,
   getDesignDirectionActionError,
   getStreamingFileAction,
@@ -55,6 +56,20 @@ describe('agent protocol', () => {
     expect(applyAgentEdit('before unique after', 'unique', 'changed')).toBe('before changed after');
     expect(() => applyAgentEdit('same same', 'same', 'changed')).toThrow('found 2');
     expect(() => applyAgentEdit('missing', 'other', 'changed')).toThrow('found 0');
+  });
+
+  it('maps streamed fragment offsets to 1-indexed line and 0-indexed column', () => {
+    // Start of the file is line 1, column 0.
+    expect(cursorPositionAt('<h1>Ready</h1>', 0)).toEqual({ line: 1, column: 0 });
+    // End of streamed content marks where the model stopped writing.
+    expect(cursorPositionAt('a\nb\nc', 5)).toEqual({ line: 3, column: 1 });
+    // A streamed fragment ending at a newline lands on the next line's start.
+    expect(cursorPositionAt('a\nb\nc', 4)).toEqual({ line: 3, column: 0 });
+    // The newline character itself sits at the end of the line it terminates.
+    expect(cursorPositionAt('a\nb\nc', 3)).toEqual({ line: 2, column: 1 });
+    // Out-of-range indexes clamp to the end of the file.
+    expect(cursorPositionAt('ab', 99)).toEqual({ line: 1, column: 2 });
+    expect(cursorPositionAt('ab', -1)).toEqual({ line: 1, column: 0 });
   });
 
   it('accepts exactly three useful clarification options', () => {

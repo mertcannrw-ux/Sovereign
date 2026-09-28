@@ -2,14 +2,20 @@
 
 import { cn } from '@app-builder/ui/utils';
 import { FileCode2 } from 'lucide-react';
+import { useEffect, useRef } from 'react';
 import type { PreviewFile } from '@/lib/use-webcontainer';
-import type { FileProgressEvent } from '@/lib/generation-stream';
+import type { ActiveFileState } from '@/lib/generation-stream';
 
 const MAX_CODE_PREVIEW_CHARS = 50000;
 
+/** Vertical geometry of the streaming cursor inside the code <pre>: p-4 (16px) padding + 20px per line (text-xs leading-5). */
+function cursorOffsetTop(line: number): number {
+  return 16 + Math.max(0, line - 1) * 20;
+}
+
 export interface CodePaneProps {
   files: PreviewFile[];
-  activeFile: FileProgressEvent | null;
+  activeFile: ActiveFileState | null;
   isSending: boolean;
   onSelectFile: (file: PreviewFile) => void;
   cursor: {
@@ -34,6 +40,27 @@ export function CodePane({
   const rawContent = activeFile?.content ?? files[0]?.content ?? emptyMessage;
   const isTruncated = rawContent.length > MAX_CODE_PREVIEW_CHARS;
   const displayContent = isTruncated ? rawContent.slice(0, MAX_CODE_PREVIEW_CHARS) : rawContent;
+
+  const codeScrollRef = useRef<HTMLPreElement | null>(null);
+  // While the agent streams, the pane follows the cursor so the line being
+  // written stays visible. A manual scroll up pauses following; a new run
+  // re-enables it.
+  const followCursorRef = useRef(true);
+
+  useEffect(() => {
+    if (isSending) followCursorRef.current = true;
+  }, [isSending]);
+
+  useEffect(() => {
+    if (!isSending || !cursor.visible || !followCursorRef.current) return;
+    const pre = codeScrollRef.current;
+    if (!pre) return;
+    const cursorTop = cursorOffsetTop(cursor.pos.line);
+    if (cursorTop > pre.scrollTop + pre.clientHeight - 40) {
+      // Keep ~80px of lookahead below the cursor as it descends.
+      pre.scrollTop = cursorTop - pre.clientHeight + 80;
+    }
+  }, [cursor.pos.line, cursor.visible, isSending]);
 
   return (
     <div className="flex min-h-0 flex-1 bg-background-subtle">
@@ -71,27 +98,38 @@ export function CodePane({
             </span>
           ) : null}
         </div>
-        <pre className="max-h-[600px] min-h-full overflow-auto p-4 font-mono text-xs leading-5 text-[#d4d4d4]">
+        <pre
+          ref={codeScrollRef}
+          onWheel={(event) => {
+            // Scrolling up is the user taking over; stop auto-following until
+            // the next generation run.
+            if (event.deltaY < 0) followCursorRef.current = false;
+          }}
+          onTouchMove={() => {
+            followCursorRef.current = false;
+          }}
+          className="relative max-h-[600px] min-h-full overflow-auto p-4 font-mono text-xs leading-5 text-[#d4d4d4]"
+        >
           <code>{displayContent}</code>
+          {isSending && cursor.visible && (
+            <div
+              className="pointer-events-none absolute left-4 top-4 z-20 flex items-center"
+              style={{
+                transform: `translateY(${Math.max(0, cursor.pos.line - 1) * 20}px)`,
+                transition: 'transform 0.1s linear',
+              }}
+            >
+              <span className="h-4 w-0.5 animate-pulse bg-primary" />
+              <span className="ml-2 rounded bg-primary px-1.5 py-0.5 text-[9px] font-semibold text-primary-foreground">
+                AI
+              </span>
+            </div>
+          )}
         </pre>
         {isTruncated && (
           <div className="sticky bottom-0 border-t border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-300">
             File truncated for display ({rawContent.length.toLocaleString()} chars). Open in preview
             or download to see full content.
-          </div>
-        )}
-        {isSending && cursor.visible && (
-          <div
-            className="pointer-events-none absolute left-4 z-20 flex items-center"
-            style={{
-              transform: `translateY(${42 + Math.max(0, cursor.pos.line - 1) * 20}px)`,
-              transition: 'transform 0.1s linear',
-            }}
-          >
-            <span className="h-4 w-0.5 animate-pulse bg-primary" />
-            <span className="ml-2 rounded bg-primary px-1.5 py-0.5 text-[9px] font-semibold text-primary-foreground">
-              AI
-            </span>
           </div>
         )}
       </div>

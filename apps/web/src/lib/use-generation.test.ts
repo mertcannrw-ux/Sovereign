@@ -121,6 +121,53 @@ describe('useGeneration run outcomes', () => {
     expect(options.onHistoryRefetch).toHaveBeenCalledTimes(1);
   });
 
+  it('tracks the model write position from file-preview events', async () => {
+    const preview = createPreview();
+    const options = createOptions(preview);
+    const stream = driveStream();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 200 })));
+
+    const { result } = renderHook(() => useGeneration(options));
+
+    let sendPromise: Promise<void> | undefined;
+    await act(async () => {
+      sendPromise = result.current.send('build a landing page');
+    });
+    await act(async () => {
+      await stream.emit({
+        type: 'file-preview',
+        data: { operation: 'update', path: 'index.html', content: PARTIAL_HTML, line: 12, column: 7 },
+      });
+    });
+    // The AI cursor reads this state: it must reflect the streamed position.
+    expect(result.current.activeFile).toEqual({
+      path: 'index.html',
+      content: PARTIAL_HTML,
+      line: 12,
+      column: 7,
+    });
+
+    // Rollback emissions restore prior content and carry no position — the
+    // cursor resets to the top rather than pointing past the restored file.
+    await act(async () => {
+      await stream.emit({
+        type: 'file-preview',
+        data: { operation: 'update', path: 'index.html', content: COMMITTED_HTML },
+      });
+    });
+    expect(result.current.activeFile).toEqual({
+      path: 'index.html',
+      content: COMMITTED_HTML,
+      line: 1,
+      column: 0,
+    });
+
+    await act(async () => {
+      stream.fail(new Error('run over'));
+      await sendPromise;
+    });
+  });
+
   it('rolls a provisionally created file back when a run is stopped', async () => {
     const preview = createPreview();
     const options = createOptions(preview);

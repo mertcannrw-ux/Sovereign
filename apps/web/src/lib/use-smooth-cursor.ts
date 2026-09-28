@@ -84,21 +84,16 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
  */
 export function useSmoothCursor(target: CursorPos | null) {
   const currentPosRef = useRef<CursorPos>({ line: 1, column: 0 });
-  const targetRef = useRef<CursorPos | null>(null);
   const animFrameRef = useRef<number>(0);
   const startTimeRef = useRef(0);
   const startPosRef = useRef<CursorPos>({ line: 1, column: 0 });
-  // Exposed cursor element (optional): if set, RAF directly writes transform.
-  const cursorElRef = useRef<HTMLElement | null>(null);
 
   // Throttled React state so consumers see progress without 60fps renders.
   const [displayPos, setDisplayPos] = useState<CursorPos>({ line: 1, column: 0 });
-  const throttledPosRef = useRef<CursorPos>({ line: 1, column: 0 });
   const lastFlushRef = useRef<number>(0);
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    targetRef.current = target;
     if (!target) {
       setVisible(false);
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
@@ -124,17 +119,6 @@ export function useSmoothCursor(target: CursorPos | null) {
       const newCol = lerp(startPosRef.current.column, target.column, ease);
 
       currentPosRef.current = { line: newLine, column: newCol };
-      throttledPosRef.current = { line: newLine, column: newCol };
-
-      // Direct DOM write if a cursor element was registered (avoids React render).
-      const el = cursorElRef.current;
-      if (el) {
-        // Consumer can position via CSS using these values if needed.
-        el.style.setProperty('--cursor-line', String(newLine));
-        el.style.setProperty('--cursor-col', String(newCol));
-        // Fallback transform: ~14px line height assumption
-        el.style.transform = `translate(${newCol * 8}px, ${newLine * 14}px)`;
-      }
 
       // Coalesce React state to ~6fps (every ~160ms) and on completion.
       if (t >= 1 || now - lastFlushRef.current >= 160) {
@@ -154,5 +138,5 @@ export function useSmoothCursor(target: CursorPos | null) {
     };
   }, [target?.line, target?.column]);
 
-  return { pos: displayPos, visible, cursorElRef };
+  return { pos: displayPos, visible };
 }

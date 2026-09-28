@@ -11,7 +11,7 @@ import type { ChatMessage } from '@app-builder/shared';
 import { DesignDirectionCards } from '@/components/design-direction-cards';
 import type {
   DesignDirectionsEventData,
-  FileProgressEvent,
+  ActiveFileState,
   GenerationPhaseEvent,
 } from '@/lib/generation-stream';
 import type { ClarifyingQuestion } from '@/lib/generation-protocol';
@@ -309,7 +309,7 @@ export interface ChatPanelProps {
   liveThinking: string | null;
   liveStepTitle: string | null;
   agentLiveMessage: string;
-  activeFile: FileProgressEvent | null;
+  activeFile: ActiveFileState | null;
   clarifyingQuestions: ClarifyingQuestion[];
   clarificationAnswers: string[];
   clarificationStep: number;

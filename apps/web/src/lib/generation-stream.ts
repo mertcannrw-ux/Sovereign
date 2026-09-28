@@ -6,7 +6,12 @@ export interface GenerationPhaseEvent {
   label: string;
 }
 
-export interface FileProgressEvent extends GeneratedFile {
+/**
+ * Shape of the file the agent is currently streaming: content so far plus the
+ * 1-indexed line / 0-indexed column where the model is writing. Mirrors the
+ * server's `file-preview` streaming payloads.
+ */
+export interface ActiveFileState extends GeneratedFile {
   line: number;
   column: number;
 }
@@ -22,6 +27,13 @@ export interface FilePreviewEvent {
   operation: 'create' | 'update' | 'delete';
   path: string;
   content?: string;
+  /**
+   * Position where the model is currently writing (1-indexed line, 0-indexed
+   * column), included on streaming preview emissions. Absent on rollback
+   * emissions, which restore prior content rather than stream new text.
+   */
+  line?: number;
+  column?: number;
 }
 
 export interface ImageJobEventData {
@@ -89,9 +101,6 @@ export type GenerationEvent =
   | { type: 'step'; data: AgentStep }
   | { type: 'file-operation'; data: FileOperationEvent }
   | { type: 'file-preview'; data: FilePreviewEvent }
-  | { type: 'file-start'; data: { path: string } }
-  | { type: 'file-progress'; data: FileProgressEvent }
-  | { type: 'file-complete'; data: GeneratedFile }
   | { type: 'thinking'; data: { content: string } }
   | { type: 'questions'; data: GenerationQuestionsEvent }
   | { type: 'image-job'; data: ImageJobEventData }
@@ -119,9 +128,6 @@ function parseEventBlock(block: string): GenerationEvent | null {
     event !== 'step' &&
     event !== 'file-operation' &&
     event !== 'file-preview' &&
-    event !== 'file-start' &&
-    event !== 'file-progress' &&
-    event !== 'file-complete' &&
     event !== 'thinking' &&
     event !== 'questions' &&
     event !== 'image-job' &&

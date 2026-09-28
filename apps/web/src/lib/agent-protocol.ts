@@ -547,3 +547,27 @@ export function applyAgentEdit(content: string, search: string, replace: string)
     throw new Error(`Edit search must match exactly once; found ${occurrences}`);
   return content.replace(search, replace);
 }
+
+/**
+ * 1-indexed line and 0-indexed column of the character at `index` in `content`
+ * (an out-of-range index clamps to the end, so `content.length` means "end of
+ * file"). This is the streaming AI cursor's position source: the server calls
+ * it with the end of the streamed fragment so the cursor tracks where the model
+ * is actually writing. O(n) over the prefix, no line-array allocation, because
+ * the generate route calls it on every throttled preview emit.
+ */
+export function cursorPositionAt(
+  content: string,
+  index: number,
+): { line: number; column: number } {
+  const end = Math.max(0, Math.min(index, content.length));
+  let line = 1;
+  let lineStart = 0;
+  for (let i = 0; i < end; i += 1) {
+    if (content.charCodeAt(i) === 10) {
+      line += 1;
+      lineStart = i + 1;
+    }
+  }
+  return { line, column: end - lineStart };
+}

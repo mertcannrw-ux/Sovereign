@@ -12,7 +12,7 @@ import type { ChatMessage } from '@app-builder/shared';
 import { consumeGenerationStream } from '@/lib/generation-stream';
 import type {
   DesignDirectionsEventData,
-  FileProgressEvent,
+  ActiveFileState,
   GenerationPhaseEvent,
 } from '@/lib/generation-stream';
 import type { ClarifyingQuestion } from '@/lib/generation-protocol';
@@ -89,8 +89,8 @@ export interface UseGenerationResult {
   liveThinking: string | null;
   liveStepTitle: string | null;
   agentLiveMessage: string;
-  activeFile: FileProgressEvent | null;
-  setActiveFile: Dispatch<SetStateAction<FileProgressEvent | null>>;
+  activeFile: ActiveFileState | null;
+  setActiveFile: Dispatch<SetStateAction<ActiveFileState | null>>;
   localMessages: ChatMessage[];
   currentVersion: number;
   setCurrentVersion: Dispatch<SetStateAction<number>>;
@@ -189,7 +189,7 @@ export function useGeneration({
   const [localMessages, setLocalMessages] = useState<ChatMessage[]>([]);
   const [currentVersion, setCurrentVersion] = useState(0);
   const [generationPhase, setGenerationPhase] = useState<GenerationPhaseEvent | null>(null);
-  const [activeFile, setActiveFile] = useState<FileProgressEvent | null>(null);
+  const [activeFile, setActiveFile] = useState<ActiveFileState | null>(null);
   const [liveThinking, setLiveThinking] = useState<string | null>(null);
   const [liveStepTitle, setLiveStepTitle] = useState<string | null>(null);
   const [agentLiveMessage, setAgentLiveMessage] = useState('');
@@ -436,11 +436,13 @@ export function useGeneration({
             }
             if (event.data.content !== undefined) {
               trackProvisional(event.data.path);
+              // Streaming emissions carry the model's write position; rollback
+              // emissions (restoring prior content) omit it and reset to top.
               setActiveFile({
                 path: event.data.path,
                 content: event.data.content,
-                line: 1,
-                column: 0,
+                line: event.data.line ?? 1,
+                column: event.data.column ?? 0,
               });
               runtime.applyFilePreview(event.data);
             }
@@ -486,24 +488,6 @@ export function useGeneration({
             await onHistoryRefetchRef.current();
             return;
           }
-          if (event.type === 'file-start') {
-            setActiveFile({ path: event.data.path, content: '', line: 1, column: 0 });
-            return;
-          }
-          if (event.type === 'file-progress') {
-            trackProvisional(event.data.path);
-            setActiveFile(event.data);
-            runtime.applyFilePreview({
-              operation: 'update',
-              path: event.data.path,
-              content: event.data.content,
-            });
-            return;
-          }
-          if (event.type === 'file-complete') {
-            await runtime.applyImmediateWrite([event.data]);
-            return;
-          }
           if (event.type === 'failed') throw new Error(event.data.message);
 
           if (event.type !== 'ready') return;
@@ -518,12 +502,14 @@ export function useGeneration({
             event.data.files.find((file) => file.path.endsWith('.html')) ??
             event.data.files[0];
           if (primaryFile) {
-            setActiveFile({
+            setActiveFile((current) => ({
               path: primaryFile.path,
               content: primaryFile.content,
-              line: 1,
-              column: 0,
-            });
+              // Keep the streamed write position when the settled file is the
+              // one just streamed: the cursor marks where the model finished.
+              line: current?.path === primaryFile.path ? current.line : 1,
+              column: current?.path === primaryFile.path ? current.column : 0,
+            }));
           }
           setLocalMessages((previous) => [
             ...previous.filter((message) => message.id !== optimisticId),

@@ -8,10 +8,10 @@ describe('consumeGenerationStream', () => {
       new ReadableStream({
         start(controller) {
           controller.enqueue(encoder.encode('event: phase\ndata: {"phase":"plan'));
-          controller.enqueue(encoder.encode('ning","label":"Planning"}\n\nevent: file-start\n'));
+          controller.enqueue(encoder.encode('ning","label":"Planning"}\n\nevent: file-preview\n'));
           controller.enqueue(
             encoder.encode(
-              'data: {"path":"index.html"}\n\nevent: file-complete\ndata: {"path":"index.html","content":"<h1>Ready</h1>"}\n\n',
+              'data: {"operation":"create","path":"index.html","content":"<h1>Ready</h1>","line":1,"column":13}\n\n',
             ),
           );
           controller.close();
@@ -28,12 +28,14 @@ describe('consumeGenerationStream', () => {
       data: { phase: 'planning', label: 'Planning' },
     });
     expect(onEvent).toHaveBeenNthCalledWith(2, {
-      type: 'file-start',
-      data: { path: 'index.html' },
-    });
-    expect(onEvent).toHaveBeenNthCalledWith(3, {
-      type: 'file-complete',
-      data: { path: 'index.html', content: '<h1>Ready</h1>' },
+      type: 'file-preview',
+      data: {
+        operation: 'create',
+        path: 'index.html',
+        content: '<h1>Ready</h1>',
+        line: 1,
+        column: 13,
+      },
     });
   });
 
@@ -68,7 +70,7 @@ describe('consumeGenerationStream', () => {
   it('delivers provisional file content before the committed operation', async () => {
     const response = new Response(
       [
-        'event: file-preview\ndata: {"operation":"create","path":"src/App.tsx","content":"export default"}\n\n',
+        'event: file-preview\ndata: {"operation":"create","path":"src/App.tsx","content":"export default","line":1,"column":14}\n\n',
         'event: file-operation\ndata: {"operation":"create","path":"src/App.tsx","content":"export default function App() {}","versionNumber":2}\n\n',
       ].join(''),
       { status: 200 },
@@ -79,7 +81,13 @@ describe('consumeGenerationStream', () => {
 
     expect(onEvent).toHaveBeenNthCalledWith(1, {
       type: 'file-preview',
-      data: { operation: 'create', path: 'src/App.tsx', content: 'export default' },
+      data: {
+        operation: 'create',
+        path: 'src/App.tsx',
+        content: 'export default',
+        line: 1,
+        column: 14,
+      },
     });
     expect(onEvent).toHaveBeenNthCalledWith(2, expect.objectContaining({ type: 'file-operation' }));
   });
@@ -118,7 +126,7 @@ describe('consumeGenerationStream', () => {
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       start(controller) {
-        controller.enqueue(encoder.encode('event: file-complete\ndata: {not valid json\n\n'));
+        controller.enqueue(encoder.encode('event: file-preview\ndata: {not valid json\n\n'));
         controller.enqueue(
           encoder.encode('event: phase\ndata: {"phase":"generating","label":"Working"}\n\n'),
         );

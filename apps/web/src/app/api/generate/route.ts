@@ -16,6 +16,7 @@ import { getDb } from '@/lib/db';
 import { requireProjectRole } from '@/server/authz';
 import {
   applyAgentEdit,
+  cursorPositionAt,
   getAgentFileMutationPaths,
   getDesignDirectionActionError,
   getStreamingFileAction,
@@ -811,8 +812,12 @@ export async function POST(request: NextRequest) {
                   emitStep(provisionalStep);
                 }
                 let previewContent: string | null = null;
+                let previewCursor: { line: number; column: number } | null = null;
                 if (streamedFile.type === 'write_file') {
                   previewContent = streamedFile.content;
+                  // Cursor at the end of the streamed content: the model is
+                  // writing there right now.
+                  previewCursor = cursorPositionAt(previewContent, previewContent.length);
                 } else {
                   const existing = files.get(streamedFile.path);
                   if (existing !== undefined) {
@@ -822,15 +827,22 @@ export async function POST(request: NextRequest) {
                         streamedFile.search,
                         streamedFile.replace,
                       );
+                      previewCursor = cursorPositionAt(
+                        previewContent,
+                        existing.indexOf(streamedFile.search) + streamedFile.replace.length,
+                      );
                     } catch {
                       previewContent = null;
                     }
                   }
                 }
                 const signature =
-                  previewContent === null ? '' : `${streamedFile.path}:${previewContent.length}`;
+                  previewContent === null
+                    ? ''
+                    : `${streamedFile.path}:${previewContent.length}:${previewCursor?.line}:${previewCursor?.column}`;
                 if (
                   previewContent !== null &&
+                  previewCursor !== null &&
                   signature !== previewSignature &&
                   now - lastFilePreviewEmit >= 75
                 ) {
@@ -846,6 +858,7 @@ export async function POST(request: NextRequest) {
                     operation: files.has(streamedFile.path) ? 'update' : 'create',
                     path: streamedFile.path,
                     content: previewContent,
+                    ...previewCursor,
                   });
                 }
               }
