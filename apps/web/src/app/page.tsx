@@ -254,7 +254,9 @@ function WorkspacePreview() {
             </div>
             <div className="absolute left-[42%] top-[47%] hidden md:block">
               <MousePointer2 className="h-5 w-5 fill-black text-black" />
-              <span className="ml-3 rounded bg-black px-2 py-1 text-[9px] text-foreground">You</span>
+              <span className="ml-3 rounded bg-black px-2 py-1 text-[9px] text-foreground">
+                You
+              </span>
             </div>
           </div>
 
@@ -643,19 +645,31 @@ export default function MarketingPage() {
             <div className="grid grid-cols-2 gap-x-16 gap-y-4 text-sm">
               <div className="space-y-3">
                 <p className="text-white/48">Product</p>
-                <Link className="block text-foreground-secondary hover:text-foreground" href="#product">
+                <Link
+                  className="block text-foreground-secondary hover:text-foreground"
+                  href="#product"
+                >
                   Workspace
                 </Link>
-                <Link className="block text-foreground-secondary hover:text-foreground" href="#pricing">
+                <Link
+                  className="block text-foreground-secondary hover:text-foreground"
+                  href="#pricing"
+                >
                   Pricing
                 </Link>
               </div>
               <div className="space-y-3">
                 <p className="text-white/48">Access</p>
-                <Link className="block text-foreground-secondary hover:text-foreground" href="/auth/signin">
+                <Link
+                  className="block text-foreground-secondary hover:text-foreground"
+                  href="/auth/signin"
+                >
                   Sign in
                 </Link>
-                <Link className="block text-foreground-secondary hover:text-foreground" href="/auth/signin">
+                <Link
+                  className="block text-foreground-secondary hover:text-foreground"
+                  href="/auth/signin"
+                >
                   Get started
                 </Link>
               </div>

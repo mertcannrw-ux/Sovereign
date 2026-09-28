@@ -281,9 +281,7 @@ function ToolStepsDisplay({ toolCalls }: { toolCalls: unknown }) {
                     </span>
                   )}
                   {step.durationMs !== undefined && (
-                    <span className="text-[10px] text-foreground-muted">
-                      {step.durationMs}ms
-                    </span>
+                    <span className="text-[10px] text-foreground-muted">{step.durationMs}ms</span>
                   )}
                   <span className="h-1.5 w-1.5 rounded-full bg-success" />
                 </div>

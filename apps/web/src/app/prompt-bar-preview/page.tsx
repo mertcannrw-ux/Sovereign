@@ -619,7 +619,9 @@ export default function PromptBarPreviewPage() {
             <div className="rounded-2xl border border-border bg-background-subtle p-8">
               <div className="mb-6 flex items-center justify-between">
                 <div>
-                  <h2 className="text-lg font-semibold text-foreground">Concept 3: Expandable Drawer</h2>
+                  <h2 className="text-lg font-semibold text-foreground">
+                    Concept 3: Expandable Drawer
+                  </h2>
                   <p className="mt-1 text-xs text-foreground-muted">
                     Expandable controls drawer directly inside the prompt bar.
                   </p>
