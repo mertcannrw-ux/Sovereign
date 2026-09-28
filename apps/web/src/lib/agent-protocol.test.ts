@@ -4,6 +4,8 @@ import {
   cursorPositionAt,
   getAgentFileMutationPaths,
   getDesignDirectionActionError,
+  getSettledAnswer,
+  getStreamingAnswer,
   getStreamingFileAction,
   getStreamingThought,
   isSafeAgentPath,
@@ -129,6 +131,57 @@ describe('agent protocol', () => {
     ).toBe('Inspect the app\nThen build');
     expect(
       getStreamingThought('{"type":"write_file","path":"src/App.tsx","content":"secret source'),
+    ).toBeNull();
+  });
+
+  it('streams the answer text of a respond/finish action while it is written', () => {
+    expect(getStreamingAnswer('{"type":"respond","message":"The preview updates')).toBe(
+      'The preview updates',
+    );
+    expect(getStreamingAnswer('{"type":"respond","message":"Line one\\nLine two')).toBe(
+      'Line one\nLine two',
+    );
+    expect(getStreamingAnswer('{"type":"finish","summary":"Added the about page')).toBe(
+      'Added the about page',
+    );
+    // The field has not started yet, and the closing quote ends the snapshot.
+    expect(getStreamingAnswer('{"type":"respond",')).toBeNull();
+    expect(getStreamingAnswer('{"type":"respond","message":"Done."}')).toBe('Done.');
+  });
+
+  it('streams plain prose as the answer but never a tool payload or a build plan', () => {
+    expect(getStreamingAnswer('Yes — the preview updates after every completed file')).toBe(
+      'Yes — the preview updates after every completed file',
+    );
+    // Tool calls and thinking are not answers; the tolerated prose prefix in
+    // front of a tool action stops streaming the moment the action appears.
+    expect(
+      getStreamingAnswer('{"type":"write_file","path":"src/App.tsx","content":"export default'),
+    ).toBeNull();
+    expect(getStreamingAnswer('{"type":"think","content":"Inspect the entry point')).toBeNull();
+    expect(
+      getStreamingAnswer('I will build it now.\n{"type":"write_file","path":"index.html"'),
+    ).toBeNull();
+    expect(getStreamingAnswer('   ')).toBeNull();
+  });
+
+  it('settles an action into the text the run will persist', () => {
+    expect(getSettledAnswer(parseAgentAction('{"type":"respond","message":"All set."}'))).toBe(
+      'All set.',
+    );
+    expect(
+      getSettledAnswer(parseAgentAction('{"type":"finish","summary":"Added two pages"}')),
+    ).toBe('Added two pages');
+    // `respond` wins over `finish` inside one batch, exactly as the route does.
+    expect(
+      getSettledAnswer(
+        parseAgentAction(
+          '[{"type":"finish","summary":"summary"},{"type":"respond","message":"message"}]',
+        ),
+      ),
+    ).toBe('message');
+    expect(
+      getSettledAnswer(parseAgentAction('{"type":"delete_file","path":"old.css"}')),
     ).toBeNull();
   });
 

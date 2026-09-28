@@ -376,7 +376,9 @@ function ProjectWorkspace() {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
     lastMessageTailRef.current = tail;
-  }, [generation.localMessages, generation.isSending]);
+    // The streamed answer grows between messages, so it is an explicit trigger:
+    // while it is being written the transcript has to keep it in view.
+  }, [generation.localMessages, generation.isSending, generation.liveAnswer]);
 
   // Pull one older page into the transcript. Suppressed while the agent is
   // sending: a page arrival re-syncs localMessages from `history`, which
@@ -525,6 +527,7 @@ function ProjectWorkspace() {
             selectedModel={selectedModel}
             generationPhase={generation.generationPhase}
             liveThinking={generation.liveThinking}
+            liveAnswer={generation.liveAnswer}
             liveStepTitle={generation.liveStepTitle}
             agentLiveMessage={generation.agentLiveMessage}
             activeFile={generation.activeFile}

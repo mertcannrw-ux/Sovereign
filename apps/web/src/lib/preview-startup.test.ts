@@ -11,6 +11,7 @@ import {
   mergePreviewFiles,
   overlayPreviewFiles,
   PREVIEW_JS_DISCLOSURE,
+  PreviewBootCancelledError,
   replacePreviewAssetUrls,
   scheduleViteReadyFallback,
   shouldBootVite,
@@ -266,6 +267,73 @@ describe('startPreviewProcess', () => {
     expect(result.engine).toBe('static');
     expect(result.fallbackError).toMatch(/Vite exited with code 1/);
     expect(spawns.at(-1)).toEqual({ command: 'node', args: ['.sovereign-preview.mjs'] });
+  });
+
+  it('never spawns Vite when the owner went away during npm install', async () => {
+    // The page unmounts while `npm install` runs. Spawning Vite anyway leaves a
+    // server nobody owns on 5173, which the *next* project's preview adopts as
+    // its own URL (the stale-preview bug this guards).
+    let cancelled = false;
+    const installExit = Promise.withResolvers<number>();
+    const spawns: Array<{ command: string; args: string[] }> = [];
+    const host: PreviewProcessHost = {
+      async spawn(command, args) {
+        spawns.push({ command, args });
+        if (command === 'npm') {
+          return { exit: installExit.promise, output: emptyOutput(), kill: vi.fn() };
+        }
+        return mockProcess(new Promise(() => {}));
+      },
+    };
+
+    const boot = startPreviewProcess(host, {
+      mode: 'vite',
+      onLog: () => {},
+      isCancelled: () => cancelled,
+    });
+    expect(spawns).toEqual([{ command: 'npm', args: ['install', '--ignore-scripts'] }]);
+
+    cancelled = true;
+    installExit.resolve(0);
+
+    await expect(boot).rejects.toThrow(PreviewBootCancelledError);
+    expect(spawns).toEqual([{ command: 'npm', args: ['install', '--ignore-scripts'] }]);
+  });
+
+  it('kills a server that starts as its owner goes away instead of falling back', async () => {
+    let cancelled = false;
+    const { host, spawns } = mockHost();
+    const hostWithLateCancel: PreviewProcessHost = {
+      spawn: async (command, args) => {
+        const process = await host.spawn(command, args);
+        cancelled = true;
+        return process;
+      },
+    };
+
+    await expect(
+      startPreviewProcess(hostWithLateCancel, {
+        mode: 'static',
+        onLog: () => {},
+        isCancelled: () => cancelled,
+      }),
+    ).rejects.toThrow(PreviewBootCancelledError);
+
+    // No second server: the abandoned static process is killed, and the Vite
+    // fallback path must not spawn one either.
+    expect(spawns).toEqual([{ command: 'node', args: ['.sovereign-preview.mjs'] }]);
+  });
+
+  it('does not spawn anything when the boot is already cancelled', async () => {
+    const { host, spawns } = mockHost();
+    await expect(
+      startPreviewProcess(host, { mode: 'static', onLog: () => {}, isCancelled: () => true }),
+    ).rejects.toThrow(PreviewBootCancelledError);
+    await expect(
+      startPreviewProcess(host, { mode: 'vite', onLog: () => {}, isCancelled: () => true }),
+    ).rejects.toThrow(PreviewBootCancelledError);
+
+    expect(spawns).toEqual([]);
   });
 
   it('reuses the live static server when npm install fails instead of spawning a second one', async () => {

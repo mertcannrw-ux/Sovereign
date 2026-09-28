@@ -84,6 +84,33 @@ export interface PreviewProcess {
   kill: () => void;
 }
 
+/**
+ * Thrown when a preview boot was abandoned because its owner went away (page
+ * unmount, project switch, retry). Callers must treat it as terminal silence —
+ * never as a preview failure — and must leave the shared container alone: the
+ * container is reused by the next project's preview, so a dead boot that keeps
+ * going would spawn a server nobody owns (which the next preview then adopts as
+ * its own) and tear down a sandbox another page is using.
+ */
+export class PreviewBootCancelledError extends Error {
+  constructor() {
+    super('Preview boot cancelled');
+    this.name = 'PreviewBootCancelledError';
+  }
+}
+
+function throwIfCancelled(isCancelled?: () => boolean): void {
+  if (isCancelled?.()) throw new PreviewBootCancelledError();
+}
+
+function killQuietly(process: PreviewProcess): void {
+  try {
+    process.kill();
+  } catch {
+    // Process may already have exited.
+  }
+}
+
 export interface PreviewProcessHost {
   spawn: (command: string, args: string[]) => Promise<PreviewProcess>;
 }
@@ -370,8 +397,17 @@ export interface StartPreviewProcessResult {
 async function startStaticPreview(
   host: PreviewProcessHost,
   onLog: (line: string) => void,
+  isCancelled?: () => boolean,
 ): Promise<PreviewProcess> {
+  throwIfCancelled(isCancelled);
   const server = await host.spawn(STATIC_PREVIEW_COMMAND.command, [...STATIC_PREVIEW_COMMAND.args]);
+  // The owner can go away between the check above and the spawn resolving. A
+  // server outliving its page would keep serving this project's files to the
+  // next project's preview, so kill it instead of adopting it.
+  if (isCancelled?.()) {
+    killQuietly(server);
+    throw new PreviewBootCancelledError();
+  }
   attachProcessOutput(server, onLog);
   return server;
 }
@@ -380,9 +416,15 @@ async function startVitePreview(
   host: PreviewProcessHost,
   onLog: (line: string) => void,
   installTimeoutMs: number,
+  isCancelled?: () => boolean,
 ): Promise<PreviewProcess> {
+  throwIfCancelled(isCancelled);
   onLog('Installing preview dependencies (npm install --ignore-scripts)…');
   const install = await host.spawn(VITE_INSTALL_COMMAND.command, [...VITE_INSTALL_COMMAND.args]);
+  if (isCancelled?.()) {
+    killQuietly(install);
+    throw new PreviewBootCancelledError();
+  }
   attachProcessOutput(install, onLog);
   const installCode = await withTimeout(
     install.exit,
@@ -396,12 +438,20 @@ async function startVitePreview(
       }
     },
   );
+  // npm install takes seconds; navigating away in that window is the common
+  // case. Spawning Vite here anyway leaves an orphan listening on 5173 that the
+  // *next* project's preview adopts as its own URL — the stale-preview bug.
+  throwIfCancelled(isCancelled);
   if (installCode !== 0) {
     throw new Error(`npm install --ignore-scripts failed (exit ${installCode})`);
   }
 
   onLog('Starting Vite (`npx vite --host`)…');
   const vite = await host.spawn(VITE_DEV_COMMAND.command, [...VITE_DEV_COMMAND.args]);
+  if (isCancelled?.()) {
+    killQuietly(vite);
+    throw new PreviewBootCancelledError();
+  }
   attachProcessOutput(vite, onLog);
   await rejectIfAlreadyExited(vite, 'Vite');
   return vite;
@@ -415,10 +465,15 @@ export async function startPreviewProcess(
     installTimeoutMs?: number;
     /** Live static server already serving — reuse instead of spawning a second one. */
     existingStatic?: PreviewProcess | null;
+    /** True once the caller no longer wants this preview (its page went away). */
+    isCancelled?: () => boolean;
   },
 ): Promise<StartPreviewProcessResult> {
   if (options.mode !== 'vite') {
-    return { process: await startStaticPreview(host, options.onLog), engine: 'static' };
+    return {
+      process: await startStaticPreview(host, options.onLog, options.isCancelled),
+      engine: 'static',
+    };
   }
 
   try {
@@ -426,9 +481,13 @@ export async function startPreviewProcess(
       host,
       options.onLog,
       options.installTimeoutMs ?? NPM_INSTALL_TIMEOUT_MS,
+      options.isCancelled,
     );
     return { process, engine: 'vite' };
   } catch (error) {
+    // A cancelled boot is not a Vite failure: falling back would spawn the very
+    // static server the caller no longer wants.
+    if (error instanceof PreviewBootCancelledError) throw error;
     const fallbackError = error instanceof Error ? error.message : 'Vite boot failed';
     if (options.existingStatic) {
       options.onLog(`Vite preview failed: ${fallbackError}. Keeping the static file server.`);
@@ -440,7 +499,7 @@ export async function startPreviewProcess(
       };
     }
     options.onLog(`Vite preview failed: ${fallbackError}. Falling back to the static file server.`);
-    const process = await startStaticPreview(host, options.onLog);
+    const process = await startStaticPreview(host, options.onLog, options.isCancelled);
     return { process, engine: 'static', fallbackError };
   }
 }

@@ -136,7 +136,13 @@ describe('useGeneration run outcomes', () => {
     await act(async () => {
       await stream.emit({
         type: 'file-preview',
-        data: { operation: 'update', path: 'index.html', content: PARTIAL_HTML, line: 12, column: 7 },
+        data: {
+          operation: 'update',
+          path: 'index.html',
+          content: PARTIAL_HTML,
+          line: 12,
+          column: 7,
+        },
       });
     });
     // The AI cursor reads this state: it must reflect the streamed position.
@@ -352,5 +358,43 @@ describe('useGeneration run outcomes', () => {
     ]);
     expect(preview.flushPendingWrites).toHaveBeenCalledTimes(1);
     expect(result.current.currentVersion).toBe(2);
+  });
+
+  it('tracks the streamed answer and drops it once the run settles', async () => {
+    const preview = createPreview();
+    const options = createOptions(preview);
+    const stream = driveStream();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 200 })));
+
+    const { result } = renderHook(() => useGeneration(options));
+
+    let sendPromise: Promise<void> | undefined;
+    await act(async () => {
+      sendPromise = result.current.send('does the preview update?');
+    });
+    expect(result.current.liveAnswer).toBe('');
+
+    await act(async () => {
+      await stream.emit({ type: 'answer', data: { content: 'Yes — after every' } });
+    });
+    expect(result.current.liveAnswer).toBe('Yes — after every');
+
+    await act(async () => {
+      await stream.emit({ type: 'answer', data: { content: 'Yes — after every write.' } });
+    });
+    expect(result.current.liveAnswer).toBe('Yes — after every write.');
+
+    // A tool turn settles with no answer at all: the prose prefix must not be
+    // left on screen pretending to be the reply.
+    await act(async () => {
+      await stream.emit({ type: 'answer', data: { content: '' } });
+    });
+    expect(result.current.liveAnswer).toBe('');
+
+    await act(async () => {
+      stream.fail(new Error('run over'));
+      await sendPromise;
+    });
+    expect(result.current.liveAnswer).toBe('');
   });
 });

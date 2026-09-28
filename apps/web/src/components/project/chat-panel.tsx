@@ -307,6 +307,7 @@ export interface ChatPanelProps {
   selectedModel: string;
   generationPhase: GenerationPhaseEvent | null;
   liveThinking: string | null;
+  liveAnswer: string;
   liveStepTitle: string | null;
   agentLiveMessage: string;
   activeFile: ActiveFileState | null;
@@ -341,6 +342,7 @@ export function ChatPanel({
   selectedModel,
   generationPhase,
   liveThinking,
+  liveAnswer,
   liveStepTitle,
   agentLiveMessage,
   activeFile,
@@ -676,6 +678,13 @@ export function ChatPanel({
                     </div>
                   )}
                 </div>
+                {liveAnswer && (
+                  // The answer streams in here in the same rendering the settled
+                  // message gets; `ready` replaces this with the transcript entry.
+                  <div className="animate-fade-in mt-2 rounded-lg border border-border/40 bg-background-muted/20 px-3 py-2.5">
+                    <MessageContent content={liveAnswer} />
+                  </div>
+                )}
                 {activeFile && (
                   <div className="mt-2 flex items-center gap-2 rounded-md border border-border bg-background-muted px-2.5 py-2 font-mono text-[11px]">
                     <FileCode2 className="h-3.5 w-3.5 text-primary" />

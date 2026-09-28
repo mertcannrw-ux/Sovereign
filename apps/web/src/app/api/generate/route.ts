@@ -19,6 +19,8 @@ import {
   cursorPositionAt,
   getAgentFileMutationPaths,
   getDesignDirectionActionError,
+  getSettledAnswer,
+  getStreamingAnswer,
   getStreamingFileAction,
   getStreamingThought,
   parseAgentAction,
@@ -577,6 +579,17 @@ export async function POST(request: NextRequest) {
             else runSteps[index] = step;
             send('step', step);
           };
+          // Answer text already sent to the live transcript bubble. `answer`
+          // events carry a full snapshot rather than a delta, so the client only
+          // ever replaces the bubble's text. It outlives one iteration: a turn
+          // that streamed an answer and then continued (truncated completion,
+          // unparseable action) must still be able to clear or replace it.
+          let liveAnswerSnapshot = '';
+          const updateLiveAnswer = (text: string) => {
+            if (text === liveAnswerSnapshot) return;
+            liveAnswerSnapshot = text;
+            send('answer', { content: text });
+          };
           // F-10: batch file mutations within one agent turn into a single
           // transaction + single version snapshot to avoid DB amplification.
           let pendingBatch: { change: VersionDiffEntry; step: AgentStep }[] = [];
@@ -726,6 +739,7 @@ export async function POST(request: NextRequest) {
             let streamedToolCalls: ToolCall[] = [];
             let truncatedThisTurn = false;
             let lastThinkingEmit = 0;
+            let lastAnswerEmit = 0;
             let lastFilePreviewEmit = 0;
             let previewSignature = '';
             const provisionalOriginals = new Map<string, string | null>();
@@ -789,6 +803,20 @@ export async function POST(request: NextRequest) {
                   lastThinkingEmit = now;
                   emitStep({ ...thinkingStep, detail: streamedThought });
                   send('thinking', { content: streamedThought });
+                }
+              }
+              // The transcript answer — a respond/finish field, or plain prose —
+              // reaches the live bubble while the model writes it, so the chat
+              // shows the same thing the collapsed reasoning panel is doing.
+              // Deliberately not cleared when this returns null: the settle below
+              // owns clearing text that turned out to belong to a tool turn, and
+              // a mid-turn empty snapshot would blank the bubble for a frame.
+              const streamedAnswer = getStreamingAnswer(responseContent);
+              if (streamedAnswer !== null && streamedAnswer !== liveAnswerSnapshot) {
+                const now = Date.now();
+                if (now - lastAnswerEmit >= 75) {
+                  lastAnswerEmit = now;
+                  updateLiveAnswer(streamedAnswer);
                 }
               }
               const streamedFile =
@@ -961,6 +989,10 @@ export async function POST(request: NextRequest) {
             } catch (error) {
               const completedAt = new Date();
               const message = error instanceof Error ? error.message : 'Invalid action format';
+              // Not an answer: the turn is retried, and whatever the model wrote
+              // first is either superseded by the retry or, after three strikes,
+              // promoted by the fallback below.
+              updateLiveAnswer('');
               for (const [path, original] of provisionalOriginals) {
                 send(
                   'file-preview',
@@ -1017,6 +1049,7 @@ export async function POST(request: NextRequest) {
                 if (responseContent.trim().length > 0) {
                   messages.push({ role: 'assistant', content: responseContent });
                 }
+                updateLiveAnswer(fallbackText);
                 emitStep({
                   ...thinkingStep,
                   title: 'Completing with a plain answer',
@@ -1049,6 +1082,12 @@ export async function POST(request: NextRequest) {
                 : { role: 'assistant', content: responseContent },
             );
             const startedAt = iterationStartedAt;
+            // The turn settled, so the streamed bubble is replaced by the exact
+            // text this run will persist — or cleared when the turn was a tool
+            // call, matching the prompt's "prose before tool actions is not
+            // displayed". Placed before the `think` branch so a thinking turn
+            // cannot leave its prose prefix on screen.
+            updateLiveAnswer(getSettledAnswer(action) ?? '');
 
             if (action.type === 'think') {
               const completedAt = new Date();

@@ -102,6 +102,13 @@ export type GenerationEvent =
   | { type: 'file-operation'; data: FileOperationEvent }
   | { type: 'file-preview'; data: FilePreviewEvent }
   | { type: 'thinking'; data: { content: string } }
+  /**
+   * Full snapshot of the user-facing answer text streamed so far (never a
+   * delta): the transcript bubble replaces its text on every event and the
+   * terminal `ready` message is authoritative. `content: ''` clears a bubble
+   * whose turn turned out to be a tool call rather than an answer.
+   */
+  | { type: 'answer'; data: { content: string } }
   | { type: 'questions'; data: GenerationQuestionsEvent }
   | { type: 'image-job'; data: ImageJobEventData }
   | { type: 'design-directions'; data: DesignDirectionsEventData }
@@ -129,6 +136,7 @@ function parseEventBlock(block: string): GenerationEvent | null {
     event !== 'file-operation' &&
     event !== 'file-preview' &&
     event !== 'thinking' &&
+    event !== 'answer' &&
     event !== 'questions' &&
     event !== 'image-job' &&
     event !== 'design-directions' &&

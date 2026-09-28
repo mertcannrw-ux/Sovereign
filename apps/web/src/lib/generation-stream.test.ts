@@ -67,6 +67,40 @@ describe('consumeGenerationStream', () => {
     });
   });
 
+  it('streams answer snapshots until the final message clears them', async () => {
+    const response = new Response(
+      [
+        'event: answer\ndata: {"content":"The preview updates"}\n\n',
+        'event: answer\ndata: {"content":"The preview updates after every write."}\n\n',
+        'event: answer\ndata: {"content":""}\n\n',
+        'event: ready\ndata: {"userMessage":{"id":"u1","role":"user","content":"hi","timestamp":"2026-01-01T00:00:00.000Z","model":null},"assistantMessage":{"id":"a1","role":"assistant","content":"The preview updates after every write.","timestamp":"2026-01-01T00:00:00.000Z","model":null,"tokenUsage":{"promptTokens":1,"completionTokens":1,"totalTokens":2}},"files":[],"versionNumber":1}\n\n',
+      ].join(''),
+      { status: 200 },
+    );
+    const onEvent = vi.fn();
+
+    await consumeGenerationStream(response, onEvent);
+
+    expect(onEvent).toHaveBeenNthCalledWith(1, {
+      type: 'answer',
+      data: { content: 'The preview updates' },
+    });
+    expect(onEvent).toHaveBeenNthCalledWith(2, {
+      type: 'answer',
+      data: { content: 'The preview updates after every write.' },
+    });
+    // An empty snapshot is meaningful: the turn settled as a tool call, not an
+    // answer, so the live bubble is cleared. It must survive the whitelist too.
+    expect(onEvent).toHaveBeenNthCalledWith(3, { type: 'answer', data: { content: '' } });
+    expect(onEvent).toHaveBeenNthCalledWith(
+      4,
+      expect.objectContaining({
+        type: 'ready',
+        data: expect.objectContaining({ versionNumber: 1 }),
+      }),
+    );
+  });
+
   it('delivers provisional file content before the committed operation', async () => {
     const response = new Response(
       [

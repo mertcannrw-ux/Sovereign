@@ -87,6 +87,12 @@ export interface UseGenerationResult {
   isSending: boolean;
   generationPhase: GenerationPhaseEvent | null;
   liveThinking: string | null;
+  /**
+   * User-facing answer text streamed so far by the running agent (`answer`
+   * events). Empty when no answer is streaming; the terminal `ready` message
+   * replaces it in the transcript.
+   */
+  liveAnswer: string;
   liveStepTitle: string | null;
   agentLiveMessage: string;
   activeFile: ActiveFileState | null;
@@ -191,6 +197,7 @@ export function useGeneration({
   const [generationPhase, setGenerationPhase] = useState<GenerationPhaseEvent | null>(null);
   const [activeFile, setActiveFile] = useState<ActiveFileState | null>(null);
   const [liveThinking, setLiveThinking] = useState<string | null>(null);
+  const [liveAnswer, setLiveAnswer] = useState('');
   const [liveStepTitle, setLiveStepTitle] = useState<string | null>(null);
   const [agentLiveMessage, setAgentLiveMessage] = useState('');
   const [clarifyingQuestions, setClarifyingQuestions] = useState<ClarifyingQuestion[]>([]);
@@ -241,6 +248,7 @@ export function useGeneration({
     setGenerationPhase(null);
     setActiveFile(null);
     setLiveThinking(null);
+    setLiveAnswer('');
     setLiveStepTitle(null);
     setAgentLiveMessage('');
     setLocalMessages([]);
@@ -265,6 +273,7 @@ export function useGeneration({
     setIsSending(false);
     setGenerationPhase(null);
     setLiveThinking(null);
+    setLiveAnswer('');
     setLiveStepTitle(null);
     setAgentLiveMessage('Agent stopped');
   }, []);
@@ -372,6 +381,7 @@ export function useGeneration({
       setGenerationPhase({ phase: 'planning', label: 'Planning your app' });
       setActiveFile(null);
       setLiveThinking(null);
+      setLiveAnswer('');
       setLiveStepTitle(null);
       setClarifyingQuestions([]);
       setActiveDesignDirections(null);
@@ -456,12 +466,17 @@ export function useGeneration({
             setLiveThinking(event.data.content);
             return;
           }
+          if (event.type === 'answer') {
+            setLiveAnswer(event.data.content);
+            return;
+          }
           if (event.type === 'questions') {
             // Server terminal event: the buffered previews are not fragments to
             // be thrown away, and a stale failure notice must not come back.
             serverSettled = true;
             discardProvisionalWrites();
             runFailureRef.current = null;
+            setLiveAnswer('');
             setClarifyingQuestions(event.data.questions);
             setClarificationAnswers([]);
             setClarificationStep(0);
@@ -530,6 +545,10 @@ export function useGeneration({
               ...(event.data.thinking ? { thinking: event.data.thinking } : {}),
             },
           ]);
+          // The persisted message is authoritative and is swapped in for the
+          // streamed bubble in this same batch — clearing it earlier would blink
+          // the answer away while `applyFiles` still writes to the sandbox.
+          setLiveAnswer('');
           setCurrentVersion(event.data.versionNumber);
           await Promise.all([
             onVersionsRefetchRef.current(),
@@ -582,6 +601,7 @@ export function useGeneration({
           setIsSending(false);
           setGenerationPhase(null);
           setLiveThinking(null);
+          setLiveAnswer('');
           setLiveStepTitle(null);
           if (!abortController.signal.aborted) {
             setAgentLiveMessage('Agent finished');
@@ -642,6 +662,7 @@ export function useGeneration({
     isSending,
     generationPhase,
     liveThinking,
+    liveAnswer,
     liveStepTitle,
     agentLiveMessage,
     activeFile,

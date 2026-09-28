@@ -186,6 +186,25 @@ export function getAgentFileMutationPaths(action: AgentAction): Set<string> {
   );
 }
 
+/**
+ * The user-facing text an action settles into, or null when the action is not a
+ * transcript answer (`read`/`write`/`edit`/`delete`/`generate_images`/`think`/
+ * `ask_questions`/`propose_design_directions`). Mirrors the generate route's own
+ * settle order — `respond` wins over `finish` inside a batch — so a live
+ * streaming bubble can be replaced by exactly the text the run will persist.
+ */
+export function getSettledAnswer(action: AgentAction): string | null {
+  const actions = action.type === 'batch' ? action.actions : [action];
+  const respond = actions.find(
+    (item): item is Extract<AgentAction, { type: 'respond' }> => item.type === 'respond',
+  );
+  if (respond) return respond.message;
+  const finish = actions.find(
+    (item): item is Extract<AgentAction, { type: 'finish' }> => item.type === 'finish',
+  );
+  return finish ? finish.summary : null;
+}
+
 export function stripEmbeddedJsonToolActions(message: string): string {
   return message
     .replace(
@@ -468,7 +487,10 @@ function getStreamingJsonString(
   return { value, complete: false };
 }
 
-function lastActionIndex(raw: string, type: 'write_file' | 'edit_file'): number {
+function lastActionIndex(
+  raw: string,
+  type: 'write_file' | 'edit_file' | 'respond' | 'finish',
+): number {
   const matcher = new RegExp(`"type"\\s*:\\s*"${type}"`, 'g');
   let index = -1;
   for (const match of raw.matchAll(matcher)) index = match.index;
@@ -541,6 +563,43 @@ export function getStreamingThought(raw: string): string | null {
   return decoded;
 }
 
+/**
+ * Marks a completion that has committed to a JSON action (`{"type": …`). Once
+ * one appears the turn is a tool turn, not prose, so the tolerated prose prefix
+ * is not an answer (`AGENT_SYSTEM_PROMPT`: prose before tool actions is not
+ * displayed) and streaming stops proposing one.
+ */
+const JSON_ACTION_START = /\{\s*"type"\s*:/;
+
+/**
+ * User-facing answer text visible so far in a partially streamed completion.
+ *
+ * The transcript answer is produced by one of two shapes: a `respond`/`finish`
+ * action — whose `message`/`summary` field streams while the model writes it —
+ * or plain prose, which `parseAgentAction` turns into a `respond` when the turn
+ * settles. Returns null while no answer is recognisable (tool payloads, an
+ * unopened string field, an empty completion), so callers never emit a cleared
+ * snapshot mid-turn; the settled text — `getSettledAnswer` — is authoritative
+ * and always identical to the message the `ready` event persists.
+ */
+export function getStreamingAnswer(raw: string): string | null {
+  const respondIndex = lastActionIndex(raw, 'respond');
+  const finishIndex = lastActionIndex(raw, 'finish');
+  if (respondIndex >= 0 || finishIndex >= 0) {
+    // Same convention as `getStreamingFileAction`: the latest action wins.
+    const fromRespond = respondIndex >= finishIndex;
+    const field = getStreamingJsonString(
+      raw,
+      fromRespond ? 'message' : 'summary',
+      fromRespond ? respondIndex : finishIndex,
+    );
+    return field ? field.value : null;
+  }
+  const prose = raw.trim();
+  if (prose === '' || prose.startsWith('{') || prose.startsWith('[')) return null;
+  return JSON_ACTION_START.test(prose) ? null : prose;
+}
+
 export function applyAgentEdit(content: string, search: string, replace: string): string {
   const occurrences = content.split(search).length - 1;
   if (occurrences !== 1)
@@ -556,10 +615,7 @@ export function applyAgentEdit(content: string, search: string, replace: string)
  * is actually writing. O(n) over the prefix, no line-array allocation, because
  * the generate route calls it on every throttled preview emit.
  */
-export function cursorPositionAt(
-  content: string,
-  index: number,
-): { line: number; column: number } {
+export function cursorPositionAt(content: string, index: number): { line: number; column: number } {
   const end = Math.max(0, Math.min(index, content.length));
   let line = 1;
   let lineStart = 0;
