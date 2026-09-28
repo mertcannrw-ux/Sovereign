@@ -84,3 +84,53 @@ describe('PromptBar send handling', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Your attachments were kept');
   });
 });
+
+describe('PromptBar model panel dismissal', () => {
+  const PANEL_NAME = 'Model and reasoning settings';
+
+  function openPanel() {
+    fireEvent.click(screen.getByRole('button', { name: /gpt-test/ }));
+    return screen.getByRole('dialog', { name: PANEL_NAME });
+  }
+
+  it('dismisses the panel when the press lands outside of it without stealing focus', () => {
+    render(<PromptBar {...createProps()} />);
+    openPanel();
+    const textarea = screen.getByLabelText('Message the agent');
+    textarea.focus();
+
+    fireEvent.pointerDown(textarea);
+
+    expect(screen.queryByRole('dialog', { name: PANEL_NAME })).not.toBeInTheDocument();
+    expect(textarea).toHaveFocus();
+  });
+
+  it('keeps the panel open when the press lands inside of it', () => {
+    render(<PromptBar {...createProps()} />);
+    openPanel();
+
+    fireEvent.pointerDown(screen.getByText('Effort'));
+
+    expect(screen.getByRole('dialog', { name: PANEL_NAME })).toBeInTheDocument();
+  });
+
+  it('still lets the trigger toggle the panel shut', () => {
+    render(<PromptBar {...createProps()} />);
+    openPanel();
+    const trigger = screen.getByRole('button', { name: /gpt-test/ });
+
+    fireEvent.pointerDown(trigger);
+    fireEvent.click(trigger);
+
+    expect(screen.queryByRole('dialog', { name: PANEL_NAME })).not.toBeInTheDocument();
+  });
+
+  it('dismisses the panel when focus moves out of the window, such as into the preview iframe', () => {
+    render(<PromptBar {...createProps()} />);
+    openPanel();
+
+    fireEvent.blur(window);
+
+    expect(screen.queryByRole('dialog', { name: PANEL_NAME })).not.toBeInTheDocument();
+  });
+});

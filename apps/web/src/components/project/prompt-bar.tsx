@@ -222,12 +222,17 @@ export function PromptBar({
     [selectedProvider],
   );
 
-  const closePopover = useCallback(() => {
+  /** Hides the panel and resets it to the root sub-menu without moving focus. */
+  const dismissPopover = useCallback(() => {
     setShowModelPopover(false);
     setActiveSubMenu('root');
     setModelSearchQuery('');
-    triggerRef.current?.focus();
   }, []);
+
+  const closePopover = useCallback(() => {
+    dismissPopover();
+    triggerRef.current?.focus();
+  }, [dismissPopover]);
 
   useEffect(() => {
     if (!showModelPopover) return;
@@ -265,6 +270,27 @@ export function PromptBar({
     container.addEventListener('keydown', onKeyDown);
     return () => container.removeEventListener('keydown', onKeyDown);
   }, [showModelPopover, activeSubMenu, closePopover]);
+
+  useEffect(() => {
+    if (!showModelPopover) return;
+
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (popoverRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
+      dismissPopover();
+    };
+    // The preview runs in an iframe, so presses inside it never reach this
+    // document — the blur it causes on this window is the only signal we get.
+    const onWindowBlur = () => dismissPopover();
+
+    document.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('blur', onWindowBlur);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('blur', onWindowBlur);
+    };
+  }, [showModelPopover, dismissPopover]);
 
   useEffect(() => {
     if (activeSubMenu === 'models') {
