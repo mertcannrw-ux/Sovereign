@@ -161,7 +161,10 @@ DropdownMenuSeparator.displayName = DropdownMenuPrimitive.Separator.displayName;
 
 const DropdownMenuShortcut = ({ className, ...props }: HTMLAttributes<HTMLSpanElement>) => {
   return (
-    <span className={cn('ml-auto text-xs tracking-widest text-foreground-muted', className)} {...props} />
+    <span
+      className={cn('ml-auto text-xs tracking-widest text-foreground-muted', className)}
+      {...props}
+    />
   );
 };
 DropdownMenuShortcut.displayName = 'DropdownMenuShortcut';

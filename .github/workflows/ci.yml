@@ -98,7 +98,9 @@ jobs:
       - run: npx prisma generate
       # No prisma/migrations directory yet — push the schema straight to the
       # throwaway CI database. Switch to `migrate deploy` once migrations exist.
-      - run: npx prisma db push --skip-generate
+      # (Prisma 7 dropped `db push --skip-generate`; `npx prisma generate` above
+      # already produced the client.)
+      - run: npx prisma db push
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
@@ -125,7 +127,12 @@ jobs:
       - run: npm ci --ignore-scripts
 
       - name: Audit dependencies
-        run: npm audit --omit=dev --audit-level=high
+        # `prisma` is an optional peer of `@prisma/client`, so npm marks the CLI
+        # and its dev-server subtree (mysql2, @prisma/dev, …) as `devOptional`
+        # and `--omit=dev` alone still audits tooling that never ships. Those
+        # carry advisories with no stable fix (vulnerable range runs to
+        # 8.1.0-dev.6), so scope the audit to packages the app actually ships.
+        run: npm audit --omit=dev --omit=optional --audit-level=high
 
       - name: Secret scan
         uses: trufflesecurity/trufflehog@main

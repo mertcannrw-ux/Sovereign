@@ -510,7 +510,10 @@ export default function MarketingPage() {
           </motion.div>
         </section>
 
-        <section id="workflow" className="border-y border-white/[0.08] bg-background-subtle py-24 sm:py-36">
+        <section
+          id="workflow"
+          className="border-y border-white/[0.08] bg-background-subtle py-24 sm:py-36"
+        >
           <div className="mx-auto max-w-[1320px] px-5 sm:px-8">
             <SectionHeading
               eyebrow="How it works"
