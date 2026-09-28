@@ -89,7 +89,7 @@ function Logo() {
       <span className="grid h-9 w-9 place-items-center rounded-full border border-white/15 bg-white text-foreground-inverse">
         <Command className="h-[18px] w-[18px]" strokeWidth={2.4} />
       </span>
-      <span className="text-sm font-semibold uppercase tracking-[0.22em] text-white">
+      <span className="text-sm font-semibold uppercase tracking-[0.22em] text-foreground">
         Sovereign
       </span>
     </span>
@@ -117,7 +117,7 @@ function SectionHeading({
         <span className="h-px w-6 bg-primary" />
         {eyebrow}
       </p>
-      <h2 className="text-balance text-4xl font-semibold leading-[1.04] tracking-[-0.045em] text-white sm:text-5xl lg:text-6xl">
+      <h2 className="text-balance text-4xl font-semibold leading-[1.04] tracking-[-0.045em] text-foreground sm:text-5xl lg:text-6xl">
         {title}
       </h2>
       <p className="mt-6 max-w-xl text-base leading-7 text-white/55 sm:text-lg">{copy}</p>
@@ -158,7 +158,7 @@ function WorkspacePreview() {
         <div className="grid min-h-[430px] grid-cols-1 md:grid-cols-[270px_1fr] lg:grid-cols-[280px_1fr_240px]">
           <div className="hidden border-r border-white/[0.08] bg-background-subtle p-4 md:flex md:flex-col">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-white/70">Build with AI</span>
+              <span className="text-xs font-medium text-foreground/55">Build with AI</span>
               <Sparkles className="h-3.5 w-3.5 text-primary" />
             </div>
             <div className="mt-5 rounded-xl border border-white/10 bg-white/[0.035] p-3 text-xs leading-5 text-white/60">
@@ -242,7 +242,7 @@ function WorkspacePreview() {
                     ))}
                   </div>
                 </div>
-                <div className="col-span-2 bg-[#24251f] p-4 text-white sm:col-span-1 sm:p-5">
+                <div className="col-span-2 bg-[#24251f] p-4 text-foreground sm:col-span-1 sm:p-5">
                   <p className="text-[8px] uppercase tracking-wider text-white/35">Active sites</p>
                   <div className="mt-3 flex items-center justify-between">
                     <p className="text-2xl font-semibold">142</p>
@@ -254,12 +254,12 @@ function WorkspacePreview() {
             </div>
             <div className="absolute left-[42%] top-[47%] hidden md:block">
               <MousePointer2 className="h-5 w-5 fill-black text-black" />
-              <span className="ml-3 rounded bg-black px-2 py-1 text-[9px] text-white">You</span>
+              <span className="ml-3 rounded bg-black px-2 py-1 text-[9px] text-foreground">You</span>
             </div>
           </div>
 
           <div className="hidden border-l border-white/[0.08] bg-background-subtle p-4 lg:block">
-            <div className="flex items-center justify-between text-xs text-white/70">
+            <div className="flex items-center justify-between text-xs text-foreground/55">
               <span>Properties</span>
               <Layers3 className="h-3.5 w-3.5" />
             </div>
@@ -290,7 +290,7 @@ function WorkspacePreview() {
 
 export default function MarketingPage() {
   return (
-    <div className="min-h-screen overflow-hidden bg-background text-white selection:bg-primary selection:text-primary-foreground">
+    <div className="min-h-screen overflow-hidden bg-background text-foreground selection:bg-primary selection:text-primary-foreground">
       <header className="fixed inset-x-0 top-0 z-50 border-b border-white/[0.07] bg-background/80 backdrop-blur-xl">
         <div className="mx-auto flex h-[72px] max-w-[1320px] items-center justify-between px-5 sm:px-8">
           <Link href="/" aria-label="Sovereign home">
@@ -301,7 +301,7 @@ export default function MarketingPage() {
               <Link
                 key={item}
                 href={`#${item.toLowerCase()}`}
-                className="text-sm text-white/55 transition-colors hover:text-white"
+                className="text-sm text-white/55 transition-colors hover:text-foreground"
               >
                 {item}
               </Link>
@@ -310,7 +310,7 @@ export default function MarketingPage() {
           <div className="flex items-center gap-2 sm:gap-3">
             <Link
               href="/auth/signin"
-              className="hidden px-3 py-2 text-sm text-white/60 transition-colors hover:text-white sm:block"
+              className="hidden px-3 py-2 text-sm text-white/60 transition-colors hover:text-foreground sm:block"
             >
               Sign in
             </Link>
@@ -362,12 +362,12 @@ export default function MarketingPage() {
               </Link>
               <Link
                 href="#product"
-                className="h-13 flex w-full items-center justify-center gap-2 rounded-full border border-white/15 bg-white/[0.03] px-7 text-sm font-medium text-white transition-colors hover:bg-white/[0.08] sm:w-auto"
+                className="h-13 flex w-full items-center justify-center gap-2 rounded-full border border-white/15 bg-white/[0.03] px-7 text-sm font-medium text-foreground transition-colors hover:bg-white/[0.08] sm:w-auto"
               >
                 <Play className="h-3.5 w-3.5 fill-white" /> See the workspace
               </Link>
             </motion.div>
-            <motion.p variants={reveal} className="mt-5 text-xs text-white/30">
+            <motion.p variants={reveal} className="text-white/48 mt-5 text-xs">
               Free to start · No credit card · Export anytime
             </motion.p>
           </motion.div>
@@ -376,7 +376,7 @@ export default function MarketingPage() {
 
         <section className="border-b border-white/[0.08] py-10">
           <div className="mx-auto flex max-w-[1320px] flex-col items-center gap-7 px-5 sm:px-8 lg:flex-row lg:justify-between">
-            <p className="text-xs uppercase tracking-[0.18em] text-white/30">
+            <p className="text-white/48 text-xs uppercase tracking-[0.18em]">
               Use the intelligence you trust
             </p>
             <div className="flex flex-wrap items-center justify-center gap-x-9 gap-y-4 sm:gap-x-14">
@@ -445,7 +445,7 @@ export default function MarketingPage() {
               className="flex min-h-[480px] flex-col overflow-hidden rounded-[28px] border border-white/[0.1] bg-[#d8ff7a] p-7 text-primary-foreground sm:p-9 lg:col-span-5 lg:p-10"
             >
               <div className="max-w-sm">
-                <span className="grid h-11 w-11 place-items-center rounded-xl bg-black text-white">
+                <span className="grid h-11 w-11 place-items-center rounded-xl bg-black text-foreground">
                   <KeyRound className="h-5 w-5" />
                 </span>
                 <h3 className="mt-7 text-2xl font-semibold tracking-[-0.035em] sm:text-[1.75rem]">
@@ -458,7 +458,7 @@ export default function MarketingPage() {
                   again.
                 </p>
               </div>
-              <div className="mt-10 rounded-2xl bg-primary-foreground p-4 text-white sm:mt-auto sm:p-5">
+              <div className="mt-10 rounded-2xl bg-primary-foreground p-4 text-foreground sm:mt-auto sm:p-5">
                 {providers.slice(0, 3).map((provider, index) => (
                   <div
                     key={provider}
@@ -467,7 +467,7 @@ export default function MarketingPage() {
                     <span className="grid h-7 w-7 place-items-center rounded-md bg-white/10 text-[9px]">
                       {provider[0]}
                     </span>
-                    <span className="flex-1 text-xs text-white/70">{provider}</span>
+                    <span className="flex-1 text-xs text-foreground/55">{provider}</span>
                     <span
                       className={`h-1.5 w-1.5 rounded-full ${index < 2 ? 'bg-primary' : 'bg-white/20'}`}
                     />
@@ -503,7 +503,7 @@ export default function MarketingPage() {
                 </span>
                 <div className="mt-auto pt-10">
                   <h3 className="text-xl font-semibold tracking-[-0.03em]">{feature.title}</h3>
-                  <p className="mt-3 max-w-sm text-sm leading-6 text-white/45">{feature.copy}</p>
+                  <p className="text-white/48 mt-3 max-w-sm text-sm leading-6">{feature.copy}</p>
                 </div>
               </motion.article>
             ))}
@@ -534,7 +534,7 @@ export default function MarketingPage() {
                   <h3 className="text-xl font-medium tracking-[-0.03em] sm:text-2xl">
                     {item.title}
                   </h3>
-                  <p className="text-white/42 max-w-lg text-sm leading-6">{item.copy}</p>
+                  <p className="text-white/48 max-w-lg text-sm leading-6">{item.copy}</p>
                   <ArrowRight className="hidden h-5 w-5 text-white/20 transition-all group-hover:translate-x-1 group-hover:text-primary sm:block" />
                 </motion.div>
               ))}
@@ -549,7 +549,7 @@ export default function MarketingPage() {
               title="Pay for the workspace. Not the tokens."
               copy="Every plan uses your provider keys, so your AI costs stay transparent and entirely in your control."
             />
-            <p className="max-w-xs text-sm leading-6 text-white/35">
+            <p className="text-white/48 max-w-xs text-sm leading-6">
               All plans include code ownership, encrypted API keys, and the freedom to leave
               whenever you want.
             </p>
@@ -568,7 +568,7 @@ export default function MarketingPage() {
                 className={`relative flex min-h-[430px] flex-col rounded-[24px] border p-7 sm:p-8 ${plan.featured ? 'border-primary/50 bg-primary text-primary-foreground' : 'border-white/10 bg-background-subtle'}`}
               >
                 {plan.featured && (
-                  <span className="absolute right-6 top-6 rounded-full bg-black px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-white">
+                  <span className="absolute right-6 top-6 rounded-full bg-black px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-foreground">
                     Most popular
                   </span>
                 )}
@@ -576,12 +576,12 @@ export default function MarketingPage() {
                 <div className="mt-8 flex items-end gap-1">
                   <span className="text-5xl font-semibold tracking-[-0.055em]">{plan.price}</span>
                   <span
-                    className={`mb-1 text-sm ${plan.featured ? 'text-black/45' : 'text-white/35'}`}
+                    className={`mb-1 text-sm ${plan.featured ? 'text-black/45' : 'text-white/48'}`}
                   >
                     / month
                   </span>
                 </div>
-                <p className={`mt-3 text-sm ${plan.featured ? 'text-black/55' : 'text-white/42'}`}>
+                <p className={`mt-3 text-sm ${plan.featured ? 'text-black/55' : 'text-white/48'}`}>
                   {plan.line}
                 </p>
                 <ul className="mt-8 space-y-3">
@@ -594,7 +594,7 @@ export default function MarketingPage() {
                 </ul>
                 <Link
                   href="/auth/signin"
-                  className={`mt-auto flex h-12 items-center justify-center rounded-full text-sm font-semibold transition-transform hover:scale-[1.01] ${plan.featured ? 'bg-black text-white' : 'bg-white text-black'}`}
+                  className={`mt-auto flex h-12 items-center justify-center rounded-full text-sm font-semibold transition-transform hover:scale-[1.01] ${plan.featured ? 'bg-black text-foreground' : 'bg-white text-black'}`}
                 >
                   {plan.cta}
                 </Link>
@@ -636,32 +636,32 @@ export default function MarketingPage() {
           <div className="flex flex-col justify-between gap-10 sm:flex-row">
             <div>
               <Logo />
-              <p className="mt-4 max-w-xs text-sm leading-6 text-white/35">
+              <p className="text-white/48 mt-4 max-w-xs text-sm leading-6">
                 The independent AI workspace for designing, building, and shipping real software.
               </p>
             </div>
             <div className="grid grid-cols-2 gap-x-16 gap-y-4 text-sm">
               <div className="space-y-3">
-                <p className="text-white/30">Product</p>
-                <Link className="block text-white/65 hover:text-white" href="#product">
+                <p className="text-white/48">Product</p>
+                <Link className="block text-foreground-secondary hover:text-foreground" href="#product">
                   Workspace
                 </Link>
-                <Link className="block text-white/65 hover:text-white" href="#pricing">
+                <Link className="block text-foreground-secondary hover:text-foreground" href="#pricing">
                   Pricing
                 </Link>
               </div>
               <div className="space-y-3">
-                <p className="text-white/30">Access</p>
-                <Link className="block text-white/65 hover:text-white" href="/auth/signin">
+                <p className="text-white/48">Access</p>
+                <Link className="block text-foreground-secondary hover:text-foreground" href="/auth/signin">
                   Sign in
                 </Link>
-                <Link className="block text-white/65 hover:text-white" href="/auth/signin">
+                <Link className="block text-foreground-secondary hover:text-foreground" href="/auth/signin">
                   Get started
                 </Link>
               </div>
             </div>
           </div>
-          <div className="mt-12 flex flex-col justify-between gap-3 border-t border-white/10 pt-6 text-xs text-white/25 sm:flex-row">
+          <div className="text-white/48 mt-12 flex flex-col justify-between gap-3 border-t border-white/10 pt-6 text-xs sm:flex-row">
             <p>© {new Date().getFullYear()} Sovereign</p>
             <p>Built for independent software.</p>
           </div>

@@ -501,7 +501,7 @@ export function AuthSettings({ projectId }: AuthSettingsProps) {
                       <select
                         value={perm.resource}
                         onChange={(e) => updatePermission(idx, 'resource', e.target.value)}
-                        className="focus-visible:ring-focus-ring h-8 rounded-md border border-border bg-background px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2"
+                        className="focus-visible:ring-border-focus/40 h-8 rounded-md border border-border bg-background px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2"
                       >
                         {RESOURCES.map((r) => (
                           <option key={r} value={r}>
@@ -512,7 +512,7 @@ export function AuthSettings({ projectId }: AuthSettingsProps) {
                       <select
                         value={perm.action}
                         onChange={(e) => updatePermission(idx, 'action', e.target.value)}
-                        className="focus-visible:ring-focus-ring h-8 rounded-md border border-border bg-background px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2"
+                        className="focus-visible:ring-border-focus/40 h-8 rounded-md border border-border bg-background px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2"
                       >
                         {ACTIONS.map((a) => (
                           <option key={a} value={a}>
@@ -655,7 +655,7 @@ export function AuthSettings({ projectId }: AuthSettingsProps) {
                   <select
                     value={newUserRole}
                     onChange={(e) => setNewUserRole(e.target.value)}
-                    className="focus-visible:ring-focus-ring h-8 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2"
+                    className="focus-visible:ring-border-focus/40 h-8 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2"
                   >
                     <option value="user">User</option>
                     <option value="admin">Admin</option>
