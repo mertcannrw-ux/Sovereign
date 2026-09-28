@@ -587,7 +587,7 @@ function ProjectWorkspace() {
           )}
           title="Drag to resize panels • Double-click to reset"
         >
-          <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col gap-1 rounded bg-[#242424] p-1 opacity-0 transition-opacity group-hover:opacity-100">
+          <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col gap-1 rounded bg-border p-1 opacity-0 transition-opacity group-hover:opacity-100">
             <div className="h-1.5 w-1.5 rounded-full bg-foreground-muted" />
             <div className="h-1.5 w-1.5 rounded-full bg-foreground-muted" />
             <div className="h-1.5 w-1.5 rounded-full bg-foreground-muted" />
@@ -613,14 +613,14 @@ function ProjectWorkspace() {
                 </TabsTrigger>
               </TabsList>
             </Tabs>
-            <div className="inline-flex h-8 items-center rounded-md bg-[#1A1A1A] p-1">
+            <div className="inline-flex h-8 items-center rounded-md bg-background-muted p-1">
               <button
                 type="button"
                 className={cn(
                   'inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-sm px-3 py-1 text-xs font-medium transition-all focus-visible:outline-none',
                   isEditMode
-                    ? 'bg-[#0A0A0A] text-[#ECECEC] shadow-sm'
-                    : 'text-[#6B6B6B] hover:text-[#ECECEC]',
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-foreground-muted hover:text-foreground',
                 )}
                 onClick={() => {
                   setActiveTab('preview');

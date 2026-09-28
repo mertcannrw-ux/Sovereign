@@ -36,7 +36,7 @@ export function CodePane({
   const displayContent = isTruncated ? rawContent.slice(0, MAX_CODE_PREVIEW_CHARS) : rawContent;
 
   return (
-    <div className="flex min-h-0 flex-1 bg-[#111]">
+    <div className="flex min-h-0 flex-1 bg-background-subtle">
       <div className="w-44 shrink-0 overflow-y-auto border-r border-white/10 py-2">
         {files.map((file) => (
           <button
@@ -44,7 +44,7 @@ export function CodePane({
             type="button"
             onClick={() => onSelectFile(file)}
             className={cn(
-              'flex w-full items-center gap-2 truncate px-3 py-1.5 text-left text-[11px] text-[#9ca3af] hover:bg-white/5 hover:text-white',
+              'flex w-full items-center gap-2 truncate px-3 py-1.5 text-left text-[11px] text-foreground-secondary hover:bg-white/5 hover:text-white',
               activeFile?.path === file.path && 'bg-white/10 text-white',
             )}
           >
@@ -61,7 +61,7 @@ export function CodePane({
         ))}
       </div>
       <div className="relative min-w-0 flex-1 overflow-auto">
-        <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-white/10 bg-[#181818] px-4 py-2 font-mono text-[11px] text-[#9ca3af]">
+        <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-white/10 bg-background-muted px-4 py-2 font-mono text-[11px] text-foreground-secondary">
           <span className="truncate">
             {activeFile?.path ?? files[0]?.path ?? 'No generated files'}
           </span>

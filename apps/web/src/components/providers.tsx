@@ -15,9 +15,9 @@ export function Providers({ children, nonce }: { children: React.ReactNode; nonc
             position="bottom-right"
             toastOptions={{
               style: {
-                background: '#231D18',
-                color: '#F5F0EB',
-                border: '1px solid #3D3229',
+                background: 'var(--background-subtle)',
+                color: 'var(--foreground)',
+                border: '1px solid var(--border)',
                 borderRadius: '0.5rem',
                 fontSize: '0.875rem',
               },

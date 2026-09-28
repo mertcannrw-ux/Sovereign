@@ -86,7 +86,7 @@ const plans = [
 function Logo() {
   return (
     <span className="flex items-center gap-3">
-      <span className="grid h-9 w-9 place-items-center rounded-full border border-white/15 bg-white text-[#0a0a0a]">
+      <span className="grid h-9 w-9 place-items-center rounded-full border border-white/15 bg-white text-foreground-inverse">
         <Command className="h-[18px] w-[18px]" strokeWidth={2.4} />
       </span>
       <span className="text-sm font-semibold uppercase tracking-[0.22em] text-white">
@@ -113,8 +113,8 @@ function SectionHeading({
       viewport={{ once: true, margin: '-80px' }}
       className="max-w-2xl"
     >
-      <p className="mb-5 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.22em] text-[#b8ff5a]">
-        <span className="h-px w-6 bg-[#b8ff5a]" />
+      <p className="mb-5 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.22em] text-primary">
+        <span className="h-px w-6 bg-primary" />
         {eyebrow}
       </p>
       <h2 className="text-balance text-4xl font-semibold leading-[1.04] tracking-[-0.045em] text-white sm:text-5xl lg:text-6xl">
@@ -134,7 +134,7 @@ function WorkspacePreview() {
       className="relative mx-auto mt-16 max-w-[1180px] px-3 sm:mt-24 sm:px-6"
     >
       <div className="absolute -inset-x-12 bottom-0 top-1/4 -z-10 bg-[radial-gradient(ellipse_at_center,rgba(184,255,90,0.12),transparent_65%)] blur-2xl" />
-      <div className="overflow-hidden rounded-[20px] border border-white/[0.12] bg-[#111] shadow-[0_50px_140px_rgba(0,0,0,.7)]">
+      <div className="overflow-hidden rounded-[20px] border border-white/[0.12] bg-background-subtle shadow-[0_50px_140px_rgba(0,0,0,.7)]">
         <div className="flex h-12 items-center justify-between border-b border-white/[0.08] px-4 sm:px-5">
           <div className="flex items-center gap-1.5">
             <span className="h-2.5 w-2.5 rounded-full bg-white/20" />
@@ -143,7 +143,7 @@ function WorkspacePreview() {
           </div>
           <div className="flex items-center gap-2 text-[11px] text-white/40">
             <span className="hidden sm:inline">canvas.sovereign.dev</span>
-            <ShieldCheck className="h-3.5 w-3.5 text-[#b8ff5a]" />
+            <ShieldCheck className="h-3.5 w-3.5 text-primary" />
           </div>
           <div className="flex items-center gap-2">
             <span className="hidden rounded-md border border-white/10 px-2 py-1 text-[10px] text-white/50 sm:block">
@@ -156,10 +156,10 @@ function WorkspacePreview() {
         </div>
 
         <div className="grid min-h-[430px] grid-cols-1 md:grid-cols-[270px_1fr] lg:grid-cols-[280px_1fr_240px]">
-          <div className="hidden border-r border-white/[0.08] bg-[#0d0d0d] p-4 md:flex md:flex-col">
+          <div className="hidden border-r border-white/[0.08] bg-background-subtle p-4 md:flex md:flex-col">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-white/70">Build with AI</span>
-              <Sparkles className="h-3.5 w-3.5 text-[#b8ff5a]" />
+              <Sparkles className="h-3.5 w-3.5 text-primary" />
             </div>
             <div className="mt-5 rounded-xl border border-white/10 bg-white/[0.035] p-3 text-xs leading-5 text-white/60">
               Create a refined analytics dashboard for a sustainable energy company. Use warm data
@@ -167,15 +167,15 @@ function WorkspacePreview() {
             </div>
             <div className="mt-4 space-y-3">
               <div className="flex gap-2.5">
-                <span className="mt-1 h-4 w-4 shrink-0 rounded-full bg-[#b8ff5a]" />
+                <span className="mt-1 h-4 w-4 shrink-0 rounded-full bg-primary" />
                 <div>
                   <p className="text-[11px] font-medium text-white/80">Planning interface</p>
                   <p className="mt-0.5 text-[10px] text-white/35">Layout · data · components</p>
                 </div>
               </div>
               <div className="flex gap-2.5">
-                <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full border border-[#b8ff5a]/40">
-                  <Check className="h-2.5 w-2.5 text-[#b8ff5a]" />
+                <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full border border-primary/40">
+                  <Check className="h-2.5 w-2.5 text-primary" />
                 </span>
                 <div>
                   <p className="text-[11px] font-medium text-white/80">Building dashboard</p>
@@ -185,7 +185,7 @@ function WorkspacePreview() {
             </div>
             <div className="mt-auto flex items-center gap-2 rounded-lg border border-white/10 bg-black/30 p-2.5">
               <span className="flex-1 text-[10px] text-white/30">Ask for a change…</span>
-              <Send className="h-3.5 w-3.5 text-[#b8ff5a]" />
+              <Send className="h-3.5 w-3.5 text-primary" />
             </div>
           </div>
 
@@ -258,7 +258,7 @@ function WorkspacePreview() {
             </div>
           </div>
 
-          <div className="hidden border-l border-white/[0.08] bg-[#0d0d0d] p-4 lg:block">
+          <div className="hidden border-l border-white/[0.08] bg-background-subtle p-4 lg:block">
             <div className="flex items-center justify-between text-xs text-white/70">
               <span>Properties</span>
               <Layers3 className="h-3.5 w-3.5" />
@@ -290,8 +290,8 @@ function WorkspacePreview() {
 
 export default function MarketingPage() {
   return (
-    <div className="min-h-screen overflow-hidden bg-[#090909] text-white selection:bg-[#b8ff5a] selection:text-black">
-      <header className="fixed inset-x-0 top-0 z-50 border-b border-white/[0.07] bg-[#090909]/80 backdrop-blur-xl">
+    <div className="min-h-screen overflow-hidden bg-background text-white selection:bg-primary selection:text-primary-foreground">
+      <header className="fixed inset-x-0 top-0 z-50 border-b border-white/[0.07] bg-background/80 backdrop-blur-xl">
         <div className="mx-auto flex h-[72px] max-w-[1320px] items-center justify-between px-5 sm:px-8">
           <Link href="/" aria-label="Sovereign home">
             <Logo />
@@ -355,7 +355,7 @@ export default function MarketingPage() {
             >
               <Link
                 href="/auth/signin"
-                className="h-13 group flex w-full items-center justify-center gap-2 rounded-full bg-[#b8ff5a] px-7 text-sm font-semibold text-[#10130c] transition-all hover:bg-[#c8ff83] sm:w-auto"
+                className="h-13 group flex w-full items-center justify-center gap-2 rounded-full bg-primary px-7 text-sm font-semibold text-primary-foreground transition-all hover:bg-primary-hover sm:w-auto"
               >
                 Build your first app{' '}
                 <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
@@ -407,10 +407,10 @@ export default function MarketingPage() {
           >
             <motion.article
               variants={reveal}
-              className="group flex min-h-[480px] flex-col overflow-hidden rounded-[28px] border border-white/[0.1] bg-[#101010] p-7 sm:p-9 lg:col-span-7 lg:p-10"
+              className="group flex min-h-[480px] flex-col overflow-hidden rounded-[28px] border border-white/[0.1] bg-background-subtle p-7 sm:p-9 lg:col-span-7 lg:p-10"
             >
               <div className="max-w-md">
-                <span className="grid h-11 w-11 place-items-center rounded-xl bg-[#b8ff5a] text-black">
+                <span className="grid h-11 w-11 place-items-center rounded-xl bg-primary text-primary-foreground">
                   <WandSparkles className="h-5 w-5" />
                 </span>
                 <h3 className="mt-7 text-2xl font-semibold tracking-[-0.035em] sm:text-[1.75rem]">
@@ -421,11 +421,11 @@ export default function MarketingPage() {
                   improves the real application—not a disposable mockup.
                 </p>
               </div>
-              <div className="mt-10 w-full rounded-2xl border border-white/10 bg-[#171717] p-3 shadow-2xl transition-transform duration-500 group-hover:-translate-y-1 sm:ml-auto sm:w-[78%]">
-                <div className="rounded-xl border border-white/10 bg-[#0c0c0c] p-5 font-mono text-[11px] leading-7 text-white/45 sm:text-xs">
+              <div className="mt-10 w-full rounded-2xl border border-white/10 bg-background-muted p-3 shadow-2xl transition-transform duration-500 group-hover:-translate-y-1 sm:ml-auto sm:w-[78%]">
+                <div className="rounded-xl border border-white/10 bg-background-subtle p-5 font-mono text-[11px] leading-7 text-white/45 sm:text-xs">
                   <p>
                     <span className="text-[#c792ea]">export function</span>{' '}
-                    <span className="text-[#b8ff5a]">Dashboard</span>() {'{'}
+                    <span className="text-primary">Dashboard</span>() {'{'}
                   </p>
                   <p className="pl-4">
                     <span className="text-[#c792ea]">const</span> metrics ={' '}
@@ -442,7 +442,7 @@ export default function MarketingPage() {
 
             <motion.article
               variants={reveal}
-              className="flex min-h-[480px] flex-col overflow-hidden rounded-[28px] border border-white/[0.1] bg-[#d8ff7a] p-7 text-[#11140d] sm:p-9 lg:col-span-5 lg:p-10"
+              className="flex min-h-[480px] flex-col overflow-hidden rounded-[28px] border border-white/[0.1] bg-[#d8ff7a] p-7 text-primary-foreground sm:p-9 lg:col-span-5 lg:p-10"
             >
               <div className="max-w-sm">
                 <span className="grid h-11 w-11 place-items-center rounded-xl bg-black text-white">
@@ -458,7 +458,7 @@ export default function MarketingPage() {
                   again.
                 </p>
               </div>
-              <div className="mt-10 rounded-2xl bg-[#11140d] p-4 text-white sm:mt-auto sm:p-5">
+              <div className="mt-10 rounded-2xl bg-primary-foreground p-4 text-white sm:mt-auto sm:p-5">
                 {providers.slice(0, 3).map((provider, index) => (
                   <div
                     key={provider}
@@ -469,7 +469,7 @@ export default function MarketingPage() {
                     </span>
                     <span className="flex-1 text-xs text-white/70">{provider}</span>
                     <span
-                      className={`h-1.5 w-1.5 rounded-full ${index < 2 ? 'bg-[#b8ff5a]' : 'bg-white/20'}`}
+                      className={`h-1.5 w-1.5 rounded-full ${index < 2 ? 'bg-primary' : 'bg-white/20'}`}
                     />
                   </div>
                 ))}
@@ -496,10 +496,10 @@ export default function MarketingPage() {
               <motion.article
                 key={feature.title}
                 variants={reveal}
-                className="flex min-h-[250px] flex-col rounded-[24px] border border-white/[0.1] bg-[#101010] p-7 sm:p-8 lg:col-span-4 lg:p-9"
+                className="flex min-h-[250px] flex-col rounded-[24px] border border-white/[0.1] bg-background-subtle p-7 sm:p-8 lg:col-span-4 lg:p-9"
               >
-                <span className="grid h-10 w-10 place-items-center rounded-xl border border-[#b8ff5a]/20 bg-[#b8ff5a]/[0.08]">
-                  <feature.icon className="h-5 w-5 text-[#b8ff5a]" strokeWidth={1.6} />
+                <span className="grid h-10 w-10 place-items-center rounded-xl border border-primary/20 bg-primary/[0.08]">
+                  <feature.icon className="h-5 w-5 text-primary" strokeWidth={1.6} />
                 </span>
                 <div className="mt-auto pt-10">
                   <h3 className="text-xl font-semibold tracking-[-0.03em]">{feature.title}</h3>
@@ -510,7 +510,7 @@ export default function MarketingPage() {
           </motion.div>
         </section>
 
-        <section id="workflow" className="border-y border-white/[0.08] bg-[#0c0c0c] py-24 sm:py-36">
+        <section id="workflow" className="border-y border-white/[0.08] bg-background-subtle py-24 sm:py-36">
           <div className="mx-auto max-w-[1320px] px-5 sm:px-8">
             <SectionHeading
               eyebrow="How it works"
@@ -527,12 +527,12 @@ export default function MarketingPage() {
                   transition={{ duration: 0.6, delay: index * 0.05, ease }}
                   className="group grid gap-4 border-b border-white/10 py-7 sm:grid-cols-[80px_1fr_1fr_40px] sm:items-center sm:py-9"
                 >
-                  <span className="font-mono text-xs text-[#b8ff5a]">{item.number}</span>
+                  <span className="font-mono text-xs text-primary">{item.number}</span>
                   <h3 className="text-xl font-medium tracking-[-0.03em] sm:text-2xl">
                     {item.title}
                   </h3>
                   <p className="text-white/42 max-w-lg text-sm leading-6">{item.copy}</p>
-                  <ArrowRight className="hidden h-5 w-5 text-white/20 transition-all group-hover:translate-x-1 group-hover:text-[#b8ff5a] sm:block" />
+                  <ArrowRight className="hidden h-5 w-5 text-white/20 transition-all group-hover:translate-x-1 group-hover:text-primary sm:block" />
                 </motion.div>
               ))}
             </div>
@@ -562,7 +562,7 @@ export default function MarketingPage() {
               <motion.article
                 key={plan.name}
                 variants={reveal}
-                className={`relative flex min-h-[430px] flex-col rounded-[24px] border p-7 sm:p-8 ${plan.featured ? 'border-[#b8ff5a]/50 bg-[#b8ff5a] text-[#10130c]' : 'border-white/10 bg-[#101010]'}`}
+                className={`relative flex min-h-[430px] flex-col rounded-[24px] border p-7 sm:p-8 ${plan.featured ? 'border-primary/50 bg-primary text-primary-foreground' : 'border-white/10 bg-background-subtle'}`}
               >
                 {plan.featured && (
                   <span className="absolute right-6 top-6 rounded-full bg-black px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-white">
@@ -609,7 +609,7 @@ export default function MarketingPage() {
               transition={{ duration: 0.7, ease }}
               className="relative z-10"
             >
-              <Zap className="mx-auto h-8 w-8 text-[#b8ff5a]" />
+              <Zap className="mx-auto h-8 w-8 text-primary" />
               <h2 className="mx-auto mt-7 max-w-3xl text-balance text-4xl font-semibold leading-[1] tracking-[-0.05em] sm:text-6xl">
                 Your next product is closer than it looks.
               </h2>
@@ -618,7 +618,7 @@ export default function MarketingPage() {
               </p>
               <Link
                 href="/auth/signin"
-                className="h-13 group mx-auto mt-9 flex w-fit items-center gap-2 rounded-full bg-[#b8ff5a] px-7 text-sm font-semibold text-black"
+                className="h-13 group mx-auto mt-9 flex w-fit items-center gap-2 rounded-full bg-primary px-7 text-sm font-semibold text-primary-foreground"
               >
                 Start building free{' '}
                 <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />

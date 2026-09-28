@@ -44,12 +44,6 @@ const config: Config = {
           light: 'rgba(240,106,106,0.10)',
           foreground: '#190909',
         },
-        accent: {
-          bronze: '#9C8060',
-          copper: '#B28B62',
-          gold: '#D4B66E',
-          parchment: '#F4F4F0',
-        },
       },
       fontFamily: {
         sans: [
@@ -117,35 +111,6 @@ const config: Config = {
         button: '0 1px 2px rgba(0,0,0,.08), 0 6px 20px rgba(0,0,0,.12)',
         card: '0 30px 80px rgba(0,0,0,.45)',
         'card-hover': '0 40px 100px rgba(0,0,0,.55), 0 0 40px rgba(255,255,255,.03)',
-      },
-      animation: {
-        'gradient-shift': 'gradientShift 8s ease infinite',
-        float: 'float 6s ease-in-out infinite',
-        glow: 'glow 3s ease-in-out infinite alternate',
-        typing: 'typing 3.5s steps(40, end)',
-        'cursor-blink': 'cursorBlink 1s step-end infinite',
-      },
-      keyframes: {
-        gradientShift: {
-          '0%, 100%': { backgroundPosition: '0% 50%' },
-          '50%': { backgroundPosition: '100% 50%' },
-        },
-        float: {
-          '0%, 100%': { transform: 'translateY(0px)' },
-          '50%': { transform: 'translateY(-12px)' },
-        },
-        glow: {
-          '0%': { boxShadow: '0 0 20px rgba(16,163,127,0.15)' },
-          '100%': { boxShadow: '0 0 40px rgba(16,163,127,0.3)' },
-        },
-        typing: {
-          from: { width: '0' },
-          to: { width: '100%' },
-        },
-        cursorBlink: {
-          'from, to': { borderColor: 'transparent' },
-          '50%': { borderColor: '#10A37F' },
-        },
       },
     },
   },

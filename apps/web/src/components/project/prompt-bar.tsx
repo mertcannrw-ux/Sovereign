@@ -436,7 +436,7 @@ export function PromptBar({
         <div
           ref={popoverRef}
           id={dialogId}
-          className="absolute bottom-full right-12 z-30 mb-3 w-80 overflow-hidden rounded-2xl border border-white/15 bg-[#1a1a1c] p-3 shadow-2xl backdrop-blur-xl"
+          className="absolute bottom-full right-12 z-30 mb-3 w-80 overflow-hidden rounded-2xl border border-white/15 bg-background-muted p-3 shadow-2xl backdrop-blur-xl"
           role="dialog"
           aria-label="Model and reasoning settings"
         >
@@ -533,7 +533,7 @@ export function PromptBar({
                     onSelectModelKey(option.key);
                     setActiveSubMenu('root');
                   }}
-                  className="h-9 w-full rounded-lg border border-white/20 bg-[#121214] px-3 pr-7 text-xs font-medium text-white placeholder:text-foreground-muted focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/40"
+                  className="h-9 w-full rounded-lg border border-white/20 bg-background-subtle px-3 pr-7 text-xs font-medium text-white placeholder:text-foreground-muted focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/40"
                   aria-controls={listboxId}
                   aria-autocomplete="list"
                 />
@@ -688,7 +688,7 @@ export function PromptBar({
         </div>
       )}
 
-      <div className="rounded-2xl border border-white/10 bg-[#161618] p-3 shadow-2xl transition-all focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/40">
+      <div className="rounded-2xl border border-white/10 bg-background-muted p-3 shadow-2xl transition-all focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/40">
         {selectedPreviewElement && (
           <div className="mb-2.5 flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs">
             <Crosshair className="h-3.5 w-3.5 text-primary" />
@@ -741,7 +741,7 @@ export function PromptBar({
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="flex h-9 w-9 items-center justify-center rounded-full text-[#A1A1A1] transition-all hover:bg-white/[0.08] hover:text-white active:scale-95"
+              className="flex h-9 w-9 items-center justify-center rounded-full text-foreground-secondary transition-all hover:bg-white/[0.08] hover:text-white active:scale-95"
               title="Append images or files"
               aria-label="Append images or files"
             >
@@ -792,8 +792,8 @@ export function PromptBar({
               aria-expanded={showModelPopover}
               aria-controls={dialogId}
             >
-              <span className="font-medium text-[#E5E5E5]">{selectedModel || 'Select Model'}</span>
-              <span className="ml-2.5 font-normal text-[#9A9A9A]">
+              <span className="font-medium text-foreground">{selectedModel || 'Select Model'}</span>
+              <span className="ml-2.5 font-normal text-foreground-secondary">
                 {REASONING_LEVELS.find((r) => r.value === reasoningEffort)?.label ?? 'Auto'}
               </span>
             </button>

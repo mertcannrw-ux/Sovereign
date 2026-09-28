@@ -315,8 +315,8 @@ function DashboardContent() {
                 href={`/project/${project.id}`}
                 className="group overflow-hidden rounded-2xl border border-border bg-background-subtle transition-all hover:-translate-y-0.5 hover:border-border-strong hover:shadow-[0_24px_60px_rgba(0,0,0,.3)]"
               >
-                <div className="relative aspect-[16/9] overflow-hidden bg-[#151515]">
-                  <div className="absolute inset-5 rounded-xl border border-white/[0.08] bg-[#0e0e0e] p-4">
+                <div className="relative aspect-[16/9] overflow-hidden bg-background-subtle">
+                  <div className="absolute inset-5 rounded-xl border border-white/[0.08] bg-background-subtle p-4">
                     <div className="flex gap-1.5">
                       <i className="h-1.5 w-1.5 rounded-full bg-white/15" />
                       <i className="h-1.5 w-1.5 rounded-full bg-white/15" />

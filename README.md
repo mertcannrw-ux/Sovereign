@@ -37,6 +37,16 @@ Sovereign/
 
 ---
 
+## 📚 Documentation
+
+| Document | What it covers |
+| :------- | :------------- |
+| [`design.md`](./design.md) | Design system: colour tokens, typography, spacing, component conventions, open issues |
+| [`docs/design-accessibility-review.md`](./docs/design-accessibility-review.md) | Measured WCAG audit of the design system and app surfaces |
+| [`docs/agent-runtime.md`](./docs/agent-runtime.md) | Agent runtime, generation protocol, and tool contract |
+
+---
+
 ## 🚀 Quick Start
 
 ### 1. Prerequisites

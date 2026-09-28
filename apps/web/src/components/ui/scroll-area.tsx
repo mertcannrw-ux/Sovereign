@@ -9,7 +9,7 @@ const ScrollArea = forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElemen
     <div
       ref={ref}
       className={cn(
-        'overflow-auto [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[#2A2A2A] [&::-webkit-scrollbar-thumb]:hover:bg-[#3A3A3A] [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar]:w-2',
+        'overflow-auto [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:hover:bg-border-strong [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar]:w-2',
         className,
       )}
       {...props}

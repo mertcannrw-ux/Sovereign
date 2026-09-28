@@ -14,10 +14,10 @@ const toastVariants = cva(
   {
     variants: {
       variant: {
-        default: 'border-[#2A2A2A] bg-[#141414] text-[#ECECEC]',
-        success: 'border-[#10B981]/30 bg-[#10B981]/10 text-[#ECECEC]',
-        destructive: 'border-[#EF4444]/30 bg-[#EF4444]/10 text-[#ECECEC]',
-        warning: 'border-[#F59E0B]/30 bg-[#F59E0B]/10 text-[#ECECEC]',
+        default: 'border-border bg-background-subtle text-foreground',
+        success: 'border-success/30 bg-success/10 text-foreground',
+        destructive: 'border-error/30 bg-error/10 text-foreground',
+        warning: 'border-warning/30 bg-warning/10 text-foreground',
       },
     },
     defaultVariants: {
@@ -69,7 +69,7 @@ const ToastTitle = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <ToastPrimitive.Title
     ref={ref}
-    className={cn('text-sm font-semibold text-[#ECECEC]', className)}
+    className={cn('text-sm font-semibold text-foreground', className)}
     {...props}
   />
 ));
@@ -81,7 +81,7 @@ const ToastDescription = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <ToastPrimitive.Description
     ref={ref}
-    className={cn('text-sm text-[#A1A1A1]', className)}
+    className={cn('text-sm text-foreground-secondary', className)}
     {...props}
   />
 ));
@@ -94,7 +94,7 @@ const ToastClose = React.forwardRef<
   <ToastPrimitive.Close
     ref={ref}
     className={cn(
-      'absolute right-2 top-2 rounded-md p-1 text-[#6B6B6B] opacity-0 transition-opacity hover:text-[#ECECEC] focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-[#10A37F]/30 group-hover:opacity-100',
+      'absolute right-2 top-2 rounded-md p-1 text-foreground-muted opacity-0 transition-opacity hover:text-foreground focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-border-focus group-hover:opacity-100',
       className,
     )}
     toast-close=""
@@ -114,7 +114,7 @@ const ToastAction = React.forwardRef<
   <ToastPrimitive.Action
     ref={ref}
     className={cn(
-      'inline-flex h-8 shrink-0 items-center justify-center rounded-md border border-[#2A2A2A] bg-[#141414] px-3 text-xs font-medium text-[#ECECEC] transition-colors hover:bg-[#1A1A1A] focus:outline-none focus:ring-2 focus:ring-[#10A37F]/30 disabled:pointer-events-none disabled:opacity-50 group-[.destructive]:border-[#EF4444]/30 group-[.destructive]:hover:border-[#EF4444]/30 group-[.destructive]:hover:bg-[#EF4444] group-[.destructive]:hover:text-white',
+      'inline-flex h-8 shrink-0 items-center justify-center rounded-md border border-border bg-background-subtle px-3 text-xs font-medium text-foreground transition-colors hover:bg-background-muted focus:outline-none focus:ring-2 focus:ring-border-focus disabled:pointer-events-none disabled:opacity-50 group-[.destructive]:border-error/30 group-[.destructive]:hover:border-error/30 group-[.destructive]:hover:bg-error group-[.destructive]:hover:text-white',
       className,
     )}
     {...props}

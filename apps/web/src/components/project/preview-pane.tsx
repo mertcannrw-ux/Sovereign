@@ -181,7 +181,7 @@ export function PreviewPane({
   }, [isEditMode, onElementSelected, onQuickEdit, onSelectedElementChange, url]);
 
   return (
-    <div className="relative flex flex-1 overflow-hidden bg-[#0A0A0A]">
+    <div className="relative flex flex-1 overflow-hidden bg-background">
       {url ? (
         <>
           {previewSlotRevisions.map((revision, slot) =>
@@ -194,7 +194,7 @@ export function PreviewPane({
                 src={`${url}${url.includes('?') ? '&' : '?'}revision=${revision}`}
                 title={slot === visiblePreviewSlot ? 'Live app preview' : 'Loading app preview'}
                 className={cn(
-                  'absolute inset-0 h-full w-full border-0 bg-[#0A0A0A]',
+                  'absolute inset-0 h-full w-full border-0 bg-background',
                   slot === visiblePreviewSlot ? 'visible z-10' : 'invisible z-0',
                 )}
                 aria-hidden={slot !== visiblePreviewSlot}
@@ -258,7 +258,7 @@ export function PreviewPane({
       {error && url ? (
         <div
           role="alert"
-          className="absolute left-3 right-3 top-3 z-20 rounded-lg border border-warning/40 bg-[#141414]/95 px-3 py-2 text-xs text-warning shadow-xl backdrop-blur"
+          className="absolute left-3 right-3 top-3 z-20 rounded-lg border border-warning/40 bg-background-subtle/95 px-3 py-2 text-xs text-warning shadow-xl backdrop-blur"
         >
           {error}
         </div>
@@ -266,7 +266,7 @@ export function PreviewPane({
       {engine === 'vite' && disclosure && !disclosureDismissed && url ? (
         <div
           role="status"
-          className="absolute bottom-3 left-3 right-3 z-20 flex items-start gap-2 rounded-lg border border-primary/30 bg-[#141414]/95 px-3 py-2 text-xs text-foreground-secondary shadow-xl backdrop-blur"
+          className="absolute bottom-3 left-3 right-3 z-20 flex items-start gap-2 rounded-lg border border-primary/30 bg-background-subtle/95 px-3 py-2 text-xs text-foreground-secondary shadow-xl backdrop-blur"
         >
           <p className="flex-1 leading-relaxed">{disclosure}</p>
           <button
@@ -287,7 +287,7 @@ export function PreviewPane({
         </div>
       ) : null}
       {isEditMode && !selectedPreviewElement && url && (
-        <div className="pointer-events-none absolute left-1/2 top-3 z-20 -translate-x-1/2 rounded-full border border-primary/40 bg-[#141414]/95 px-3 py-1.5 text-xs font-medium text-white shadow-xl backdrop-blur">
+        <div className="pointer-events-none absolute left-1/2 top-3 z-20 -translate-x-1/2 rounded-full border border-primary/40 bg-background-subtle/95 px-3 py-1.5 text-xs font-medium text-white shadow-xl backdrop-blur">
           Click an element to target it
         </div>
       )}
