@@ -643,7 +643,11 @@ export default function PromptBarPreviewPage() {
                       className="rounded border border-white/10 bg-background-subtle px-2.5 py-1 text-xs text-white focus:outline-none"
                     >
                       {SAMPLE_MODELS.map((m) => (
-                        <option key={m.id} value={m.name} className="bg-background-subtle text-white">
+                        <option
+                          key={m.id}
+                          value={m.name}
+                          className="bg-background-subtle text-white"
+                        >
                           {m.name} ({m.provider})
                         </option>
                       ))}

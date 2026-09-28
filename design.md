@@ -21,27 +21,27 @@
 
 ### 2.1 Roles
 
-| Role | Token | Value | Used for |
-|---|---|---|---|
-| Page background | `background` | `#090909` | app and marketing canvas |
-| Subtle surface | `background-subtle` | `#101010` | cards, popovers, inset panels |
-| Muted surface | `background-muted` | `#171717` | input fills, raised rows, hover fills |
-| Inverse surface | `background-inverse` | `#F4F4F0` | light-on-dark inversions |
-| Primary text | `foreground` | `#F7F7F5` | headings, body, primary labels |
-| Secondary text | `foreground-secondary` | `#B8B8B2` | supporting copy, secondary labels |
-| Muted text | `foreground-muted` | `#74746E` | placeholders, timestamps, captions |
-| Inverse text | `foreground-inverse` | `#11110F` | text on inverse surfaces |
-| Hairline border | `border` | `#242422` | dividers, card edges, table rules |
-| Strong border | `border-strong` | `#383835` | control boundaries, emphasized edges |
-| **Focus** | `border-focus` | `#B8FF5A` | focus rings — always use this, never a bespoke colour |
-| **Accent** | `primary` | `#B8FF5A` | primary buttons, active states, key metrics |
-| Accent hover | `primary-hover` | `#C7FF7C` | hover on accent surfaces |
-| Accent tint | `primary-light` | `rgba(184,255,90,.10)` | selected rows, subtle accent fills |
-| On-accent text | `primary-foreground` | `#11140D` | text/icons on the accent |
-| Success | `success` | `#73D86C` | positive state, "generated", connected |
-| Warning | `warning` | `#E6B85C` | caution, degraded, at-limit |
-| Error | `error` | `#F06A6A` | failures, destructive actions |
-| On-error text | `error-foreground` | `#190909` | text on `error` fills — **not** white (see §2.3) |
+| Role            | Token                  | Value                  | Used for                                              |
+| --------------- | ---------------------- | ---------------------- | ----------------------------------------------------- |
+| Page background | `background`           | `#090909`              | app and marketing canvas                              |
+| Subtle surface  | `background-subtle`    | `#101010`              | cards, popovers, inset panels                         |
+| Muted surface   | `background-muted`     | `#171717`              | input fills, raised rows, hover fills                 |
+| Inverse surface | `background-inverse`   | `#F4F4F0`              | light-on-dark inversions                              |
+| Primary text    | `foreground`           | `#F7F7F5`              | headings, body, primary labels                        |
+| Secondary text  | `foreground-secondary` | `#B8B8B2`              | supporting copy, secondary labels                     |
+| Muted text      | `foreground-muted`     | `#74746E`              | placeholders, timestamps, captions                    |
+| Inverse text    | `foreground-inverse`   | `#11110F`              | text on inverse surfaces                              |
+| Hairline border | `border`               | `#242422`              | dividers, card edges, table rules                     |
+| Strong border   | `border-strong`        | `#383835`              | control boundaries, emphasized edges                  |
+| **Focus**       | `border-focus`         | `#B8FF5A`              | focus rings — always use this, never a bespoke colour |
+| **Accent**      | `primary`              | `#B8FF5A`              | primary buttons, active states, key metrics           |
+| Accent hover    | `primary-hover`        | `#C7FF7C`              | hover on accent surfaces                              |
+| Accent tint     | `primary-light`        | `rgba(184,255,90,.10)` | selected rows, subtle accent fills                    |
+| On-accent text  | `primary-foreground`   | `#11140D`              | text/icons on the accent                              |
+| Success         | `success`              | `#73D86C`              | positive state, "generated", connected                |
+| Warning         | `warning`              | `#E6B85C`              | caution, degraded, at-limit                           |
+| Error           | `error`                | `#F06A6A`              | failures, destructive actions                         |
+| On-error text   | `error-foreground`     | `#190909`              | text on `error` fills — **not** white (see §2.3)      |
 
 Each of `success` / `warning` / `error` also has a `-light` variant (`rgba(…,0.10)`) for tinted backgrounds, and a `-foreground` for text placed on the solid colour.
 
@@ -49,15 +49,15 @@ Each of `success` / `warning` / `error` also has a `-light` variant (`rgba(…,0
 
 Ratios computed with sRGB alpha compositing against the actual surfaces:
 
-| Pair | Ratio | AA (4.5:1) |
-|---|---|---|
-| `foreground` on `background` | 18.56:1 | ✅ |
-| `foreground-secondary` on `background` | 9.99:1 | ✅ |
-| `foreground-muted` on `background` | 4.23:1 | ⚠️ large text only |
-| `primary` on `background` | 16.58:1 | ✅ |
-| `primary-foreground` on `primary` | 15.48:1 | ✅ |
-| `error-foreground` on `error` | 6.43:1 | ✅ |
-| white on `error` | 3.01:1 | ❌ **do not do this** |
+| Pair                                   | Ratio   | AA (4.5:1)            |
+| -------------------------------------- | ------- | --------------------- |
+| `foreground` on `background`           | 18.56:1 | ✅                    |
+| `foreground-secondary` on `background` | 9.99:1  | ✅                    |
+| `foreground-muted` on `background`     | 4.23:1  | ⚠️ large text only    |
+| `primary` on `background`              | 16.58:1 | ✅                    |
+| `primary-foreground` on `primary`      | 15.48:1 | ✅                    |
+| `error-foreground` on `error`          | 6.43:1  | ✅                    |
+| white on `error`                       | 3.01:1  | ❌ **do not do this** |
 
 ### 2.3 Rules
 
@@ -75,19 +75,19 @@ Ratios computed with sRGB alpha compositing against the actual surfaces:
 
 **Family:** `Inter`, falling back to `ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`. Monospace: `"SFMono-Regular", Consolas, "Liberation Mono", monospace`.
 
-| Token | Size / line-height | Weight | Tracking | Use |
-|---|---|---|---|---|
-| `text-hero` | `clamp(3rem, 8vw, 7.5rem)` / 0.92 | 900 | −0.04em | marketing hero |
-| `text-heading` | `clamp(2.25rem, 5vw, 4rem)` / 1.05 | 800 | −0.03em | section headings |
-| `text-subheading` | `clamp(1.5rem, 3vw, 2.25rem)` / 1.2 | 700 | −0.02em | sub-sections |
-| `text-4xl` | 2.25rem / 2.5rem | — | — | page titles |
-| `text-3xl` | 1.875rem / 2.25rem | — | — | card titles |
-| `text-2xl` | 1.5rem / 2rem | — | — | panel titles |
-| `text-xl` | 1.25rem / 1.75rem | — | — | lead paragraphs |
-| `text-lg` | 1.125rem / 1.75rem | — | — | emphasis |
-| `text-base` | 1rem / 1.5rem | — | — | body |
-| `text-sm` | 0.875rem / 1.25rem | — | — | UI labels, dense copy |
-| `text-xs` | 0.75rem / 1rem | — | — | metadata, badges |
+| Token             | Size / line-height                  | Weight | Tracking | Use                   |
+| ----------------- | ----------------------------------- | ------ | -------- | --------------------- |
+| `text-hero`       | `clamp(3rem, 8vw, 7.5rem)` / 0.92   | 900    | −0.04em  | marketing hero        |
+| `text-heading`    | `clamp(2.25rem, 5vw, 4rem)` / 1.05  | 800    | −0.03em  | section headings      |
+| `text-subheading` | `clamp(1.5rem, 3vw, 2.25rem)` / 1.2 | 700    | −0.02em  | sub-sections          |
+| `text-4xl`        | 2.25rem / 2.5rem                    | —      | —        | page titles           |
+| `text-3xl`        | 1.875rem / 2.25rem                  | —      | —        | card titles           |
+| `text-2xl`        | 1.5rem / 2rem                       | —      | —        | panel titles          |
+| `text-xl`         | 1.25rem / 1.75rem                   | —      | —        | lead paragraphs       |
+| `text-lg`         | 1.125rem / 1.75rem                  | —      | —        | emphasis              |
+| `text-base`       | 1rem / 1.5rem                       | —      | —        | body                  |
+| `text-sm`         | 0.875rem / 1.25rem                  | —      | —        | UI labels, dense copy |
+| `text-xs`         | 0.75rem / 1rem                      | —      | —        | metadata, badges      |
 
 **Rules:** display sizes tighten tracking (`−0.03em` to `−0.045em`); body text stays at 0. `text-xs` (12px) is the floor for informational text — nothing that must be read should go below it.
 
@@ -97,7 +97,7 @@ Ratios computed with sRGB alpha compositing against the actual surfaces:
 
 **Spacing.** An 8px system: `8 / 16 / 24 / 32 / 48 / 64 / 96 / 120 / 160`. Layout tokens: `sidebar` 280px, `topbar` 56px, `panel` 320px.
 
-> ⚠️ **Known defect — do not copy the current config.** `apps/web/tailwind.config.ts` currently defines the 8px steps as **numeric** keys (`'8': '8px'`, `'16': '16px'`, …), which override Tailwind's defaults and make the scale non-monotonic (`p-8` resolves to 8px and collides with `p-2`; `max-h-96` collapses from 384px to 96px). Prefer Tailwind's native steps, which already *are* this scale (`2 / 4 / 6 / 8 / 12 / 16` = 8/16/24/32/48/64px). See `docs/design-accessibility-review.md` §2.2.
+> ⚠️ **Known defect — do not copy the current config.** `apps/web/tailwind.config.ts` currently defines the 8px steps as **numeric** keys (`'8': '8px'`, `'16': '16px'`, …), which override Tailwind's defaults and make the scale non-monotonic (`p-8` resolves to 8px and collides with `p-2`; `max-h-96` collapses from 384px to 96px). Prefer Tailwind's native steps, which already _are_ this scale (`2 / 4 / 6 / 8 / 12 / 16` = 8/16/24/32/48/64px). See `docs/design-accessibility-review.md` §2.2.
 
 **Radius.** `sm` 6px · `md` 8px · `lg` 12px · `xl` 16px · `2xl` 20px · `card` 20px · `window` 16px. Pills (`rounded-full`) are reserved for primary CTAs and status chips.
 
@@ -122,10 +122,10 @@ Tracked in full in [`docs/design-accessibility-review.md`](./docs/design-accessi
 1. The spacing-key defect above (§4).
 2. `foreground-muted` and the `border` / `border-strong` / `background-muted` tokens do not meet WCAG AA in their primary roles — §3.1 of the review lists both a value adjustment and a palette-preserving alternative for each.
 3. **Sanctioned literal colours.** Everything else now resolves to a token. These keep literal values on purpose, and a reviewer should not "fix" them:
-   - the landing page's light "generated site" mock (`app/page.tsx`) — it depicts a *different* website inside the dark chrome;
+   - the landing page's light "generated site" mock (`app/page.tsx`) — it depicts a _different_ website inside the dark chrome;
    - the code-sample syntax colours on `app/page.tsx` and `apps/web/src/components/code-editor/code-editor.tsx`;
    - the `.code-block` surface in `globals.css` and the code viewer in `components/project/code-pane.tsx` (`#1e1e1e` / `#d4d4d4`) — an editor surface, not app chrome;
-   - the Tailwind colour-swatch list in `components/visual-editor/properties-panel.tsx` — those are the colours a *user's generated app* may pick;
+   - the Tailwind colour-swatch list in `components/visual-editor/properties-panel.tsx` — those are the colours a _user's generated app_ may pick;
    - the CSS injected into the sandboxed `apps/web/src/lib/visual-editor.ts` overlay — it renders inside the generated app's document, not this one;
    - per-project accent colours (`app/dashboard/page.tsx`) and per-category template palettes (`app/dashboard/templates/page.tsx`) — intentional art.
 4. **Orphan brand art in the abandoned palette.** `apps/web/public/logo.svg`, `logo.png` and `logo-transparent.png` are the bronze "SOVEREIGN" dragon crest from the superseded direction. Nothing references them (the live mark is the inline `Logo()` in `app/page.tsx`). They should be deleted or re-exported in the shipping palette — flagged rather than removed, because they are brand assets.
