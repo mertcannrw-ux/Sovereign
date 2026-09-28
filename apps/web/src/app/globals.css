@@ -12,11 +12,11 @@
     --background: #090909;
     --background-subtle: #101010;
     --background-muted: #171717;
-    --foreground: #f7f7f5;
+    --foreground: #d6d6d2;
     --foreground-secondary: #b8b8b2;
-    --foreground-muted: #74746e;
+    --foreground-muted: #80807c;
     --border: #242422;
-    --border-strong: #383835;
+    --border-strong: #646460;
     --focus-ring: #b8ff5a;
     --primary: #b8ff5a;
     --primary-hover: #c7ff7c;
@@ -186,6 +186,6 @@
   input:focus-visible,
   textarea:focus-visible,
   select:focus-visible {
-    @apply outline-none ring-2 ring-border-focus;
+    @apply outline-none ring-2 ring-border-focus/40;
   }
 }

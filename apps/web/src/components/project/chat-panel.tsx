@@ -281,9 +281,7 @@ function ToolStepsDisplay({ toolCalls }: { toolCalls: unknown }) {
                     </span>
                   )}
                   {step.durationMs !== undefined && (
-                    <span className="text-[10px] text-foreground-muted/60">
-                      {step.durationMs}ms
-                    </span>
+                    <span className="text-[10px] text-foreground-muted">{step.durationMs}ms</span>
                   )}
                   <span className="h-1.5 w-1.5 rounded-full bg-success" />
                 </div>
@@ -456,7 +454,7 @@ export function ChatPanel({
               </div>
               {msg.tokenUsage && (
                 <div className="pl-8 pt-1">
-                  <span className="text-[10px] text-foreground-muted/60">
+                  <span className="text-[10px] text-foreground-muted">
                     {msg.tokenUsage.totalTokens} tokens
                   </span>
                 </div>

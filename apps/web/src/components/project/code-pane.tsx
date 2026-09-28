@@ -71,8 +71,8 @@ export function CodePane({
             type="button"
             onClick={() => onSelectFile(file)}
             className={cn(
-              'flex w-full items-center gap-2 truncate px-3 py-1.5 text-left text-[11px] text-foreground-secondary hover:bg-white/5 hover:text-white',
-              activeFile?.path === file.path && 'bg-white/10 text-white',
+              'flex w-full items-center gap-2 truncate px-3 py-1.5 text-left text-[11px] text-foreground-secondary hover:bg-white/5 hover:text-foreground',
+              activeFile?.path === file.path && 'bg-white/10 text-foreground',
             )}
           >
             {activeFile?.path === file.path && isSending ? (

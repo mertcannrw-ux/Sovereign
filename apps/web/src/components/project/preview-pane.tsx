@@ -241,7 +241,7 @@ export function PreviewPane({
               <button
                 type="button"
                 onClick={() => onRetry()}
-                className="mt-4 inline-flex items-center gap-1.5 rounded-md border border-border-strong bg-background-subtle px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-primary/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                className="mt-4 inline-flex items-center gap-1.5 rounded-md border border-border-strong bg-background-subtle px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-primary/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40"
               >
                 <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
                 Retry preview
@@ -287,7 +287,7 @@ export function PreviewPane({
         </div>
       ) : null}
       {isEditMode && !selectedPreviewElement && url && (
-        <div className="pointer-events-none absolute left-1/2 top-3 z-20 -translate-x-1/2 rounded-full border border-primary/40 bg-background-subtle/95 px-3 py-1.5 text-xs font-medium text-white shadow-xl backdrop-blur">
+        <div className="pointer-events-none absolute left-1/2 top-3 z-20 -translate-x-1/2 rounded-full border border-primary/40 bg-background-subtle/95 px-3 py-1.5 text-xs font-medium text-foreground shadow-xl backdrop-blur">
           Click an element to target it
         </div>
       )}

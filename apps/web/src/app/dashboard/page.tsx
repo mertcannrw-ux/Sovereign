@@ -214,7 +214,7 @@ function DashboardContent() {
             <div className="space-y-2">
               <label className="text-sm font-medium">What are you building?</label>
               <textarea
-                className="min-h-32 w-full resize-none rounded-lg border border-border bg-background-muted px-3.5 py-3 text-sm text-foreground placeholder:text-foreground-muted focus:outline-none focus:ring-2 focus:ring-primary/50"
+                className="min-h-32 w-full resize-none rounded-lg border border-border bg-background-muted px-3.5 py-3 text-sm text-foreground placeholder:text-foreground-muted focus:outline-none focus:ring-2 focus:ring-border-focus/40"
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 placeholder="e.g. A task manager with drag-and-drop kanban boards"

@@ -206,7 +206,7 @@ function TemplateCard({
           </div>
         </div>
         {template.featured && (
-          <span className="absolute left-5 top-5 flex items-center gap-1.5 rounded-full bg-black/35 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-white">
+          <span className="absolute left-5 top-5 flex items-center gap-1.5 rounded-full bg-black/35 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-foreground">
             <Star className="h-3 w-3" />
             Featured
           </span>

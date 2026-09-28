@@ -488,12 +488,12 @@ export function PromptBar({
                 aria-selected={activeOptionIndex === 0}
                 onClick={() => setActiveSubMenu('models')}
                 className={cn(
-                  'flex w-full items-center justify-between rounded-xl px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-white/5',
+                  'flex w-full items-center justify-between rounded-xl px-3 py-2 text-xs font-medium text-foreground transition-colors hover:bg-white/5',
                   activeOptionIndex === 0 && 'bg-white/5',
                 )}
               >
                 <span className="text-foreground-secondary">Model</span>
-                <div className="flex items-center gap-1 text-white">
+                <div className="flex items-center gap-1 text-foreground">
                   <span>{selectedModel || 'Select model'}</span>
                   <ChevronRight className="h-3.5 w-3.5 opacity-60" />
                 </div>
@@ -507,12 +507,12 @@ export function PromptBar({
                 aria-selected={activeOptionIndex === 1}
                 onClick={() => setActiveSubMenu('effort')}
                 className={cn(
-                  'flex w-full items-center justify-between rounded-xl px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-white/5',
+                  'flex w-full items-center justify-between rounded-xl px-3 py-2 text-xs font-medium text-foreground transition-colors hover:bg-white/5',
                   activeOptionIndex === 1 && 'bg-white/5',
                 )}
               >
                 <span className="text-foreground-secondary">Effort</span>
-                <div className="flex items-center gap-1 text-white">
+                <div className="flex items-center gap-1 text-foreground">
                   <span className="capitalize">
                     {REASONING_LEVELS.find((r) => r.value === reasoningEffort)?.label ?? 'Auto'}
                   </span>
@@ -524,11 +524,11 @@ export function PromptBar({
 
           {activeSubMenu === 'models' && (
             <div>
-              <div className="mb-2 flex items-center justify-between border-b border-white/10 pb-2 text-xs font-semibold text-white">
+              <div className="mb-2 flex items-center justify-between border-b border-white/10 pb-2 text-xs font-semibold text-foreground">
                 <button
                   type="button"
                   onClick={() => setActiveSubMenu('root')}
-                  className="flex items-center gap-1 text-foreground-muted hover:text-white"
+                  className="flex items-center gap-1 text-foreground-muted hover:text-foreground"
                 >
                   <ArrowLeft className="h-3.5 w-3.5" /> Back
                 </button>
@@ -559,7 +559,7 @@ export function PromptBar({
                     onSelectModelKey(option.key);
                     setActiveSubMenu('root');
                   }}
-                  className="h-9 w-full rounded-lg border border-white/20 bg-background-subtle px-3 pr-7 text-xs font-medium text-white placeholder:text-foreground-muted focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/40"
+                  className="h-9 w-full rounded-lg border border-white/20 bg-background-subtle px-3 pr-7 text-xs font-medium text-foreground placeholder:text-foreground-muted focus:border-border-focus focus:outline-none focus:ring-1 focus:ring-border-focus/40"
                   aria-controls={listboxId}
                   aria-autocomplete="list"
                 />
@@ -567,7 +567,7 @@ export function PromptBar({
                   <button
                     type="button"
                     onClick={() => setModelSearchQuery('')}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-1 text-foreground-muted hover:text-white"
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-1 text-foreground-muted hover:text-foreground"
                     aria-label="Clear model search"
                   >
                     <X className="h-3.5 w-3.5" />
@@ -630,7 +630,7 @@ export function PromptBar({
                               'flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition-colors',
                               isSelected
                                 ? 'bg-primary/15 font-medium text-primary'
-                                : 'text-foreground-secondary hover:bg-white/5 hover:text-white',
+                                : 'text-foreground-secondary hover:bg-white/5 hover:text-foreground',
                               isActive && !isSelected && 'bg-white/5',
                             )}
                           >
@@ -655,11 +655,11 @@ export function PromptBar({
 
           {activeSubMenu === 'effort' && (
             <div>
-              <div className="mb-2 flex items-center justify-between border-b border-white/10 pb-2 text-xs font-semibold text-white">
+              <div className="mb-2 flex items-center justify-between border-b border-white/10 pb-2 text-xs font-semibold text-foreground">
                 <button
                   type="button"
                   onClick={() => setActiveSubMenu('root')}
-                  className="flex items-center gap-1 text-foreground-muted hover:text-white"
+                  className="flex items-center gap-1 text-foreground-muted hover:text-foreground"
                 >
                   <ArrowLeft className="h-3.5 w-3.5" /> Back
                 </button>
@@ -699,7 +699,7 @@ export function PromptBar({
                         'flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition-colors',
                         isSelected
                           ? 'bg-primary/15 font-medium text-primary'
-                          : 'text-foreground-secondary hover:bg-white/5 hover:text-white',
+                          : 'text-foreground-secondary hover:bg-white/5 hover:text-foreground',
                         index === activeOptionIndex && !isSelected && 'bg-white/5',
                       )}
                     >
@@ -727,7 +727,7 @@ export function PromptBar({
             <button
               type="button"
               onClick={onClearSelectedElement}
-              className="ml-auto rounded p-0.5 text-foreground-muted hover:text-white"
+              className="ml-auto rounded p-0.5 text-foreground-muted hover:text-foreground"
               aria-label="Clear selected element"
             >
               <X className="h-3.5 w-3.5" />
@@ -747,7 +747,7 @@ export function PromptBar({
               : 'Describe what you want to build or change…'
           }
           rows={2}
-          className="max-h-36 min-h-[44px] w-full resize-none border-none bg-transparent px-2 text-sm text-white shadow-none outline-none ring-0 placeholder:text-foreground-muted focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0"
+          className="max-h-36 min-h-[44px] w-full resize-none border-none bg-transparent px-2 text-sm text-foreground shadow-none outline-none ring-0 placeholder:text-foreground-muted focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0"
         />
 
         <div className="mt-3 flex items-center justify-between border-t border-white/[0.06] pt-2.5">
@@ -767,7 +767,7 @@ export function PromptBar({
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="flex h-9 w-9 items-center justify-center rounded-full text-foreground-secondary transition-all hover:bg-white/[0.08] hover:text-white active:scale-95"
+              className="flex h-9 w-9 items-center justify-center rounded-full text-foreground-secondary transition-all hover:bg-white/[0.08] hover:text-foreground active:scale-95"
               title="Append images or files"
               aria-label="Append images or files"
             >
@@ -777,14 +777,14 @@ export function PromptBar({
             {attachedFiles.map((file, idx) => (
               <div
                 key={`${file.name}-${idx}`}
-                className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white"
+                className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-foreground"
               >
                 <Paperclip className="h-3 w-3 text-primary" aria-hidden="true" />
                 <span className="max-w-[120px] truncate">{file.name}</span>
                 <button
                   type="button"
                   onClick={() => setAttachedFiles((prev) => prev.filter((_, i) => i !== idx))}
-                  className="text-foreground-muted hover:text-white"
+                  className="text-foreground-muted hover:text-foreground"
                   aria-label={`Remove attachment ${file.name}`}
                 >
                   <X className="h-3 w-3" />
@@ -837,7 +837,7 @@ export function PromptBar({
               className={cn(
                 'flex h-9 w-9 items-center justify-center rounded-full transition-all',
                 isSending
-                  ? 'bg-red-500 text-white shadow-md'
+                  ? 'bg-error text-error-foreground shadow-md hover:bg-error/90'
                   : input.trim() && selectedModel && selectedProvider
                     ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20 hover:bg-primary/90'
                     : 'cursor-not-allowed bg-white/10 text-white/30',

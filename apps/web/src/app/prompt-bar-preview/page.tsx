@@ -150,7 +150,7 @@ export default function PromptBarPreviewPage() {
             <div className="rounded-2xl border border-border bg-background-subtle p-8">
               <div className="mb-6 flex items-center justify-between">
                 <div>
-                  <h2 className="text-lg font-semibold text-white">
+                  <h2 className="text-lg font-semibold text-foreground">
                     Concept 4: Right-Aligned Minimalist (Sol / Claude Style)
                   </h2>
                   <p className="mt-1 text-xs text-foreground-muted">
@@ -173,10 +173,10 @@ export default function PromptBarPreviewPage() {
                         <button
                           type="button"
                           onClick={() => setActiveSubMenu('models')}
-                          className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-white/5"
+                          className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-xs font-medium text-foreground transition-colors hover:bg-white/5"
                         >
                           <span className="text-foreground-secondary">Model</span>
-                          <div className="flex items-center gap-1 text-white">
+                          <div className="flex items-center gap-1 text-foreground">
                             <span>{selectedModel}</span>
                             <ChevronRight className="h-3.5 w-3.5 opacity-60" />
                           </div>
@@ -185,10 +185,10 @@ export default function PromptBarPreviewPage() {
                         <button
                           type="button"
                           onClick={() => setActiveSubMenu('effort')}
-                          className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-white/5"
+                          className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-xs font-medium text-foreground transition-colors hover:bg-white/5"
                         >
                           <span className="text-foreground-secondary">Effort</span>
-                          <div className="flex items-center gap-1 text-white">
+                          <div className="flex items-center gap-1 text-foreground">
                             <span className="capitalize">
                               {REASONING_LEVELS.find((r) => r.id === selectedReasoning)?.label}
                             </span>
@@ -201,11 +201,11 @@ export default function PromptBarPreviewPage() {
                     {/* MODELS SUB-MENU */}
                     {activeSubMenu === 'models' && (
                       <div>
-                        <div className="mb-2 flex items-center justify-between border-b border-white/10 pb-2 text-xs font-semibold text-white">
+                        <div className="mb-2 flex items-center justify-between border-b border-white/10 pb-2 text-xs font-semibold text-foreground">
                           <button
                             type="button"
                             onClick={() => setActiveSubMenu('root')}
-                            className="flex items-center gap-1 text-foreground-muted hover:text-white"
+                            className="flex items-center gap-1 text-foreground-muted hover:text-foreground"
                           >
                             <ArrowLeft className="h-3.5 w-3.5" /> Back
                           </button>
@@ -219,13 +219,13 @@ export default function PromptBarPreviewPage() {
                             placeholder="Search models..."
                             value={modelSearch}
                             onChange={(e) => setModelSearch(e.target.value)}
-                            className="h-9 w-full rounded-lg border border-white/20 bg-background-subtle px-3 pr-7 text-xs font-medium text-white placeholder:text-foreground-muted focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/40"
+                            className="h-9 w-full rounded-lg border border-white/20 bg-background-subtle px-3 pr-7 text-xs font-medium text-foreground placeholder:text-foreground-muted focus:border-border-focus focus:outline-none focus:ring-1 focus:ring-border-focus/40"
                           />
                           {modelSearch && (
                             <button
                               type="button"
                               onClick={() => setModelSearch('')}
-                              className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-1 text-foreground-muted hover:text-white"
+                              className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-1 text-foreground-muted hover:text-foreground"
                             >
                               <X className="h-3.5 w-3.5" />
                             </button>
@@ -244,7 +244,7 @@ export default function PromptBarPreviewPage() {
                                 'flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition-colors',
                                 selectedModel === m.name
                                   ? 'bg-primary/15 font-medium text-primary'
-                                  : 'text-foreground-secondary hover:bg-white/5 hover:text-white',
+                                  : 'text-foreground-secondary hover:bg-white/5 hover:text-foreground',
                               )}
                             >
                               <div className="flex items-center gap-2">
@@ -263,11 +263,11 @@ export default function PromptBarPreviewPage() {
                     {/* EFFORT SUB-MENU */}
                     {activeSubMenu === 'effort' && (
                       <div>
-                        <div className="mb-2 flex items-center justify-between border-b border-white/10 pb-2 text-xs font-semibold text-white">
+                        <div className="mb-2 flex items-center justify-between border-b border-white/10 pb-2 text-xs font-semibold text-foreground">
                           <button
                             type="button"
                             onClick={() => setActiveSubMenu('root')}
-                            className="flex items-center gap-1 text-foreground-muted hover:text-white"
+                            className="flex items-center gap-1 text-foreground-muted hover:text-foreground"
                           >
                             <ArrowLeft className="h-3.5 w-3.5" /> Back
                           </button>
@@ -286,7 +286,7 @@ export default function PromptBarPreviewPage() {
                                 'flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition-colors',
                                 selectedReasoning === r.id
                                   ? 'bg-primary/15 font-medium text-primary'
-                                  : 'text-foreground-secondary hover:bg-white/5 hover:text-white',
+                                  : 'text-foreground-secondary hover:bg-white/5 hover:text-foreground',
                               )}
                             >
                               <span>{r.label}</span>
@@ -315,7 +315,7 @@ export default function PromptBarPreviewPage() {
                       <button
                         type="button"
                         onClick={() => setHasTarget(false)}
-                        className="ml-auto text-foreground-muted hover:text-white"
+                        className="ml-auto text-foreground-muted hover:text-foreground"
                       >
                         <X className="h-3.5 w-3.5" />
                       </button>
@@ -327,7 +327,7 @@ export default function PromptBarPreviewPage() {
                     onChange={(e) => setSampleText(e.target.value)}
                     placeholder="Describe what you want to build or change…"
                     rows={2}
-                    className="w-full resize-none border-none bg-transparent px-1 text-sm text-white shadow-none outline-none ring-0 placeholder:text-foreground-muted focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0"
+                    className="w-full resize-none border-none bg-transparent px-1 text-sm text-foreground shadow-none outline-none ring-0 placeholder:text-foreground-muted focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0"
                   />
 
                   {/* FOOTER BAR: RIGHT ALIGNED CONFIG TRIGGER & CIRCULAR SEND */}
@@ -353,7 +353,7 @@ export default function PromptBarPreviewPage() {
                       <button
                         type="button"
                         onClick={() => fileInputRef.current?.click()}
-                        className="flex h-9 w-9 items-center justify-center rounded-full text-foreground-secondary transition-all hover:bg-white/[0.08] hover:text-white active:scale-95"
+                        className="flex h-9 w-9 items-center justify-center rounded-full text-foreground-secondary transition-all hover:bg-white/[0.08] hover:text-foreground active:scale-95"
                         title="Append images or files"
                         aria-label="Append images or files"
                       >
@@ -364,7 +364,7 @@ export default function PromptBarPreviewPage() {
                       {attachedFiles.map((file, idx) => (
                         <div
                           key={idx}
-                          className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white"
+                          className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-foreground"
                         >
                           <Paperclip className="h-3 w-3 text-primary" />
                           <span className="max-w-[120px] truncate">{file.name}</span>
@@ -373,7 +373,7 @@ export default function PromptBarPreviewPage() {
                             onClick={() =>
                               setAttachedFiles((prev) => prev.filter((_, i) => i !== idx))
                             }
-                            className="text-foreground-muted hover:text-white"
+                            className="text-foreground-muted hover:text-foreground"
                             aria-label="Remove attachment"
                           >
                             <X className="3-3 h-3" />
@@ -407,7 +407,7 @@ export default function PromptBarPreviewPage() {
                         className={cn(
                           'flex h-9 w-9 items-center justify-center rounded-full transition-all',
                           isSending
-                            ? 'bg-red-500 text-white shadow-md'
+                            ? 'bg-error text-error-foreground shadow-md hover:bg-error/90'
                             : sampleText.trim()
                               ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20 hover:bg-primary/90'
                               : 'cursor-not-allowed bg-white/10 text-white/30',
@@ -432,7 +432,7 @@ export default function PromptBarPreviewPage() {
             <div className="rounded-2xl border border-border bg-background-subtle p-8">
               <div className="mb-6 flex items-center justify-between">
                 <div>
-                  <h2 className="text-lg font-semibold text-white">
+                  <h2 className="text-lg font-semibold text-foreground">
                     Concept 1: Unified Popover Panel
                   </h2>
                   <p className="mt-1 text-xs text-foreground-muted">
@@ -450,13 +450,13 @@ export default function PromptBarPreviewPage() {
                 {showModelPopover && (
                   <div className="absolute bottom-full left-0 z-30 mb-3 w-80 rounded-2xl border border-white/15 bg-background-muted p-3 shadow-2xl backdrop-blur-xl">
                     <div className="mb-2.5 flex items-center justify-between border-b border-white/10 pb-2">
-                      <span className="text-xs font-semibold text-white">
+                      <span className="text-xs font-semibold text-foreground">
                         Model & Reasoning Config
                       </span>
                       <button
                         type="button"
                         onClick={() => setShowModelPopover(false)}
-                        className="rounded p-1 text-foreground-muted hover:text-white"
+                        className="rounded p-1 text-foreground-muted hover:text-foreground"
                       >
                         <X className="h-3.5 w-3.5" />
                       </button>
@@ -469,7 +469,7 @@ export default function PromptBarPreviewPage() {
                         value={modelSearch}
                         onChange={(e) => setModelSearch(e.target.value)}
                         placeholder="Search models or providers..."
-                        className="w-full rounded-lg border border-white/10 bg-black/40 py-1.5 pl-8 pr-3 text-xs text-white placeholder:text-foreground-muted focus:border-primary focus:outline-none"
+                        className="w-full rounded-lg border border-white/10 bg-black/40 py-1.5 pl-8 pr-3 text-xs text-foreground placeholder:text-foreground-muted focus:border-primary focus:outline-none"
                       />
                     </div>
 
@@ -483,7 +483,7 @@ export default function PromptBarPreviewPage() {
                             'flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition-colors',
                             selectedModel === m.name
                               ? 'bg-primary/15 font-medium text-primary'
-                              : 'text-foreground-secondary hover:bg-white/5 hover:text-white',
+                              : 'text-foreground-secondary hover:bg-white/5 hover:text-foreground',
                           )}
                         >
                           <div className="flex items-center gap-2">
@@ -516,7 +516,7 @@ export default function PromptBarPreviewPage() {
                               'rounded py-1 text-[10px] font-semibold transition-all',
                               selectedReasoning === r.id
                                 ? 'bg-primary text-primary-foreground shadow'
-                                : 'text-foreground-muted hover:text-white',
+                                : 'text-foreground-muted hover:text-foreground',
                             )}
                           >
                             {r.label}
@@ -532,7 +532,7 @@ export default function PromptBarPreviewPage() {
                     value={sampleText}
                     onChange={(e) => setSampleText(e.target.value)}
                     rows={2}
-                    className="w-full resize-none bg-transparent px-2 text-sm text-white placeholder:text-foreground-muted focus:outline-none"
+                    className="w-full resize-none bg-transparent px-2 text-sm text-foreground placeholder:text-foreground-muted focus:outline-none"
                   />
 
                   <div className="mt-3 flex items-center justify-between border-t border-white/[0.06] pt-2.5">
@@ -566,7 +566,7 @@ export default function PromptBarPreviewPage() {
             <div className="rounded-2xl border border-border bg-background-subtle p-8">
               <div className="mb-6 flex items-center justify-between">
                 <div>
-                  <h2 className="text-lg font-semibold text-white">
+                  <h2 className="text-lg font-semibold text-foreground">
                     Concept 2: Dual Embedded Chips
                   </h2>
                   <p className="mt-1 text-xs text-foreground-muted">
@@ -580,7 +580,7 @@ export default function PromptBarPreviewPage() {
                   value={sampleText}
                   onChange={(e) => setSampleText(e.target.value)}
                   rows={2}
-                  className="w-full resize-none bg-transparent px-2 text-sm text-white focus:outline-none"
+                  className="w-full resize-none bg-transparent px-2 text-sm text-foreground focus:outline-none"
                 />
 
                 <div className="mt-3 flex items-center justify-between border-t border-white/[0.06] pt-2.5">
@@ -619,7 +619,9 @@ export default function PromptBarPreviewPage() {
             <div className="rounded-2xl border border-border bg-background-subtle p-8">
               <div className="mb-6 flex items-center justify-between">
                 <div>
-                  <h2 className="text-lg font-semibold text-white">Concept 3: Expandable Drawer</h2>
+                  <h2 className="text-lg font-semibold text-foreground">
+                    Concept 3: Expandable Drawer
+                  </h2>
                   <p className="mt-1 text-xs text-foreground-muted">
                     Expandable controls drawer directly inside the prompt bar.
                   </p>
@@ -631,7 +633,7 @@ export default function PromptBarPreviewPage() {
                   value={sampleText}
                   onChange={(e) => setSampleText(e.target.value)}
                   rows={2}
-                  className="w-full resize-none bg-transparent px-2 text-sm text-white focus:outline-none"
+                  className="w-full resize-none bg-transparent px-2 text-sm text-foreground focus:outline-none"
                 />
 
                 <div className="mt-3 space-y-3 rounded-xl border border-white/10 bg-black/40 p-3">
@@ -640,13 +642,13 @@ export default function PromptBarPreviewPage() {
                     <select
                       value={selectedModel}
                       onChange={(e) => setSelectedModel(e.target.value)}
-                      className="rounded border border-white/10 bg-background-subtle px-2.5 py-1 text-xs text-white focus:outline-none"
+                      className="rounded border border-white/10 bg-background-subtle px-2.5 py-1 text-xs text-foreground focus:outline-none"
                     >
                       {SAMPLE_MODELS.map((m) => (
                         <option
                           key={m.id}
                           value={m.name}
-                          className="bg-background-subtle text-white"
+                          className="bg-background-subtle text-foreground"
                         >
                           {m.name} ({m.provider})
                         </option>

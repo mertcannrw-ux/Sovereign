@@ -13,14 +13,14 @@ const config: Config = {
           inverse: '#F4F4F0',
         },
         foreground: {
-          DEFAULT: '#F7F7F5',
+          DEFAULT: '#D6D6D2',
           secondary: '#B8B8B2',
-          muted: '#74746E',
+          muted: '#80807C',
           inverse: '#11110F',
         },
         border: {
           DEFAULT: '#242422',
-          strong: '#383835',
+          strong: '#646460',
           focus: '#B8FF5A',
         },
         primary: {
@@ -84,15 +84,6 @@ const config: Config = {
         sidebar: '280px',
         topbar: '56px',
         panel: '320px',
-        '8': '8px',
-        '16': '16px',
-        '24': '24px',
-        '32': '32px',
-        '48': '48px',
-        '64': '64px',
-        '96': '96px',
-        '120': '120px',
-        '160': '160px',
       },
       borderRadius: {
         sm: '0.375rem',

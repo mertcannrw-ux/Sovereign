@@ -443,7 +443,7 @@ function ProjectWorkspace() {
               updateProjectMutation.mutate({ id: projectId, name: nextName });
             }
           }}
-          className="max-w-[160px] border-none bg-transparent text-base font-bold tracking-tight text-white outline-none focus:ring-0 sm:max-w-[300px]"
+          className="max-w-[160px] border-none bg-transparent text-base font-bold tracking-tight text-foreground outline-none focus:ring-0 sm:max-w-[300px]"
           aria-label="Project name"
         />
 

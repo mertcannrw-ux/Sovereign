@@ -27,12 +27,12 @@
 | Subtle surface  | `background-subtle`    | `#101010`              | cards, popovers, inset panels                         |
 | Muted surface   | `background-muted`     | `#171717`              | input fills, raised rows, hover fills                 |
 | Inverse surface | `background-inverse`   | `#F4F4F0`              | light-on-dark inversions                              |
-| Primary text    | `foreground`           | `#F7F7F5`              | headings, body, primary labels                        |
+| Primary text    | `foreground`           | `#D6D6D2`              | headings, body, primary labels                        |
 | Secondary text  | `foreground-secondary` | `#B8B8B2`              | supporting copy, secondary labels                     |
-| Muted text      | `foreground-muted`     | `#74746E`              | placeholders, timestamps, captions                    |
+| Muted text      | `foreground-muted`     | `#80807C`              | placeholders, timestamps, captions                    |
 | Inverse text    | `foreground-inverse`   | `#11110F`              | text on inverse surfaces                              |
 | Hairline border | `border`               | `#242422`              | dividers, card edges, table rules                     |
-| Strong border   | `border-strong`        | `#383835`              | control boundaries, emphasized edges                  |
+| Strong border   | `border-strong`        | `#646460`              | control boundaries, emphasized edges                  |
 | **Focus**       | `border-focus`         | `#B8FF5A`              | focus rings — always use this, never a bespoke colour |
 | **Accent**      | `primary`              | `#B8FF5A`              | primary buttons, active states, key metrics           |
 | Accent hover    | `primary-hover`        | `#C7FF7C`              | hover on accent surfaces                              |
@@ -51,9 +51,9 @@ Ratios computed with sRGB alpha compositing against the actual surfaces:
 
 | Pair                                   | Ratio   | AA (4.5:1)            |
 | -------------------------------------- | ------- | --------------------- |
-| `foreground` on `background`           | 18.56:1 | ✅                    |
+| `foreground` on `background`           | 13.66:1 | ✅                    |
 | `foreground-secondary` on `background` | 9.99:1  | ✅                    |
-| `foreground-muted` on `background`     | 4.23:1  | ⚠️ large text only    |
+| `foreground-muted` on `background`     | 5.02:1  | ✅                    |
 | `primary` on `background`              | 16.58:1 | ✅                    |
 | `primary-foreground` on `primary`      | 15.48:1 | ✅                    |
 | `error-foreground` on `error`          | 6.43:1  | ✅                    |
@@ -63,10 +63,10 @@ Ratios computed with sRGB alpha compositing against the actual surfaces:
 
 1. **Never write a raw hex in a component.** Always use a token (`bg-background-muted`, `text-foreground-secondary`, `border-border-strong`). If you need a colour that has no token, add a token. The only sanctioned literals are the illustration/editor exceptions listed in §6.
 2. **Never use `text-white` on `error`.** `error-foreground` (`#190909`) is the correct pairing at 6.43:1; white is 3.01:1 and fails AA.
-3. **`foreground-muted` is for large text only.** It measures 4.23:1 on `background` and 3.81:1 on `background-muted`, so it fails AA below 18.66px bold / 24px. For small muted text and placeholders, use `foreground-secondary` (9.99:1). (Tracked as an open issue in `docs/design-accessibility-review.md` §3.1.)
+3. **`foreground-muted` passes AA at small sizes.** It measures 5.02:1 on `background`, 4.80:1 on `background-subtle` and 4.52:1 on `background-muted`, so it may be used for small text and placeholders anywhere.
 4. **`border` is decorative.** At 1.28:1 against `background` it is a divider, not a control outline. Interactive controls must be identifiable without relying on their hairline alone.
-5. **Focus is always `border-focus`.** A focus ring that is not `#B8FF5A` at ≥3:1 contrast is a bug.
-6. **Alpha steps on the marketing surface.** The target floor for body-sized white text is `/48`; lower steps (currently `/20`–`/45` on the landing page) are reserved for display type. The offending lines are enumerated in the review document — treat this as a target, not a description of the current build.
+5. **Focus is always `border-focus`, at soft strength.** Focus indicators use the `border-focus` colour: inputs take a `border-focus` border plus a `ring-border-focus/30`–`/40` halo (≈3.3:1, above the 3:1 focus-visible minimum); buttons and other controls use `ring-border-focus/40`. Full-strength lime rings are not used — they measure 16.6:1 and read as glare on the dark surface. A focus indicator not based on `border-focus` is a bug.
+6. **Alpha steps on the marketing surface.** The floor for body-sized white text is `/48`; lower steps (`/20`–`/45`) are reserved for display type and the sanctioned illustration mock. All landing-page body copy now sits at or above `/48`.
 7. **Status colours carry meaning only with a label or icon.** Never signal success/warning/error by hue alone.
 
 ---
@@ -97,7 +97,7 @@ Ratios computed with sRGB alpha compositing against the actual surfaces:
 
 **Spacing.** An 8px system: `8 / 16 / 24 / 32 / 48 / 64 / 96 / 120 / 160`. Layout tokens: `sidebar` 280px, `topbar` 56px, `panel` 320px.
 
-> ⚠️ **Known defect — do not copy the current config.** `apps/web/tailwind.config.ts` currently defines the 8px steps as **numeric** keys (`'8': '8px'`, `'16': '16px'`, …), which override Tailwind's defaults and make the scale non-monotonic (`p-8` resolves to 8px and collides with `p-2`; `max-h-96` collapses from 384px to 96px). Prefer Tailwind's native steps, which already _are_ this scale (`2 / 4 / 6 / 8 / 12 / 16` = 8/16/24/32/48/64px). See `docs/design-accessibility-review.md` §2.2.
+> The numeric spacing keys (`'8': '8px'`, `'16': '16px'`, …) that previously overrode Tailwind's defaults and made the scale non-monotonic (`p-8` resolving to 8px; `max-h-96` collapsing to 96px) have been removed. The config now relies on Tailwind's native steps, which already _are_ this scale (`2 / 4 / 6 / 8 / 12 / 16` = 8/16/24/32/48/64px). Only the named layout tokens (`sidebar`, `topbar`, `panel`) are defined.
 
 **Radius.** `sm` 6px · `md` 8px · `lg` 12px · `xl` 16px · `2xl` 20px · `card` 20px · `window` 16px. Pills (`rounded-full`) are reserved for primary CTAs and status chips.
 
@@ -117,10 +117,10 @@ Ratios computed with sRGB alpha compositing against the actual surfaces:
 
 ## 6. Open issues
 
-Tracked in full in [`docs/design-accessibility-review.md`](./docs/design-accessibility-review.md). The items that most affect the design system:
+Historically tracked in `docs/design-accessibility-review.md` (removed from the repo); the resolved state of each item:
 
-1. The spacing-key defect above (§4).
-2. `foreground-muted` and the `border` / `border-strong` / `background-muted` tokens do not meet WCAG AA in their primary roles — §3.1 of the review lists both a value adjustment and a palette-preserving alternative for each.
+1. ~~The spacing-key defect above (§4).~~ **Fixed** — the numeric overrides are removed; Tailwind's native steps ship.
+2. ~~`foreground-muted` and `border-strong` do not meet WCAG AA.~~ **Fixed** — `foreground-muted` is now `#80807C` (5.02:1 / 4.80:1 / 4.52:1 on the three surfaces; AA at all sizes) and `border-strong` is now `#646460` (3.35:1 / 3.20:1 / 3.02:1 — above the 3:1 non-text minimum on every surface, tuned to the minimum rather than overshooting to keep the dark surface calm). `border` remains a decorative hairline by design; `background-muted` is a fill, not text, and keeps its value.
 3. **Sanctioned literal colours.** Everything else now resolves to a token. These keep literal values on purpose, and a reviewer should not "fix" them:
    - the landing page's light "generated site" mock (`app/page.tsx`) — it depicts a _different_ website inside the dark chrome;
    - the code-sample syntax colours on `app/page.tsx` and `apps/web/src/components/code-editor/code-editor.tsx`;
@@ -128,4 +128,4 @@ Tracked in full in [`docs/design-accessibility-review.md`](./docs/design-accessi
    - the Tailwind colour-swatch list in `components/visual-editor/properties-panel.tsx` — those are the colours a _user's generated app_ may pick;
    - the CSS injected into the sandboxed `apps/web/src/lib/visual-editor.ts` overlay — it renders inside the generated app's document, not this one;
    - per-project accent colours (`app/dashboard/page.tsx`) and per-category template palettes (`app/dashboard/templates/page.tsx`) — intentional art.
-4. **Orphan brand art in the abandoned palette.** `apps/web/public/logo.svg`, `logo.png` and `logo-transparent.png` are the bronze "SOVEREIGN" dragon crest from the superseded direction. Nothing references them (the live mark is the inline `Logo()` in `app/page.tsx`). They should be deleted or re-exported in the shipping palette — flagged rather than removed, because they are brand assets.
+4. ~~Orphan brand art in the abandoned palette.~~ **Removed** — `apps/web/public/logo.svg`, `logo.png` and `logo-transparent.png` (bronze "SOVEREIGN" dragon crest) are deleted; the live mark is the inline `Logo()` in `app/page.tsx`.

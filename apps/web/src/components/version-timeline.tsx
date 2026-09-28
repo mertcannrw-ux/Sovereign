@@ -132,7 +132,7 @@ export function VersionTimeline({
                           }${isCurrent ? ', current version' : ''}`}
                           className={cn(
                             'relative flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-medium transition-all',
-                            'hover:ring-2 hover:ring-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+                            'hover:ring-2 hover:ring-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
                             'disabled:cursor-not-allowed disabled:opacity-60',
                             isSelected &&
                               'bg-primary text-primary-foreground shadow-sm ring-2 ring-primary',
