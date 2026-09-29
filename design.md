@@ -12,7 +12,8 @@
 - **Dark only.** There is no light theme. `next-themes` is configured with `enableSystem={false}` and `defaultTheme="dark"`.
 - **Monochrome base, one accent.** Near-black surfaces and off-white text carry the interface; a single lime accent marks actions and status. Colour is never used decoratively.
 - **Editorial, typography-first.** Large negative space, tight tracking on display sizes, flat surfaces, no glassmorphism or neumorphism.
-- **Restraint in motion.** Short transitions (150–300ms) on colour, border and opacity. No looping background gradients.
+- **Restraint in motion.** Short transitions (150–300ms) on colour, border and opacity. No looping
+  background gradients in the app. The marketing surface is the one documented exception — see §7.
 - **8px spatial rhythm.** All spacing derives from the 8px step (see §4).
 
 ---
@@ -122,10 +123,42 @@ Historically tracked in `docs/design-accessibility-review.md` (removed from the 
 1. ~~The spacing-key defect above (§4).~~ **Fixed** — the numeric overrides are removed; Tailwind's native steps ship.
 2. ~~`foreground-muted` and `border-strong` do not meet WCAG AA.~~ **Fixed** — `foreground-muted` is now `#80807C` (5.02:1 / 4.80:1 / 4.52:1 on the three surfaces; AA at all sizes) and `border-strong` is now `#646460` (3.35:1 / 3.20:1 / 3.02:1 — above the 3:1 non-text minimum on every surface, tuned to the minimum rather than overshooting to keep the dark surface calm). `border` remains a decorative hairline by design; `background-muted` is a fill, not text, and keeps its value.
 3. **Sanctioned literal colours.** Everything else now resolves to a token. These keep literal values on purpose, and a reviewer should not "fix" them:
-   - the landing page's light "generated site" mock (`app/page.tsx`) — it depicts a _different_ website inside the dark chrome;
-   - the code-sample syntax colours on `app/page.tsx` and `apps/web/src/components/code-editor/code-editor.tsx`;
+   - the landing page's light "generated site" mock (`components/landing/demo/generated-app.tsx`) — it
+     depicts a _different_ website inside the dark chrome, and the visual-editor clip recolours it in
+     place to show what an element edit does;
+   - the landing backdrop and its gradient washes (`components/landing/backdrop.tsx`, the `.landing-*`
+     utilities in `globals.css`) — they reuse the templates catalog' per-category accent set below, so
+     the marketing art stays inside the product palette while using much more of it;
+   - the settings provider roster in `components/landing/demo/settings-window.tsx` — a transcription of
+     the real `PROVIDERS` table in `app/settings/page.tsx`;
+   - the code-sample syntax colours in `components/landing/demo/workspace-panes.tsx` and `apps/web/src/components/code-editor/code-editor.tsx`;
    - the `.code-block` surface in `globals.css` and the code viewer in `components/project/code-pane.tsx` (`#1e1e1e` / `#d4d4d4`) — an editor surface, not app chrome;
    - the Tailwind colour-swatch list in `components/visual-editor/properties-panel.tsx` — those are the colours a _user's generated app_ may pick;
    - the CSS injected into the sandboxed `apps/web/src/lib/visual-editor.ts` overlay — it renders inside the generated app's document, not this one;
    - per-project accent colours (`app/dashboard/page.tsx`) and per-category template palettes (`app/dashboard/templates/page.tsx`) — intentional art.
-4. ~~Orphan brand art in the abandoned palette.~~ **Removed** — `apps/web/public/logo.svg`, `logo.png` and `logo-transparent.png` (bronze "SOVEREIGN" dragon crest) are deleted; the live mark is the inline `Logo()` in `app/page.tsx`.
+4. ~~Orphan brand art in the abandoned palette.~~ **Removed** — `apps/web/public/logo.svg`, `logo.png` and `logo-transparent.png` (bronze "SOVEREIGN" dragon crest) are deleted; the live mark is `components/landing/logo.tsx`, which mirrors the sidebar tile so the marketing header and the signed-in app read as one product.
+
+---
+
+## 7. Marketing page
+
+`/` is a server component (`app/page.tsx`) that owns only metadata; everything visual lives under `components/landing/`.
+
+```
+components/landing/
+├── landing-page.tsx        # composition, wrapped in <MotionConfig reducedMotion="user">
+├── backdrop.tsx           # the aurora
+├── primitives.tsx         # Reveal / Stagger / SectionHeading / Eyebrow / Chip
+├── chrome.tsx             # header + footer
+├── hero.tsx               # hero, provider marquee, proof strip
+├── sections/              # product, visual, trust, convert
+└── demo/                  # the three scripted product films
+    ├── demo-player.tsx    # the rAF timeline engine + transport
+    ├── build-walkthrough.tsx  # hero film: brief → plan → build → preview → visual → code → history
+    ├── closeup-videos.tsx      # element-editor close-up and the BYOK provider panel
+    └── app-sidebar / app-header / chat-column / workspace-panes / generated-app / settings-window
+```
+
+**Every pixel of UI in `demo/` is a transcription of shipped components**, not an illustration: the sidebar, the 68px editor header, the version timeline, the chat transcript and tool-step list, the prompt composer, the Preview/Code tabs, the code pane, the settings provider roster and the injected visual-editor overlay all copy their labels, metrics and colours from the files in `apps/web/src/{app,components,lib}/`. When the real UI changes, the demo has to change with it.
+
+`demo-player.tsx` autoplays when the player scrolls into view, pauses when it leaves, loops, and — when `prefers-reduced-motion` is set — holds a poster frame until the viewer presses Play.

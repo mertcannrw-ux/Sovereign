@@ -61,9 +61,31 @@
   ::-webkit-scrollbar-thumb:hover {
     background: var(--foreground-muted);
   }
+
+  /* Text selection uses the accent (--primary) at 30%. */
+  ::selection {
+    background: rgb(184 255 90 / 0.3);
+    color: var(--foreground);
+  }
+
+  /* Focus rings use the palette's focus colour, never a bespoke colour. */
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    @apply outline-none ring-2 ring-border-focus/40;
+  }
 }
 
 @layer components {
+  /* ---------------------------------------------------------------------
+   * Landing surface.
+   *
+   * The marketing page is the one surface where the palette is allowed to be
+   * loud. Everything below still resolves to a token, or to the sanctioned
+   * per-category art accents from the templates catalog (see design.md §6).
+   * ------------------------------------------------------------------- */
+
+  /* Grid that fades out toward the horizon. */
   .landing-grid {
     background-image:
       linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
@@ -102,20 +124,38 @@
     mask-image: linear-gradient(to bottom, black, transparent 90%);
   }
 
-  .text-balance {
-    text-wrap: balance;
+  /* Film grain — kills the banding large blurred gradients produce. */
+  .landing-grain::after {
+    content: '';
+    position: absolute;
+    inset: -50%;
+    pointer-events: none;
+    opacity: 0.16;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
   }
 
-  /* Respect users who request reduced motion in the app-builder UI itself. */
-  @media (prefers-reduced-motion: reduce) {
-    *,
-    *::before,
-    *::after {
-      scroll-behavior: auto !important;
-      animation-duration: 0.01ms !important;
-      animation-iteration-count: 1 !important;
-      transition-duration: 0.01ms !important;
-    }
+  /* Lit hairline along the top edge of a dark card. */
+  .landing-rim {
+    position: relative;
+  }
+
+  .landing-rim::before {
+    content: '';
+    position: absolute;
+    inset-inline: 10%;
+    top: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(184, 255, 90, 0.55), transparent);
+  }
+
+  /* Edges of the scrolling provider ticker fade instead of clipping. */
+  .landing-marquee {
+    mask-image: linear-gradient(90deg, transparent, black 8%, black 92%, transparent);
+  }
+
+  .text-balance {
+    text-wrap: balance;
   }
 
   /*
@@ -156,6 +196,106 @@
     animation: spin 1s linear infinite !important;
   }
 
+  /*
+   * Landing motion. The app chrome itself stays at 150–300ms (design.md §1);
+   * these longer, overlapping periods belong to the marketing surface only,
+   * where the drift has to sit below the threshold where it competes with
+   * the copy. Durations are coprime-ish so the blobs never re-sync.
+   */
+  .animate-aurora-a {
+    animation: auroraA 26s ease-in-out infinite;
+  }
+  .animate-aurora-b {
+    animation: auroraB 32s ease-in-out infinite;
+  }
+  .animate-aurora-c {
+    animation: auroraC 22s ease-in-out infinite;
+  }
+  .animate-sweep {
+    animation: sweep 9s linear infinite;
+  }
+  .animate-shimmer {
+    animation: shimmer 2.4s ease-in-out infinite;
+  }
+  .animate-marquee {
+    animation: marquee 38s linear infinite;
+  }
+  .animate-caret {
+    animation: caret 1.05s steps(1) infinite;
+  }
+
+  @keyframes auroraA {
+    0%,
+    100% {
+      transform: translate3d(-6%, -4%, 0) scale(1);
+    }
+    50% {
+      transform: translate3d(8%, 6%, 0) scale(1.18);
+    }
+  }
+
+  @keyframes auroraB {
+    0%,
+    100% {
+      transform: translate3d(5%, 3%, 0) scale(1.1);
+    }
+    50% {
+      transform: translate3d(-7%, -6%, 0) scale(0.92);
+    }
+  }
+
+  @keyframes auroraC {
+    0%,
+    100% {
+      transform: translate3d(0, 0, 0) scale(0.95);
+    }
+    33% {
+      transform: translate3d(6%, -5%, 0) scale(1.15);
+    }
+    66% {
+      transform: translate3d(-5%, 4%, 0) scale(1.05);
+    }
+  }
+
+  @keyframes sweep {
+    0% {
+      transform: translateX(-120%);
+    }
+    100% {
+      transform: translateX(220%);
+    }
+  }
+
+  @keyframes shimmer {
+    0%,
+    100% {
+      opacity: 0.35;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+
+  @keyframes marquee {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(-50%);
+    }
+  }
+
+  @keyframes caret {
+    0%,
+    49% {
+      opacity: 1;
+    }
+    50%,
+    100% {
+      opacity: 0;
+    }
+  }
+
   @keyframes spin {
     from {
       transform: rotate(0deg);
@@ -176,16 +316,20 @@
     }
   }
 
-  /* Text selection uses the accent (--primary) at 30%. */
-  ::selection {
-    background: rgb(184 255 90 / 0.3);
-    color: var(--foreground);
-  }
-
-  /* Focus rings use the palette's focus colour (--focus-ring), never a legacy teal. */
-  input:focus-visible,
-  textarea:focus-visible,
-  select:focus-visible {
-    @apply outline-none ring-2 ring-border-focus/40;
+  /* Respect users who request reduced motion — landing loops included. The
+   * blanket keeps its pre-landing-page semantics: EVERY CSS animation and
+   * transition stops, so the app's own spinners stop too, while JS-driven
+   * motion (framer `reducedMotion="user"`, the DemoPlayer's rAF clock)
+   * handles its own opt-out per component. === !important doesn't cascade
+   * past layer order, so declare-longest wins here at the tail of the file. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      scroll-behavior: auto !important;
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }
