@@ -35,8 +35,8 @@ function FaqItem({ q, children }: { q: string; children: ReactNode }) {
         className="grid transition-[grid-template-rows] duration-300 ease-out"
         style={{ gridTemplateRows: open ? '1fr' : '0fr' }}
       >
-        <div className="overflow-hidden min-h-0">
-          <p className="pt-0 max-w-2xl pb-5 text-sm leading-7 text-foreground-muted">{children}</p>
+        <div className="min-h-0 overflow-hidden">
+          <p className="max-w-2xl pb-5 pt-0 text-sm leading-7 text-foreground-muted">{children}</p>
         </div>
       </div>
     </div>

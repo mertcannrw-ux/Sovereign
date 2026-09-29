@@ -179,7 +179,10 @@ export function TemplatesSection() {
                       bleeding to the card edges: at this card size the full
                       mock would zoom-crop, so it renders as a smaller framed
                       thumbnail with breathing room on every side. */}
-                  <div className="relative aspect-[16/10] overflow-hidden" style={{ backgroundColor: art.surface }}>
+                  <div
+                    className="relative aspect-[16/10] overflow-hidden"
+                    style={{ backgroundColor: art.surface }}
+                  >
                     <TemplateSketch
                       layout={guide.layout}
                       accent={art.accent}
