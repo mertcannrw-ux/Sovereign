@@ -1,3 +1,4 @@
+import { seedAppTsx } from '@/lib/seed-text';
 import { SEEDS } from '@app-builder/codegen';
 import { Prisma, type Project } from '@prisma-generated/prisma/client';
 import { randomUUID } from 'node:crypto';
@@ -215,8 +216,6 @@ export const projectsRouter = router({
               });
               await provisionAppDatabase(tx, created.id);
               if (input.templateId) {
-                const safeName = input.name.replace(/[<>&`]/g, '');
-                const safeDescription = (input.description ?? '').replace(/[<>&`]/g, '');
                 await persistProjectFiles(
                   tx,
                   created.id,
@@ -224,7 +223,7 @@ export const projectsRouter = router({
                     path,
                     content:
                       path === 'src/App.tsx'
-                        ? `export default function App() {\n  return (\n    <main>\n      <h1>${safeName}</h1>\n      <p>${safeDescription}</p>\n    </main>\n  );\n}\n`
+                        ? seedAppTsx(input.name, input.description ?? '')
                         : content,
                   })),
                 );

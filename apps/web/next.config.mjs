@@ -7,6 +7,9 @@ const prismaGenerated = path.resolve(repoRoot, 'prisma/generated/prisma');
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // The dev server advertises localhost, so opening 127.0.0.1 otherwise 403s
+  // every /_next script. The page then stays on the pre-hydration frame.
+  allowedDevOrigins: ['127.0.0.1'],
   env: {
     // RFC flag is SOVEREIGN_VITE_PREVIEW; Next only inlines NEXT_PUBLIC_* into client hooks.
     NEXT_PUBLIC_SOVEREIGN_VITE_PREVIEW:

@@ -321,6 +321,16 @@ function ProjectWorkspace() {
     setIsEditMode(false);
   }, [projectId]);
 
+  // Empty projects store their brief on the description (templates, and the
+  // dashboard create dialog). This workspace never shows that field, so put
+  // it in the prompt until the transcript has a message.
+  const [promptSeededFor, setPromptSeededFor] = useState<string | null>(null);
+  if (projectQuery.isSuccess && historyQuery.isSuccess && promptSeededFor !== projectId) {
+    setPromptSeededFor(projectId);
+    const brief = (historyMessages?.length ?? 0) === 0 ? projectQuery.data.description?.trim() : '';
+    if (brief) setInput((current) => (current.trim() ? current : brief));
+  }
+
   useEffect(() => {
     if (availableModels.length === 0) {
       setSelectedModelKey('');

@@ -393,9 +393,9 @@ function DashboardContent() {
             <Sparkles className="h-5 w-5" />
           </span>
           <div className="flex-1">
-            <h2 className="font-semibold">Start from a proven foundation</h2>
+            <h2 className="font-semibold">Start from a brief</h2>
             <p className="mt-1 text-sm text-foreground-muted">
-              Explore polished templates for common product patterns.
+              Pick a pattern, name the project, and open it with the prompt ready.
             </p>
           </div>
           <ArrowRight className="h-5 w-5 text-foreground-muted" />
