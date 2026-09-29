@@ -186,7 +186,7 @@ export const buildScenes: DemoScene[] = [
               <div className="min-h-0 flex-1 overflow-hidden">
                 <UserMessage text={PROMPT} />
                 {p > 0.2 && (
-                  <AssistantMessage model="gpt-4o" tokens="412 tokens">
+                  <AssistantMessage model="Opus 5.5" tokens="412 tokens">
                     <span className="flex items-center gap-1.5 text-foreground-muted">
                       <span className="animate-shimmer h-1.5 w-1.5 rounded-full bg-primary" />
                       Analyzing the request…
@@ -197,13 +197,13 @@ export const buildScenes: DemoScene[] = [
                   <DesignDirectionPicker revealed={Math.round(stage(p, 0.35, 0.7) * 3)} />
                 )}
                 {p > 0.78 && (
-                  <AssistantMessage model="gpt-4o" tokens="1,106 tokens">
+                  <AssistantMessage model="Opus 5.5" tokens="1,106 tokens">
                     Going with <span className="text-primary">Warm editorial</span>. Writing the
                     shell and the data layer first.
                   </AssistantMessage>
                 )}
               </div>
-              <PromptBar sending model="gpt-4o" />
+              <PromptBar sending model="Opus 5.5" />
             </>
           }
           work={
@@ -246,12 +246,12 @@ export const buildScenes: DemoScene[] = [
                     />
                   )}
                   {p > 0.9 && (
-                    <AssistantMessage model="gpt-4o" tokens="1,842 tokens">
+                    <AssistantMessage model="Opus 5.5" tokens="1,842 tokens">
                       Twelve files written. Booting the preview sandbox now.
                     </AssistantMessage>
                   )}
                 </div>
-                <PromptBar text={PROMPT} sending model="gpt-4o" />
+                <PromptBar text={PROMPT} sending model="Opus 5.5" />
               </>
             }
             work={
@@ -292,13 +292,13 @@ export const buildScenes: DemoScene[] = [
                   activeIndex={-1}
                 />
                 {p > 0.45 && (
-                  <AssistantMessage model="gpt-4o" tokens="1,842 tokens">
+                  <AssistantMessage model="Opus 5.5" tokens="1,842 tokens">
                     It is live. Try the visual editor — click any element and change it in plain
                     English.
                   </AssistantMessage>
                 )}
               </div>
-              <PromptBar model="gpt-4o" effort="Auto" />
+              <PromptBar model="Opus 5.5" effort="Auto" />
             </>
           }
           work={
@@ -336,13 +336,13 @@ export const buildScenes: DemoScene[] = [
                   <ToolSteps steps={STEPS} changes={12} reads={4} activeIndex={-1} />
                   {sent && <UserMessage text={HERO_WIRE_PROMPT} />}
                   {restyled && (
-                    <AssistantMessage model="gpt-4o" tokens="268 tokens">
+                    <AssistantMessage model="Opus 5.5" tokens="268 tokens">
                       Updated <span className="font-mono text-primary">src/index.css</span> —
                       palette, headline colour and accent fill are now dark and lime. Saved as v4.
                     </AssistantMessage>
                   )}
                 </div>
-                <PromptBar sending={!sent && overlayOpen} targeting={selected} model="gpt-4o" />
+                <PromptBar sending={!sent && overlayOpen} targeting={selected} model="Opus 5.5" />
               </>
             }
             work={
@@ -392,7 +392,7 @@ export const buildScenes: DemoScene[] = [
                 <UserMessage text={PROMPT} />
                 <ToolSteps steps={STEPS} changes={12} reads={4} activeIndex={-1} />
               </div>
-              <PromptBar model="gpt-4o" />
+              <PromptBar model="Opus 5.5" />
             </>
           }
           work={
@@ -429,13 +429,13 @@ export const buildScenes: DemoScene[] = [
                   <UserMessage text={PROMPT} />
                   <ToolSteps steps={STEPS} changes={12} reads={4} activeIndex={-1} />
                   {viewingOlder && (
-                    <AssistantMessage model="gpt-4o" tokens="—">
+                    <AssistantMessage model="Opus 5.5" tokens="—">
                       Viewing version {selected}. Restoring brings the workspace back to this exact
                       snapshot.
                     </AssistantMessage>
                   )}
                 </div>
-                <PromptBar model="gpt-4o" />
+                <PromptBar model="Opus 5.5" />
               </>
             }
             work={

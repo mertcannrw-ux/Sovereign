@@ -2,7 +2,46 @@
 
 import Link from 'next/link';
 import { ArrowRight, Check, Plus } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
 import { Reveal, SectionHeading, Stagger, StaggerItem } from '../primitives';
+
+/**
+ * Accordion panel that animates open/closed. Native <details> toggles
+ * instantly, so the panel height is driven instead: a zero-row → one-row
+ * grid transition animates an unknown-height answer smoothly and the
+ * content is clipped only while collapsed.
+ */
+function FaqItem({ q, children }: { q: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full cursor-pointer items-start justify-between gap-6 py-5 text-left text-[15px] font-semibold tracking-[-0.02em] text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40 focus-visible:ring-offset-0"
+      >
+        {q}
+        <span
+          className={`mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full border border-border text-foreground-muted transition-transform duration-300 ${
+            open ? 'rotate-45' : ''
+          }`}
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </span>
+      </button>
+      <div
+        className="grid transition-[grid-template-rows] duration-300 ease-out"
+        style={{ gridTemplateRows: open ? '1fr' : '0fr' }}
+      >
+        <div className="overflow-hidden min-h-0">
+          <p className="pt-0 max-w-2xl pb-5 text-sm leading-7 text-foreground-muted">{children}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const PLANS = [
   {
@@ -96,27 +135,35 @@ export function PricingSection() {
               key={plan.name}
               className={`relative flex min-h-[440px] flex-col overflow-hidden rounded-3xl border p-7 sm:p-8 ${
                 plan.featured
-                  ? 'border-primary/45 bg-primary text-primary-foreground'
+                  ? 'border-primary bg-background-subtle text-primary'
                   : 'border-border bg-background-subtle'
               }`}
             >
               {plan.featured && (
                 <>
+                  {/* Rim light: only the top edge carries a gradient wash;
+                      the 1px solid border stays crisp below it. */}
                   <span
                     aria-hidden
-                    className="pointer-events-none absolute inset-x-10 top-0 h-px bg-primary"
+                    className="pointer-events-none absolute inset-x-0 top-0 h-[3px] bg-[linear-gradient(90deg,transparent,rgba(184,255,90,0.75),transparent)]"
                   />
-                  <span className="absolute right-6 top-6 rounded-full bg-primary-foreground px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-primary">
+                  <span className="absolute right-6 top-6 rounded-full border border-primary/40 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-primary">
                     Most popular
                   </span>
                 </>
               )}
-              <p className="text-sm font-semibold">{plan.name}</p>
+              <p className="text-sm font-semibold text-foreground">{plan.name}</p>
               <div className="mt-8 flex items-end gap-1.5">
-                <span className="text-5xl font-extrabold tracking-[-0.055em]">{plan.price}</span>
+                <span
+                  className={`text-5xl font-extrabold tracking-[-0.055em] ${
+                    plan.featured ? 'text-primary' : 'text-foreground'
+                  }`}
+                >
+                  {plan.price}
+                </span>
                 <span
                   className={`mb-1.5 text-sm ${
-                    plan.featured ? 'text-primary-foreground/60' : 'text-foreground-muted'
+                    plan.featured ? 'text-foreground-muted' : 'text-foreground-muted'
                   }`}
                 >
                   / month
@@ -124,7 +171,7 @@ export function PricingSection() {
               </div>
               <p
                 className={`mt-3 text-sm ${
-                  plan.featured ? 'text-primary-foreground/70' : 'text-foreground-muted'
+                  plan.featured ? 'text-foreground-secondary' : 'text-foreground-muted'
                 }`}
               >
                 {plan.line}
@@ -132,7 +179,9 @@ export function PricingSection() {
               <ul className="mt-8 space-y-3">
                 {plan.features.map((feature) => (
                   <li key={feature} className="flex items-start gap-2.5 text-sm">
-                    <Check className="mt-0.5 h-4 w-4 shrink-0" />
+                    <Check
+                      className={`mt-0.5 h-4 w-4 shrink-0 ${plan.featured ? 'text-primary' : ''}`}
+                    />
                     {feature}
                   </li>
                 ))}
@@ -140,7 +189,7 @@ export function PricingSection() {
               <Link
                 href="/auth/signin"
                 className={`mt-auto flex h-12 items-center justify-center rounded-full text-sm font-semibold transition-transform hover:scale-[1.01] ${
-                  plan.featured ? 'bg-primary-foreground text-primary' : 'bg-white text-black'
+                  plan.featured ? 'bg-primary text-primary-foreground' : 'bg-white text-black'
                 }`}
               >
                 {plan.cta}
@@ -170,15 +219,7 @@ export function FaqSection() {
           <Stagger className="divide-y divide-border border-y border-border" step={0.05}>
             {FAQS.map((faq) => (
               <StaggerItem key={faq.q}>
-                <details className="group py-5">
-                  <summary className="flex cursor-pointer list-none items-start justify-between gap-6 rounded-lg text-left text-[15px] font-semibold tracking-[-0.02em] text-foreground marker:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40">
-                    {faq.q}
-                    <span className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full border border-border text-foreground-muted transition-transform duration-300 group-open:rotate-45">
-                      <Plus className="h-3.5 w-3.5" />
-                    </span>
-                  </summary>
-                  <p className="mt-3 max-w-2xl text-sm leading-7 text-foreground-muted">{faq.a}</p>
-                </details>
+                <FaqItem q={faq.q}>{faq.a}</FaqItem>
               </StaggerItem>
             ))}
           </Stagger>

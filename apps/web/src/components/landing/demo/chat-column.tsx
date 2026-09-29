@@ -52,7 +52,7 @@ export function UserMessage({ text, time = '09:41' }: { text: string; time?: str
 
 export function AssistantMessage({
   children,
-  model = 'gpt-4o',
+  model = 'Opus 5.5',
   tokens = '1,842 tokens',
   time = '09:41',
 }: {
@@ -196,7 +196,7 @@ export function PromptBar({
   text,
   sending = false,
   targeting = false,
-  model = 'gpt-4o',
+  model = 'Opus 5.5',
   effort = 'Auto',
   attachment,
   className,

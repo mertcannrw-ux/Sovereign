@@ -130,7 +130,7 @@ export function ProductSection() {
             />
             <div className="relative z-10 mt-auto overflow-hidden rounded-2xl border border-border bg-background">
               <ToolSteps steps={STEPS} changes={12} reads={4} activeIndex={-1} />
-              <PromptBar model="gpt-4o" effort="Auto" />
+              <PromptBar model="Opus 5.5" effort="Auto" />
             </div>
           </Card>
 
@@ -158,7 +158,7 @@ export function ProductSection() {
                 The preview shows your current files. Use Restore v4 in the version bar to apply
                 this snapshot.
               </p>
-              <AssistantMessage model="gpt-4o" tokens="—">
+              <AssistantMessage model="Opus 5.5" tokens="—">
                 Restoring rewrites the workspace to that snapshot. Nothing after it is lost — the
                 timeline keeps both.
               </AssistantMessage>

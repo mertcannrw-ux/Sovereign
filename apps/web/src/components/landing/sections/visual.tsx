@@ -175,17 +175,16 @@ export function TemplatesSection() {
                   key={`${template.id}-${index}`}
                   className="w-[230px] shrink-0 overflow-hidden rounded-2xl border border-border bg-background transition-colors duration-300 hover:border-border-strong sm:w-[248px]"
                 >
-                  <div className="relative aspect-[16/10] overflow-hidden">
+                  {/* The sketch is inset on its own surface colour instead of
+                      bleeding to the card edges: at this card size the full
+                      mock would zoom-crop, so it renders as a smaller framed
+                      thumbnail with breathing room on every side. */}
+                  <div className="relative aspect-[16/10] overflow-hidden" style={{ backgroundColor: art.surface }}>
                     <TemplateSketch
                       layout={guide.layout}
                       accent={art.accent}
                       surface={art.surface}
-                      className="h-full w-full transition-transform duration-500 hover:scale-[1.03]"
-                    />
-                    <span
-                      aria-hidden
-                      className="absolute inset-x-8 top-0 h-px"
-                      style={{ backgroundColor: art.accent, opacity: 0.55 }}
+                      className="h-full w-full [transform:scale(0.85)]"
                     />
                   </div>
 

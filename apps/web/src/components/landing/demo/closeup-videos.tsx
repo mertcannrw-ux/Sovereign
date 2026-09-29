@@ -1,6 +1,7 @@
 'use client';
 
 import { KeyRound, Lock, ShieldCheck } from 'lucide-react';
+import { cn } from '@app-builder/ui/utils';
 import { DemoCursor, ElementTarget, VisualEditorOverlay } from './workspace-panes';
 import { GeneratedApp } from './generated-app';
 import { SettingsWindow } from './settings-window';
@@ -61,7 +62,7 @@ export const visualEditorScenes: DemoScene[] = [
             <PreviewCrop restyled={false}>
               <ElementTarget
                 state={selected ? 'selected' : hovering ? 'hover' : 'none'}
-                className="left-[4%] top-[28%] h-[14%] w-[52%]"
+                className="left-[3%] top-[33%] h-[19%] w-[48%]"
               />
               {selected && (
                 <VisualEditorOverlay
@@ -107,7 +108,15 @@ export const visualEditorScenes: DemoScene[] = [
           </div>
           <div className="min-h-0 flex-1">
             <PreviewCrop restyled={applied} promoted={applied}>
-              <ElementTarget state="selected" className="left-[4%] top-[28%] h-[14%] w-[52%]" />
+              <ElementTarget
+                state="selected"
+                className={cn(
+                  'transition-[top,width,height] duration-700 ease-out',
+                  applied
+                    ? 'left-[3%] top-[29%] h-[26%] w-[67%]'
+                    : 'left-[3%] top-[33%] h-[19%] w-[48%]',
+                )}
+              />
               <VisualEditorOverlay
                 selector={SELECTOR}
                 toolIndex={toolPicked ? 2 : -1}

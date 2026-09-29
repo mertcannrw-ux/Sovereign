@@ -146,7 +146,6 @@ const FOOTER_COLUMNS = [
     links: [
       { label: 'Sign in', href: '/auth/signin' },
       { label: 'Create account', href: '/auth/signup' },
-      { label: 'Get started', href: '/auth/signin' },
     ],
   },
 ];
@@ -164,9 +163,6 @@ export function SiteFooter() {
             <Logo />
             <p className="mt-4 max-w-xs text-sm leading-6 text-foreground-muted">
               The independent AI workspace for designing, building, and shipping real software.
-            </p>
-            <p className="mt-5 text-xs text-foreground-muted">
-              AES-256-GCM keys · No credits · Your codebase
             </p>
           </div>
           <div className="grid grid-cols-2 gap-8 sm:grid-cols-3">
