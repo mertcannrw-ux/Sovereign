@@ -1,10 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { WebContainer } from '@webcontainer/api';
+import type { WebContainer, WebContainerProcess } from '@webcontainer/api';
 import {
   getPreviewOverlayFiles,
   isIndexHtmlPath,
+  isSovereignOverlayPath,
   isVitePreviewEnabled,
   overlayPreviewFiles,
   PREVIEW_JS_DISCLOSURE,
@@ -17,6 +18,13 @@ import {
   type PreviewProcess,
   type StartPreviewProcessResult,
 } from '@/lib/preview-startup';
+import {
+  MAX_PREVIEW_ERRORS,
+  MAX_PREVIEW_ERROR_CHARS,
+  RUNTIME_OUTPUT_MAX_CHARS,
+  truncateRuntimeOutput,
+  type RuntimeCommandExecution,
+} from '@/lib/runtime-commands';
 
 export interface PreviewFile {
   path: string;
@@ -42,13 +50,22 @@ let previousBootServer: PreviewProcess | null = null;
  * ever writing into a dead instance's state. */
 let diagnosticsLog: (line: string) => void = () => {};
 let diagnosticsError: (message: string) => void = () => {};
+/** Preview console errors (iframe console.error / uncaught / rejections) for the
+ * agent loop. Repointed like the sinks above; the owning hook keeps the ring. */
+let previewErrorSink: (line: string) => void = () => {};
 /** Teardown for the diagnostics subscription belonging to `containerPromise`. */
 let diagnosticsUnsubscribe: (() => void) | null = null;
 
 async function getContainer(): Promise<WebContainer> {
   if (!containerPromise) {
     containerPromise = import('@webcontainer/api').then(({ WebContainer }) =>
-      WebContainer.boot({ coep: 'require-corp', forwardPreviewErrors: 'exceptions-only' }),
+      WebContainer.boot({
+        coep: 'require-corp',
+        // `true` (not 'exceptions-only') so `console.error` is forwarded too:
+        // React and Vite report most real failures through console.error, and
+        // those are exactly the lines the agent needs to see.
+        forwardPreviewErrors: true,
+      }),
     );
   }
   return containerPromise;
@@ -99,6 +116,54 @@ function killProcess(process: PreviewProcess | null) {
   } catch {
     // Already exited.
   }
+}
+
+/**
+ * Directories that belong to the toolchain, never to a project's source tree.
+ * `node_modules` alone would make a full walk expensive; the rest are build
+ * artefacts and caches a project does not own.
+ */
+const VENDOR_DIRECTORIES: ReadonlySet<string> = new Set([
+  'node_modules',
+  '.git',
+  'dist',
+  'build',
+  'coverage',
+  '.vite',
+  '.cache',
+  '.npm',
+]);
+
+/** Container-owned files that are not part of any project's file set. */
+const CONTAINER_OWNED_FILES: ReadonlySet<string> = new Set([
+  'package-lock.json',
+  'npm-debug.log',
+  'yarn.lock',
+  'pnpm-lock.yaml',
+]);
+
+/**
+ * Every project-owned file currently in the container, as relative paths.
+ *
+ * The WebContainer is a single module-level instance shared by every project a
+ * browser session opens, and it keeps files a project has since deleted. A
+ * command like `tsc --noEmit` compiles everything under `tsconfig.include`, so
+ * leftovers from another project show up as errors in files the project does
+ * not have — the walk exists to find and delete them.
+ */
+async function listProjectTree(container: WebContainer, directory = '.'): Promise<string[]> {
+  const entries = await container.fs.readdir(directory, { withFileTypes: true });
+  const paths: string[] = [];
+  for (const entry of entries) {
+    const path = directory === '.' ? entry.name : `${directory}/${entry.name}`;
+    if (entry.isDirectory()) {
+      if (VENDOR_DIRECTORIES.has(entry.name)) continue;
+      paths.push(...(await listProjectTree(container, path)));
+    } else {
+      paths.push(path);
+    }
+  }
+  return paths;
 }
 
 const PLACEHOLDER_INDEX_HTML =
@@ -159,6 +224,104 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
     setState((current) => ({ ...current, logs: [...current.logs.slice(-80), line] }));
   }, []);
 
+  /**
+   * Bounded ring of preview console errors, newest last. Read at send time to
+   * give the agent loop the failures the browser already saw (and attached to
+   * every `run` result). A ref, not state: readers pull it, it never renders.
+   */
+  const previewErrorsRef = useRef<string[]>([]);
+  const getPreviewErrors = useCallback(() => [...previewErrorsRef.current], []);
+
+  /**
+   * Run one allowlisted command in the shared container and collect its output.
+   * Resolves — never rejects — with the failure described, because the caller
+   * owes the blocked server a result for every `runtime-request` it accepts.
+   * WebContainer exposes stdout and stderr as one terminal stream, so there is
+   * a single `output` field; the exit code disambiguates success.
+   */
+  const runCommand = useCallback(
+    async (argv: readonly string[], timeoutMs: number): Promise<RuntimeCommandExecution> => {
+      const command = argv.join(' ');
+      const startedAt = performance.now();
+      let process: WebContainerProcess;
+      try {
+        const container = await getContainer();
+        process = await container.spawn(argv[0]!, argv.slice(1));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to start the command';
+        appendLog(`$ ${command}\n${message}`);
+        return {
+          output: '',
+          exitCode: null,
+          durationMs: Math.round(performance.now() - startedAt),
+          error: message,
+        };
+      }
+
+      appendLog(`$ ${command}`);
+      // Keep draining after the cap so the stream cannot back-pressure a killed
+      // process; the shared truncator then keeps the head and the tail.
+      const collectLimit = RUNTIME_OUTPUT_MAX_CHARS * 4;
+      let output = '';
+      const reader = process.output.getReader();
+      const drain = (async () => {
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (output.length < collectLimit) output += value;
+          }
+        } catch {
+          // Killed processes abort their output stream.
+        }
+      })();
+
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let timedOut = false;
+      const timeout = new Promise<null>((resolve) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          try {
+            process.kill();
+          } catch {
+            // Already exited.
+          }
+          resolve(null);
+        }, timeoutMs);
+      });
+      let exitCode: number | null;
+      try {
+        exitCode = await Promise.race([process.exit, timeout]);
+      } finally {
+        clearTimeout(timer);
+      }
+      // The process is gone (or the kill was issued); give the reader a moment
+      // to surface the last buffered chunks, then report.
+      await Promise.race([
+        drain,
+        new Promise<void>((resolve) => {
+          setTimeout(resolve, 1000);
+        }),
+      ]);
+
+      const durationMs = Math.round(performance.now() - startedAt);
+      appendLog(
+        timedOut
+          ? `Command timed out after ${(durationMs / 1000).toFixed(1)}s`
+          : `Command exited with code ${exitCode} in ${(durationMs / 1000).toFixed(1)}s`,
+      );
+      return timedOut
+        ? {
+            output: truncateRuntimeOutput(output),
+            exitCode: null,
+            durationMs,
+            error: `timed out after ${Math.round(timeoutMs / 1000)}s and was killed`,
+          }
+        : { output: truncateRuntimeOutput(output), exitCode, durationMs };
+    },
+    [appendLog],
+  );
+
   const writeFilesToContainer = useCallback(async (files: PreviewFile[]) => {
     if (!aliveRef.current) return;
     const container = await getContainer();
@@ -175,6 +338,43 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
       }),
     );
   }, []);
+
+  /**
+   * Reconcile + write, without queueing. Safe to call from inside an op that
+   * already owns the write chain (`boot`), where re-entering it would deadlock.
+   */
+  const syncProjectTreeInner = useCallback(
+    async (files: PreviewFile[]) => {
+      const container = await getContainer();
+      if (!aliveRef.current) return;
+      const expected = new Set(files.map((file) => file.path));
+      const existing = await listProjectTree(container);
+      const stale = existing.filter(
+        (path) =>
+          !expected.has(path) && !CONTAINER_OWNED_FILES.has(path) && !isSovereignOverlayPath(path),
+      );
+      if (stale.length > 0) {
+        await Promise.all(stale.map((path) => container.fs.rm(path, { force: true })));
+        appendLog(
+          `Removed ${stale.length} file${stale.length === 1 ? '' : 's'} this project no longer has: ${stale.slice(0, 5).join(', ')}${stale.length > 5 ? ', …' : ''}`,
+        );
+      }
+      await writeFilesToContainer(files);
+    },
+    [appendLog, writeFilesToContainer],
+  );
+
+  /**
+   * Make the container's tree equal `files` (the project's authoritative set):
+   * delete every project-owned path the set does not contain, then write the
+   * set. A `run` must not spawn until this has settled, or the command compiles
+   * another project's leftovers — `tsc` walks everything under `src`, and the
+   * container is shared by every project this browser session opens.
+   */
+  const syncProjectTree = useCallback(
+    (files: PreviewFile[]) => enqueue(() => syncProjectTreeInner(files)),
+    [enqueue, syncProjectTreeInner],
+  );
 
   const urlRef = useRef(state.url);
   urlRef.current = state.url;
@@ -460,8 +660,17 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
         diagnosticsError = (message) => {
           setState((current) => ({ ...current, status: 'error', error: message }));
         };
+        previewErrorSink = (line) => {
+          const errors = previewErrorsRef.current;
+          // React can log the same failure on every render; keep the ring useful.
+          if (errors[errors.length - 1] === line) return;
+          errors.push(line.slice(0, MAX_PREVIEW_ERROR_CHARS));
+          if (errors.length > MAX_PREVIEW_ERRORS) {
+            errors.splice(0, errors.length - MAX_PREVIEW_ERRORS);
+          }
+        };
         // The container is a singleton, so diagnostics are subscribed once and
-        // route through the sink above rather than capturing this instance.
+        // route through the sinks above rather than capturing this instance.
         if (!diagnosticsUnsubscribe) {
           diagnosticsUnsubscribe = subscribePreviewDiagnostics(
             container,
@@ -469,6 +678,7 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
             (message) => {
               diagnosticsError(message);
             },
+            (line) => previewErrorSink(line),
           );
         }
 
@@ -476,7 +686,9 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
           ? initialFiles
           : [...initialFiles, { path: 'index.html', content: PLACEHOLDER_INDEX_HTML }];
 
-        await writeFilesToContainer(seedFiles);
+        // Reconcile rather than merely write: this container instance may still
+        // hold the previous project's tree from earlier in this browser session.
+        await syncProjectTreeInner(seedFiles);
         await writeFilesToContainer(getPreviewOverlayFiles());
         // Navigating away during those writes is common; booting now would
         // start a server for a page that no longer exists.
@@ -586,6 +798,7 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
       // Stop routing container diagnostics into this instance's dead state.
       diagnosticsLog = () => {};
       diagnosticsError = () => {};
+      previewErrorSink = () => {};
     };
   }, []);
 
@@ -600,5 +813,9 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
     removeFiles,
     retry,
     triggerRefresh: doRefresh,
+    runCommand,
+    syncProjectTree,
+    getPreviewErrors,
+    appendLog,
   };
 }

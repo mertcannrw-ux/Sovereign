@@ -37,6 +37,7 @@ export type AgentAction =
   | { type: 'write_file'; path: string; content: string }
   | { type: 'edit_file'; path: string; search: string; replace: string }
   | { type: 'delete_file'; path: string }
+  | { type: 'run'; command: string }
   | { type: 'ask_questions'; questions: ClarifyingQuestion[] }
   | { type: 'generate_images'; images: ImageJobSpec[] }
   | {
@@ -91,6 +92,8 @@ export interface AgentToolResult {
 const MAX_PATH_LENGTH = 240;
 const MAX_READ_FILES = 12;
 const MAX_FILE_BYTES = 1024 * 1024;
+/** Longest accepted `run` command string; the allowlist entries are far shorter. */
+const MAX_RUN_COMMAND_LENGTH = 120;
 export const MAX_IMAGES_PER_ACTION = 8;
 export const MAX_IMAGES_PER_RUN = 16;
 
@@ -188,10 +191,11 @@ export function getAgentFileMutationPaths(action: AgentAction): Set<string> {
 
 /**
  * The user-facing text an action settles into, or null when the action is not a
- * transcript answer (`read`/`write`/`edit`/`delete`/`generate_images`/`think`/
- * `ask_questions`/`propose_design_directions`). Mirrors the generate route's own
- * settle order — `respond` wins over `finish` inside a batch — so a live
- * streaming bubble can be replaced by exactly the text the run will persist.
+ * transcript answer (`read`/`write`/`edit`/`delete`/`run`/`generate_images`/
+ * `think`/`ask_questions`/`propose_design_directions`). Mirrors the generate
+ * route's own settle order — `respond` wins over `finish` inside a batch — so a
+ * live streaming bubble can be replaced by exactly the text the run will
+ * persist.
  */
 export function getSettledAnswer(action: AgentAction): string | null {
   const actions = action.type === 'batch' ? action.actions : [action];
@@ -208,7 +212,7 @@ export function getSettledAnswer(action: AgentAction): string | null {
 export function stripEmbeddedJsonToolActions(message: string): string {
   return message
     .replace(
-      /\{[\s\S]*?"type"\s*:\s*"(?:propose_design_directions|write_file|edit_file|delete_file|generate_images|read_files|think|ask_questions|respond|finish)"[\s\S]*?\}/g,
+      /\{[\s\S]*?"type"\s*:\s*"(?:propose_design_directions|write_file|edit_file|delete_file|run|generate_images|read_files|think|ask_questions|respond|finish)"[\s\S]*?\}/g,
       '',
     )
     .trim();
@@ -326,6 +330,15 @@ export function parseAgentAction(raw: string): AgentAction {
     const path = typeof action.path === 'string' ? action.path.trim() : '';
     if (!isSafeAgentPath(path)) throw new Error('Delete action is invalid');
     return { type, path };
+  }
+  if (type === 'run') {
+    // The command itself is validated against the allowlist when it executes
+    // (server) and before it spawns (client); the parser only enforces shape.
+    const command = typeof action.command === 'string' ? action.command.trim() : '';
+    if (!command || command.length > MAX_RUN_COMMAND_LENGTH) {
+      throw new Error('Run action requires a command');
+    }
+    return { type, command };
   }
   if (type === 'ask_questions') {
     const questions = parseQuestions(action.questions);

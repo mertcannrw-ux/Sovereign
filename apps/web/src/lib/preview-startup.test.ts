@@ -427,6 +427,7 @@ describe('preview diagnostics', () => {
     const listeners = new Map<string, (...args: never[]) => void>();
     const logs: string[] = [];
     const containerErrors: string[] = [];
+    const previewErrors: string[] = [];
     subscribePreviewDiagnostics(
       {
         on(event, listener) {
@@ -435,6 +436,7 @@ describe('preview diagnostics', () => {
       },
       (line) => logs.push(line),
       (message) => containerErrors.push(message),
+      (line) => previewErrors.push(line),
     );
 
     listeners.get('error')?.({ message: 'SharedArrayBuffer unavailable' } as never);
@@ -445,8 +447,25 @@ describe('preview diagnostics', () => {
       '[preview UNCAUGHT_EXCEPTION] boom',
     ]);
     expect(containerErrors).toEqual(['SharedArrayBuffer unavailable']);
+    // Only preview (iframe) messages feed the agent: container errors are
+    // infrastructure, not application failures.
+    expect(previewErrors).toEqual(['[preview UNCAUGHT_EXCEPTION] boom']);
     expect(formatForwardedPreviewError({ type: 'UNHANDLED_REJECTION', message: 'nope' })).toBe(
       '[preview UNHANDLED_REJECTION] nope',
+    );
+  });
+
+  it('describes console errors through their args, not [object Object]', () => {
+    expect(
+      formatForwardedPreviewError({
+        type: 'PREVIEW_CONSOLE_ERROR',
+        args: ['Error: cannot read x', { code: 500 }, 42],
+        stack: 'at App',
+      }),
+    ).toBe('[preview PREVIEW_CONSOLE_ERROR] Error: cannot read x {"code":500} 42\nat App');
+
+    expect(formatForwardedPreviewError({ type: 'PREVIEW_CONSOLE_ERROR', args: [] })).toBe(
+      '[preview PREVIEW_CONSOLE_ERROR]',
     );
   });
 });

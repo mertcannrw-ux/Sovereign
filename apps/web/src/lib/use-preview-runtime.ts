@@ -9,15 +9,49 @@ import {
   overlayPreviewFiles,
   type PreviewEngine,
 } from '@/lib/preview-startup';
+import { resolveRuntimeCommand, type RuntimeCommandResult } from '@/lib/runtime-commands';
 
 const FILE_PREVIEW_THROTTLE_MS = 120;
 const PREVIEW_REFRESH_THROTTLE_MS = 500;
 
+/**
+ * Deliver a finished `run` result to the generation stream that is blocked on
+ * it. Failures are logged, never thrown: a POST that does not land leaves the
+ * server's waiter to time out and report "no result" to the model, which is a
+ * far better outcome than an unhandled rejection in the preview pane.
+ */
+async function postRuntimeResult(
+  requestId: string,
+  result: RuntimeCommandResult,
+  log?: (line: string) => void,
+): Promise<void> {
+  try {
+    const response = await fetch(`/api/generate/runtime/${requestId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(result),
+    });
+    if (!response.ok) {
+      log?.(`Runtime result was rejected (HTTP ${response.status}).`);
+    }
+  } catch (error) {
+    log?.(
+      `Could not deliver the runtime result: ${error instanceof Error ? error.message : 'network error'}`,
+    );
+  }
+}
+
 export type { PreviewFile };
 
+/**
+ * Payload of a `runtime-request` SSE event (structurally compatible with
+ * `RuntimeRequestEventData` in generation-stream.ts). Typed loosely here so the
+ * hook does not depend on the stream module's event union.
+ */
 export interface RuntimeRequestPayload {
-  type?: string;
-  [key: string]: unknown;
+  requestId?: string;
+  command?: string;
+  timeoutMs?: number;
 }
 
 export interface UsePreviewRuntimeOptions {
@@ -58,8 +92,17 @@ export interface UsePreviewRuntimeResult {
   flushPendingWrites: () => Promise<void>;
   /** Runtime-request overlay (PR 6). HTML/script overlay is applied via overlayPreviewFiles. */
   applyOverlay: (payload?: unknown) => void;
-  /** No-op until runtime-request waiter exists. */
+  /**
+   * Executes a `run` tool call from the server in the WebContainer and posts
+   * the result back to `/api/generate/runtime/{requestId}`.
+   */
   handleRuntimeRequest: (payload: RuntimeRequestPayload) => Promise<void>;
+  /**
+   * Preview console errors (iframe console.error / uncaught / rejections),
+   * newest last. Sent with each turn and attached to every run result so the
+   * agent can see how the preview is actually failing.
+   */
+  getPreviewErrors: () => string[];
 }
 
 /** Canonical display order for project files: entry HTML first, then the rest. */
@@ -161,7 +204,15 @@ export function usePreviewRuntime({
       throttleTimerRef.current = null;
     }
     const pending = pendingWritesRef.current;
-    if (pending.size === 0) return;
+    if (pending.size === 0) {
+      // Nothing queued *right now*, but a throttled flush that already drained
+      // the queue can still be mid-flight. A caller that must observe the bytes
+      // in the container — the `run` tool — has to wait for the write chain
+      // itself, not just for an empty queue, or the command compiles the
+      // previous revision.
+      await writeChainRef.current.catch(() => undefined);
+      return;
+    }
     pendingWritesRef.current = new Map();
     const files = Array.from(pending, ([path, content]) => ({ path, content }));
     lastSandboxWriteRef.current = performance.now();
@@ -245,30 +296,75 @@ export function usePreviewRuntime({
     // HTML overlay is applied in overlayPreviewFiles / WC writes. This is the PR 6 runtime overlay.
   }, []);
 
-  const handleRuntimeRequest = useCallback(async (_payload: RuntimeRequestPayload) => {
-    // No-op until runtime-request waiter exists.
+  const handleRuntimeRequest = useCallback(async (payload: RuntimeRequestPayload) => {
+    const requestId = typeof payload.requestId === 'string' ? payload.requestId : '';
+    const command = typeof payload.command === 'string' ? payload.command : '';
+    if (!requestId || !command) return;
+    const sandboxApi = sandboxRef.current;
+    // The server allowlists before it asks; re-validating here is what keeps
+    // this browser from ever spawning anything else, whatever arrives on the
+    // wire.
+    const spec = resolveRuntimeCommand(command);
+    if (!spec) {
+      await postRuntimeResult(
+        requestId,
+        {
+          status: 'failed',
+          output: '',
+          exitCode: null,
+          durationMs: 0,
+          error: `"${command}" is not an allowlisted command`,
+        },
+        sandboxApi.appendLog,
+      );
+      return;
+    }
+    try {
+      // The command must compile exactly this project: reconcile the shared
+      // container with the authoritative file set first — that drops another
+      // project's leftovers and files this project has since deleted, which
+      // `tsc` (everything under `src`) would otherwise report as errors in
+      // files the agent cannot read or delete.
+      const files = [...filesRef.current].map(([path, content]) => ({ path, content }));
+      await sandboxApi.syncProjectTree(files);
+      const execution = await sandboxApi.runCommand(spec.argv, spec.timeoutMs);
+      await postRuntimeResult(
+        requestId,
+        {
+          status: execution.error ? 'failed' : 'complete',
+          ...execution,
+          consoleErrors: sandboxApi.getPreviewErrors(),
+        },
+        sandboxApi.appendLog,
+      );
+    } catch (error) {
+      await postRuntimeResult(
+        requestId,
+        {
+          status: 'failed',
+          output: '',
+          exitCode: null,
+          durationMs: 0,
+          error: error instanceof Error ? error.message : 'The command could not run',
+        },
+        sandboxApi.appendLog,
+      );
+    }
   }, []);
 
   const applyFiles = useCallback(
     async (files: PreviewFile[]) => {
       await flushPendingWrites();
-      const previous = new Set(filesRef.current.keys());
       replaceMap(files);
-      // Full-sync event: files absent from the authoritative set (agent
-      // deletions, rollbacks) must be removed from the container too, or the
-      // preview keeps serving files the project no longer contains.
-      const next = new Set(files.map((file) => file.path));
-      const removed = [...previous].filter((path) => !next.has(path));
-      await enqueueOp(async () => {
-        if (removed.length > 0) {
-          await sandboxRef.current.removeFiles(removed);
-        }
-        await sandboxRef.current.writeFiles(toWcFiles(files));
-      });
+      // Full-sync event (`ready`, seed, restore): the container must equal the
+      // authoritative set. A mirror diff is not enough — paths the project
+      // never knew about (another project's tree in this shared container)
+      // would survive and pollute a later `tsc`.
+      await enqueueOp(() => sandboxRef.current.syncProjectTree(files));
       lastPreviewRefreshRef.current = performance.now();
       setPreviewKey((key) => key + 1);
     },
-    [enqueueOp, flushPendingWrites, replaceMap, toWcFiles],
+    [enqueueOp, flushPendingWrites, replaceMap],
   );
 
   const applyImmediateWrite = useCallback(
@@ -359,5 +455,6 @@ export function usePreviewRuntime({
     flushPendingWrites,
     applyOverlay,
     handleRuntimeRequest,
+    getPreviewErrors: sandbox.getPreviewErrors,
   };
 }

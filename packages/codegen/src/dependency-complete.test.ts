@@ -54,6 +54,24 @@ describe('completePackageJson', () => {
     expect(pkg.dependencies.react).toBe(stackLock.dependencies.react);
   });
 
+  it('pins the React type packages so tsc can resolve JSX and react imports', () => {
+    // Regression: a TSX project whose package.json lacks @types/react makes
+    // every file fail with TS7016/TS7026 ("no interface JSX.IntrinsicElements"),
+    // which no source edit can fix — the agent burns its whole step budget.
+    const result = completePackageJson(
+      JSON.stringify({
+        name: 'shop',
+        dependencies: { react: '19.2.7', 'react-dom': '19.2.7' },
+        devDependencies: { vite: '6.3.5' },
+      }),
+    );
+    const pkg = JSON.parse(result.json) as { devDependencies: Record<string, string> };
+    expect(pkg.devDependencies['@types/react']).toBe(stackLock.devDependencies['@types/react']);
+    expect(pkg.devDependencies['@types/react-dom']).toBe(
+      stackLock.devDependencies['@types/react-dom'],
+    );
+  });
+
   it('adds lucide-react from the lockfile when requested', () => {
     const result = completePackageJson('{"name":"app"}', {
       extraDependencies: stackLock.conditionalDependencies,

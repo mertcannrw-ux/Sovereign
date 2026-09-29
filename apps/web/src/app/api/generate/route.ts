@@ -7,6 +7,11 @@ import {
   type StackContractChange,
 } from '@app-builder/codegen';
 import { TRPCError } from '@trpc/server';
+import {
+  assertPlanAllowsMaxDuration,
+  resolveNoProgressGuard,
+  resolveOptionalLimit,
+} from '@/lib/agent-limits';
 import { uploadProjectAsset } from '@/server/assets/project-assets';
 import { getR2ConfigStatus } from '@/server/assets/r2';
 import { AIProvider } from '@app-builder/shared';
@@ -30,11 +35,26 @@ import {
   type AgentStep,
 } from '@/lib/agent-protocol';
 import {
+  SOVEREIGN_RUNTIME_TOOL,
   SOVEREIGN_TOOLS,
   actionsFromToolCalls,
   getStreamingFileFromToolCalls,
   nativeToolsEnabled,
 } from '@/lib/agent-tools';
+import {
+  RUNTIME_COMMAND_NAMES,
+  formatRuntimeObservation,
+  resolveRuntimeCommand,
+  sanitizePreviewErrors,
+  type RuntimeCommandResult,
+} from '@/lib/runtime-commands';
+import {
+  RUNTIME_RESULT_GRACE_MS,
+  RUNTIME_TRACE_ABORTED,
+  RUNTIME_TRACE_PENDING,
+  RUNTIME_TRACE_TIMEOUT,
+  waitForRuntimeResult,
+} from '@/lib/runtime-bridge';
 import type { ToolCall } from '@app-builder/ai-gateway';
 import { trimMessagesForContext, type AgentMessage } from '@/lib/context-window';
 import {
@@ -50,7 +70,20 @@ import { checkRateLimit } from '@/server/rate-limit';
 import { isSovereignOverlayPath } from '@/lib/preview-startup';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 300;
+/**
+ * Longest a single generate stream may run. The agent loop has no step cap, so
+ * wall clock is the only bound left: 800s is Vercel's generally available
+ * maximum for Fluid functions (Pro/Enterprise). This must stay a numeric
+ * literal — Next extracts it statically (SWC) and silently drops non-literal
+ * values (compute-in-environment or `Math.min(...)`) back to the platform
+ * default. Hobby's ceiling is 300s and the build fails at deploy time above
+ * it, so `assertPlanAllowsMaxDuration` turns the misconfiguration into a
+ * startup error with the exact fix instead of a confusing Vercel build error.
+ * Truly unbounded runs need Vercel Workflows (durable execution), not a
+ * longer function timeout.
+ */
+export const maxDuration = 800;
+assertPlanAllowsMaxDuration(maxDuration);
 
 interface GenerateBody {
   projectId?: string;
@@ -59,6 +92,8 @@ interface GenerateBody {
   modelName?: string;
   files?: { path?: string; content?: string }[];
   reasoningEffort?: string;
+  /** Recent preview console errors the client captured, sent with the turn. */
+  runtimeErrors?: string[];
   editTarget?: {
     sourceFile?: string;
     tagName?: string;
@@ -72,18 +107,16 @@ interface GenerateBody {
   };
 }
 
-const MAX_ITERATIONS =
-  Number(process.env.SOVEREIGN_MAX_ITERATIONS) > 0
-    ? Math.floor(Number(process.env.SOVEREIGN_MAX_ITERATIONS))
-    : 40;
+/**
+ * Operator knobs. Both are off unless set — see `resolveOptionalLimit` for why
+ * BYOK runs carry no default step or no-progress ceiling.
+ */
+const MAX_ITERATIONS = resolveOptionalLimit(process.env.SOVEREIGN_MAX_ITERATIONS);
+const MAX_NO_PROGRESS_TURNS = resolveNoProgressGuard(process.env.SOVEREIGN_MAX_NO_PROGRESS);
 const TURN_MAX_TOKENS =
   Number(process.env.SOVEREIGN_MAX_TOKENS) > 0
     ? Math.floor(Number(process.env.SOVEREIGN_MAX_TOKENS))
     : undefined;
-const MAX_NO_PROGRESS_TURNS =
-  Number(process.env.SOVEREIGN_MAX_NO_PROGRESS) > 0
-    ? Math.floor(Number(process.env.SOVEREIGN_MAX_NO_PROGRESS))
-    : 12;
 const MAX_ATTACHMENT_BYTES = 512 * 1024;
 const MAX_READ_RESULT_CHARS = 60_000;
 const IMAGE_GENERATION_CONCURRENCY = 3;
@@ -247,8 +280,26 @@ Rules:
 - If image generation is unavailable, use CSS/SVG placeholders.
 - Greetings and general questions must not create files.`;
 
-function buildAgentSystemPrompt(toolsOffered: boolean): string {
-  return toolsOffered ? NATIVE_TOOLS_SYSTEM_PROMPT : AGENT_SYSTEM_PROMPT;
+/**
+ * Appended only when the calling client can execute `run` (it advertises the
+ * WebContainer runtime). Appending it unconditionally would advertise a tool
+ * the run cannot use, and a `run` call without a runtime is a wasted turn.
+ * The JSON line is shown to text-protocol providers only — the native prompt
+ * forbids JSON tool syntax in the assistant message.
+ */
+const RUNTIME_PROMPT_RULES = [
+  `Sandbox verification ("run"):`,
+  `- "run" executes ONE allowlisted command inside the project's browser sandbox and returns its combined stdout/stderr and exit code. Allowed commands: ${RUNTIME_COMMAND_NAMES.map((name) => `"${name}"`).join(', ')}. Nothing else can execute; never chain commands or add flags.`,
+  `- Verify your work before finishing: run "npm install" after changing dependencies, then "npx tsc --noEmit" and "npx vite build". Fix every error the output reports, then run the command again until it is clean.`,
+  `- Output is capped at 8000 characters. A "run error" (sandbox closed, timeout) is not a compile failure — do not rewrite working files to fix it; say the sandbox could not run the command.`,
+].join('\n');
+
+function buildAgentSystemPrompt(toolsOffered: boolean, runtimeEnabled: boolean): string {
+  if (!runtimeEnabled) return toolsOffered ? NATIVE_TOOLS_SYSTEM_PROMPT : AGENT_SYSTEM_PROMPT;
+  const rules = toolsOffered
+    ? RUNTIME_PROMPT_RULES
+    : `${RUNTIME_PROMPT_RULES}\n- {"type":"run","command":"npx tsc --noEmit"}`;
+  return `${toolsOffered ? NATIVE_TOOLS_SYSTEM_PROMPT : AGENT_SYSTEM_PROMPT}\n\n${rules}`;
 }
 
 function parseProvider(value: string): AIProvider {
@@ -280,6 +331,12 @@ function messageRecord(message: {
 export async function POST(request: NextRequest) {
   const session = await getVerifiedSession();
   if (!session?.user?.id) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+
+  // Capability handshake for the WebContainer bridge: only a client that
+  // understands `runtime-request` may be offered the `run` tool. An older
+  // client (or any non-browser caller) leaves the header off and the loop runs
+  // exactly as before — `run` calls fail closed instead of stalling.
+  const runtimeEnabled = request.headers.get('x-sovereign-runtime') === '1';
 
   let body: GenerateBody;
   try {
@@ -494,6 +551,21 @@ export async function POST(request: NextRequest) {
         model: `${providerName}:${body.modelName}`,
       },
     });
+    // A runtime-enabled run persists a row so `run` tool calls can hang a
+    // `GenerationToolTrace` off it — that trace is the shared state the SSE
+    // waiter polls when the client's result POST lands on another instance.
+    // Runs without the runtime capability do not pay for it.
+    const generationRun = runtimeEnabled
+      ? await db.generationRun.create({
+          data: {
+            projectId,
+            userId: session.user.id,
+            modelProvider: providerName,
+            modelName: body.modelName,
+            sourceMessageId: userMessage.id,
+          },
+        })
+      : null;
     const history = await db.chatMessage.findMany({
       where: { projectId, id: { not: userMessage.id } },
       orderBy: { timestamp: 'desc' },
@@ -514,6 +586,27 @@ export async function POST(request: NextRequest) {
 
     const isExistingProject = project.files.length > 0;
 
+    /**
+     * Terminal status for the persisted `GenerationRun` row (runtime-enabled
+     * runs only). Best-effort: a failed bookkeeping update must never fail the
+     * user's run. Defined before the stream so every exit path — including
+     * setup failures — can settle the row.
+     */
+    const settleGenerationRun = async (
+      status: 'SUCCEEDED' | 'FAILED' | 'CANCELED',
+      tokenUsage?: { promptTokens: number; completionTokens: number; totalTokens: number },
+    ) => {
+      if (!generationRun) return;
+      try {
+        await db.generationRun.update({
+          where: { id: generationRun.id },
+          data: { status, completedAt: new Date(), ...(tokenUsage ? { tokenUsage } : {}) },
+        });
+      } catch (error) {
+        console.error('generate.run_settle_failed', error);
+      }
+    };
+
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
         const send = (event: string, data: unknown) => {
@@ -527,8 +620,16 @@ export async function POST(request: NextRequest) {
         // Declared before the try so the failure handler can still revert partial
         // streaming previews when setup throws before the agent loop starts.
         let activeProvisionalOriginals = new Map<string, string | null>();
+        // Also declared before the try: the failure path settles the persisted
+        // GenerationRun with whatever usage was accumulated before the error.
+        let finalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
         try {
           const files = new Map(project.files.map((file) => [file.path, file.content]));
+          // Console errors the client captured from the preview iframe, attached
+          // to this turn so the model can see a broken preview without having to
+          // run a command first. Sanitized here: the value crosses the wire and
+          // lands in the prompt.
+          const turnRuntimeErrors = sanitizePreviewErrors(body.runtimeErrors);
           const provider = getProvider(providerName);
           const toolsOffered = nativeToolsEnabled(providerName);
           // OpenCode's gateway routes and caches per conversation and rejects
@@ -540,7 +641,7 @@ export async function POST(request: NextRequest) {
             .digest('hex')
             .slice(0, 32);
           const messages: AgentMessage[] = [
-            { role: 'system', content: buildAgentSystemPrompt(toolsOffered) },
+            { role: 'system', content: buildAgentSystemPrompt(toolsOffered, runtimeEnabled) },
             ...history.reverse().map((message) => ({
               role: message.role === 'assistant' ? ('assistant' as const) : ('user' as const),
               content: message.content,
@@ -556,6 +657,9 @@ export async function POST(request: NextRequest) {
                   ? `Selected visual element: ${JSON.stringify(body.editTarget)}`
                   : '',
                 attachmentParts.length ? `Attachments:\n${attachmentParts.join('\n\n')}` : '',
+                turnRuntimeErrors.length
+                  ? `Preview console errors reported by the browser since the last message (may be stale; verify before "fixing"):\n${turnRuntimeErrors.map((line) => `- ${line}`).join('\n')}`
+                  : '',
                 `Image Generation Capability: ${isImageGenReady ? 'available' : 'unavailable'}${!isImageGenReady ? ` (Reason: ${!imageConfig ? 'Image provider not configured' : r2Status.reason})` : ''}`,
                 `Request: ${effectivePrompt}`,
               ]
@@ -564,13 +668,13 @@ export async function POST(request: NextRequest) {
             },
           ];
           let latestVersion = 0;
-          let finalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
           const runSteps: AgentStep[] = [];
           let consecutiveProtocolFailures = 0;
           let imagesGeneratedThisRun = 0;
-          // Tracks how many consecutive turns made no filesystem progress. Prevents a
-          // model that emits `think`/`respond` (or any valid non-mutating action)
-          // forever from running the loop to MAX_ITERATIONS and burning tokens.
+          // Consecutive turns without filesystem progress. Always counted, but
+          // only a configured SOVEREIGN_MAX_NO_PROGRESS stops the run: a BYOK
+          // run is not cut off for thinking out loud or reading several files in
+          // a row, and Stop remains the user's control.
           let consecutiveNoProgressIterations = 0;
 
           const emitStep = (step: AgentStep) => {
@@ -696,6 +800,122 @@ export async function POST(request: NextRequest) {
               });
             }
           };
+          /**
+           * Execute one `run` tool call through the client's WebContainer:
+           * persist a pending trace row, emit `runtime-request`, block until the
+           * client posts the result back (or the budget expires), persist the
+           * outcome, and return the model-facing observation.
+           */
+          const executeRuntimeRun = async (request: {
+            step: AgentStep;
+            command: string;
+            toolCallId: string;
+          }): Promise<string> => {
+            const spec = resolveRuntimeCommand(request.command);
+            if (!spec) {
+              return `run error: "${request.command}" is not an allowlisted command. Allowed commands: ${RUNTIME_COMMAND_NAMES.join(', ')}.`;
+            }
+            const requestId = randomUUID();
+            const budgetMs = spec.timeoutMs + RUNTIME_RESULT_GRACE_MS;
+            let traceId: string | null = null;
+            try {
+              const trace = await db.generationToolTrace.create({
+                data: {
+                  runId: generationRun!.id,
+                  toolCallId: request.toolCallId,
+                  name: 'run',
+                  arguments: { command: spec.command } as never,
+                  status: RUNTIME_TRACE_PENDING,
+                  requestId,
+                  command: spec.command,
+                  timeoutMs: spec.timeoutMs,
+                  expiresAt: new Date(Date.now() + budgetMs),
+                },
+              });
+              traceId = trace.id;
+            } catch (error) {
+              // The row is the cross-instance channel; the in-process fast path
+              // still resolves a same-instance POST, so keep going.
+              console.error('generate.runtime_trace_create_failed', error);
+            }
+            send('runtime-request', {
+              requestId,
+              toolCallId: request.toolCallId,
+              command: spec.command,
+              timeoutMs: spec.timeoutMs,
+            });
+            const outcome = await waitForRuntimeResult({
+              requestId,
+              timeoutMs: budgetMs,
+              signal: abortController.signal,
+              // A `run` can wait minutes on one POST; without periodic bytes an
+              // idle-timeout-happy proxy cuts the stream mid-`npm install`.
+              onHeartbeat: () => send('runtime-heartbeat', { requestId }),
+              loadTrace: async (id) => {
+                const row = await db.generationToolTrace.findFirst({
+                  where: { requestId: id },
+                  select: { status: true, result: true },
+                });
+                return row;
+              },
+            });
+
+            const emitRunStep = (
+              step: AgentStep,
+              status: 'complete' | 'failed',
+              detail: string,
+            ) => {
+              const completedAt = new Date();
+              emitStep({
+                ...step,
+                status,
+                detail,
+                completedAt: completedAt.toISOString(),
+                durationMs: completedAt.getTime() - new Date(step.startedAt).getTime(),
+              });
+            };
+            const updateTrace = async (status: string, result?: RuntimeCommandResult) => {
+              if (!traceId) return;
+              try {
+                await db.generationToolTrace.update({
+                  where: { id: traceId },
+                  data: {
+                    status,
+                    ...(result ? { result: result as never, durationMs: result.durationMs } : {}),
+                  },
+                });
+              } catch (error) {
+                console.error('generate.runtime_trace_update_failed', error);
+              }
+            };
+
+            if (outcome.kind !== 'result') {
+              const aborted = outcome.kind === 'aborted';
+              const message = aborted
+                ? `run error: the run was stopped before \`${spec.command}\` returned a result.`
+                : `run error: \`${spec.command}\` did not return a result within ${Math.round(budgetMs / 1000)}s. The preview sandbox may be closed or busy; this is not a compile failure.`;
+              emitRunStep(
+                request.step,
+                'failed',
+                aborted
+                  ? 'The run was stopped.'
+                  : `No result within ${Math.round(budgetMs / 1000)}s.`,
+              );
+              await updateTrace(aborted ? RUNTIME_TRACE_ABORTED : RUNTIME_TRACE_TIMEOUT);
+              return message;
+            }
+
+            const result = outcome.result;
+            emitRunStep(
+              request.step,
+              result.status === 'complete' ? 'complete' : 'failed',
+              result.status === 'complete'
+                ? `Exit code ${result.exitCode ?? 'unknown'} in ${(result.durationMs / 1000).toFixed(1)}s`
+                : (result.error ?? 'The command could not run.'),
+            );
+            await updateTrace(result.status === 'complete' ? 'complete' : 'failed', result);
+            return formatRuntimeObservation(spec.command, result);
+          };
           const completeRun = async (content: string) => {
             const assistantMessage = await db.chatMessage.create({
               data: {
@@ -711,6 +931,7 @@ export async function POST(request: NextRequest) {
               where: { id: storedKey.id },
               data: { lastUsedAt: new Date() },
             });
+            await settleGenerationRun('SUCCEEDED', finalUsage);
             send('ready', {
               userMessage: messageRecord(userMessage),
               assistantMessage: { ...messageRecord(assistantMessage), tokenUsage: finalUsage },
@@ -719,14 +940,18 @@ export async function POST(request: NextRequest) {
             });
           };
           send('phase', { phase: 'planning', label: 'Starting agent' });
-          for (let iteration = 0; iteration < MAX_ITERATIONS; iteration += 1) {
+          for (
+            let iteration = 0;
+            MAX_ITERATIONS === undefined || iteration < MAX_ITERATIONS;
+            iteration += 1
+          ) {
             if (abortController.signal.aborted) throw new Error('Generation stopped');
             // Heartbeat the lease. It is only reclaimable once its timestamp
-            // goes stale (20 min), and a 40-iteration run can legitimately
-            // outlive that. Renewal happens per iteration rather than on a
-            // timer, so a run stuck between turns stops renewing and still ages
-            // out. Losing the lease means another run took over: writing on
-            // would interleave two runs' file writes, so stop instead.
+            // goes stale (20 min), and a long run can legitimately outlive that.
+            // Renewal happens per iteration rather than on a timer, so a run
+            // stuck between turns stops renewing and still ages out. Losing the
+            // lease means another run took over: writing on would interleave two
+            // runs' file writes, so stop instead.
             if (!(await renewGenerationLease(db, projectId, leaseToken))) {
               throw new Error(
                 'This generation lost its project lock to another run, so it stopped to avoid interleaving writes.',
@@ -771,7 +996,14 @@ export async function POST(request: NextRequest) {
                 temperature: 0.2,
                 reasoningEffort: body.reasoningEffort,
                 signal: abortController.signal,
-                ...(toolsOffered ? { tools: SOVEREIGN_TOOLS, toolChoice: 'auto' as const } : {}),
+                ...(toolsOffered
+                  ? {
+                      tools: runtimeEnabled
+                        ? [...SOVEREIGN_TOOLS, SOVEREIGN_RUNTIME_TOOL]
+                        : SOVEREIGN_TOOLS,
+                      toolChoice: 'auto' as const,
+                    }
+                  : {}),
               },
             );
             while (true) {
@@ -894,8 +1126,17 @@ export async function POST(request: NextRequest) {
             // The provider cut the completion off at its token ceiling (either
             // SOVEREIGN_MAX_TOKENS or a provider-imposed limit). Parsing a
             // truncated action would fail; ask the model to finish the output in
-            // the next turn — never counted as a failure, never aborted.
+            // the next turn — never counted as a protocol failure, but it does
+            // count as a no-progress turn: a model whose every completion hits
+            // the ceiling would otherwise loop forever, burning a BYOK key.
             if (truncatedThisTurn) {
+              consecutiveNoProgressIterations += 1;
+              if (consecutiveNoProgressIterations >= MAX_NO_PROGRESS_TURNS) {
+                throw new Error(
+                  `The agent hit the token limit ${consecutiveNoProgressIterations} turns in a row without making filesystem progress. ` +
+                    `Raise SOVEREIGN_MAX_TOKENS or simplify the requested change.`,
+                );
+              }
               messages.push(
                 streamedToolCalls.length > 0
                   ? { role: 'assistant', content: responseContent, toolCalls: streamedToolCalls }
@@ -1104,7 +1345,7 @@ export async function POST(request: NextRequest) {
                 content: 'Thinking recorded. Choose whichever action is useful next.',
               });
               // `think` makes no filesystem progress — count it so a model stuck
-              // emitting only think/respond can't burn MAX_ITERATIONS of tokens.
+              // emitting only think/respond cannot spin the loop forever.
               consecutiveNoProgressIterations += 1;
               if (consecutiveNoProgressIterations >= MAX_NO_PROGRESS_TURNS) {
                 throw new Error(
@@ -1175,6 +1416,16 @@ export async function POST(request: NextRequest) {
               continue;
             }
             const toolResults: string[] = [];
+            // `run` actions execute after this turn's file mutations are flushed
+            // to the sandbox (just below), so a command always compiles the bytes
+            // the model just wrote. `index` is the slot in `toolResults` the
+            // observation lands in, keeping results aligned with tool calls.
+            const runRequests: {
+              index: number;
+              step: AgentStep;
+              command: string;
+              toolCallId: string;
+            }[] = [];
             let handledFilesystemAction = false;
             let handledFilesystemMutation = false;
             const askQuestionsAction = actions.find(
@@ -1187,7 +1438,7 @@ export async function POST(request: NextRequest) {
             const finishAction = actions.find(
               (a): a is Extract<AgentAction, { type: 'finish' }> => a.type === 'finish',
             );
-            for (const currentAction of actions) {
+            for (const [actionIndex, currentAction] of actions.entries()) {
               const currentStepId = randomUUID();
               const actionStartedAt = new Date();
               if (currentAction.type === 'read_files') {
@@ -1337,6 +1588,46 @@ export async function POST(request: NextRequest) {
                   step,
                 });
                 toolResults.push(`delete_file result: deleted ${currentAction.path}.`);
+              }
+              if (currentAction.type === 'run') {
+                handledFilesystemAction = true;
+                const step: AgentStep = {
+                  id: currentStepId,
+                  kind: 'verify',
+                  title: `Running ${currentAction.command}`,
+                  detail: 'Executing in the preview sandbox',
+                  status: 'running',
+                  startedAt: actionStartedAt.toISOString(),
+                };
+                emitStep(step);
+                if (!runtimeEnabled) {
+                  // Fail closed: the client never advertised the WebContainer
+                  // bridge, so no runtime-request would ever be answered.
+                  const completedAt = new Date();
+                  emitStep({
+                    ...step,
+                    status: 'failed',
+                    detail: 'This client cannot execute sandbox commands.',
+                    completedAt: completedAt.toISOString(),
+                    durationMs: completedAt.getTime() - actionStartedAt.getTime(),
+                  });
+                  toolResults.push(
+                    'run error: the sandbox runtime is unavailable for this run (the client did not advertise WebContainer support). Do not call run again; continue with file actions and tell the user the command could not be executed.',
+                  );
+                  continue;
+                }
+                // Deferred: the command must see the files this turn writes, so
+                // it runs after the batch below is flushed to the sandbox.
+                runRequests.push({
+                  index: toolResults.length,
+                  step,
+                  command: currentAction.command,
+                  toolCallId: streamedToolCalls[actionIndex]?.id ?? currentStepId,
+                });
+                // Placeholder keeps toolResults aligned with the tool calls that
+                // produced them; the run fills it in after the flush.
+                toolResults.push('');
+                continue;
               }
               if (currentAction.type === 'generate_images') {
                 if (imagesGeneratedThisRun + currentAction.images.length > MAX_IMAGES_PER_RUN) {
@@ -1591,6 +1882,7 @@ export async function POST(request: NextRequest) {
                   files: [...files].map(([p, c]) => ({ path: p, content: c })),
                   versionNumber: latestVersion,
                 });
+                await settleGenerationRun('SUCCEEDED', finalUsage);
                 return;
               }
             }
@@ -1610,6 +1902,12 @@ export async function POST(request: NextRequest) {
                 console.error('generate.autofix_skipped', error);
                 autofixNote = 'autofix skipped: contract checker failed after files were saved.';
               }
+            }
+            // Runs execute here — after `flushPendingBatch` emitted the
+            // `file-operation` events, so the client has already applied this
+            // turn's writes when it spawns the command.
+            for (const request of runRequests) {
+              toolResults[request.index] = await executeRuntimeRun(request);
             }
             if (handledFilesystemMutation) {
               consecutiveNoProgressIterations = 0;
@@ -1662,6 +1960,7 @@ export async function POST(request: NextRequest) {
                 userMessage: messageRecord(userMessage),
                 assistantMessage: messageRecord(assistantMessage),
               });
+              await settleGenerationRun('SUCCEEDED', finalUsage);
               return;
             }
             if (respondAction) {
@@ -1673,7 +1972,13 @@ export async function POST(request: NextRequest) {
               return;
             }
           }
-          throw new Error(`Agent exceeded ${MAX_ITERATIONS} steps without finishing`);
+          // Only reachable when an operator set SOVEREIGN_MAX_ITERATIONS: an
+          // uncapped loop always exits through return/throw above.
+          throw new Error(
+            MAX_ITERATIONS === undefined
+              ? 'The agent loop ended without a terminal action.'
+              : `Agent exceeded ${MAX_ITERATIONS} steps without finishing`,
+          );
         } catch (error) {
           for (const [path, original] of activeProvisionalOriginals) {
             send(
@@ -1690,6 +1995,7 @@ export async function POST(request: NextRequest) {
               message: error instanceof Error ? error.message : 'Agent run failed',
             });
           }
+          await settleGenerationRun(stoppedByClient ? 'CANCELED' : 'FAILED', finalUsage);
         } finally {
           // The run is over (finished, failed, or aborted) — free the project for
           // the next generation.
