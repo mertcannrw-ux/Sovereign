@@ -78,6 +78,7 @@ export function PricingSection() {
       <div className="mx-auto max-w-[1320px] px-5 sm:px-8">
         <div className="flex flex-col justify-between gap-8 lg:flex-row lg:items-end">
           <SectionHeading
+            eyebrow="Clear pricing"
             title="Pay for the workspace. Not the tokens."
             copy="Every plan runs on your own provider keys, so your AI spend stays exactly where you can see it. The subscription is for the product around it."
           />
@@ -161,6 +162,7 @@ export function FaqSection() {
       <div className="mx-auto max-w-[1320px] px-5 sm:px-8">
         <div className="grid gap-12 lg:grid-cols-[0.8fr_1.2fr] lg:gap-16">
           <SectionHeading
+            eyebrow="Questions"
             title="The things people ask first."
             copy="If something here is still unclear, the fastest answer is to connect a key and try it — the free plan needs nothing from you."
           />
@@ -213,14 +215,14 @@ export function FinalCta() {
           <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
             <Link
               href="/auth/signin"
-              className="h-12 group flex w-full items-center justify-center gap-2 rounded-full bg-primary px-7 text-sm font-semibold text-primary-foreground transition-transform hover:scale-[1.02] sm:w-auto"
+              className="group flex h-12 w-full items-center justify-center gap-2 rounded-full bg-primary px-7 text-sm font-semibold text-primary-foreground transition-transform hover:scale-[1.02] sm:w-auto"
             >
               Start building free
               <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
             </Link>
             <Link
               href="/auth/signup"
-              className="h-12 flex w-full items-center justify-center rounded-full border border-border-strong px-7 text-sm font-medium text-foreground transition-colors hover:bg-white/[0.06] sm:w-auto"
+              className="flex h-12 w-full items-center justify-center rounded-full border border-border-strong px-7 text-sm font-medium text-foreground transition-colors hover:bg-white/[0.06] sm:w-auto"
             >
               Create an account
             </Link>

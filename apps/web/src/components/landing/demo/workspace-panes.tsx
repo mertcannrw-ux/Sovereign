@@ -1,14 +1,6 @@
 'use client';
 
-import {
-  Check,
-  Code,
-  Crosshair,
-  Eye,
-  FileCode2,
-  Loader2,
-  RefreshCw,
-} from 'lucide-react';
+import { Check, Code, Crosshair, Eye, FileCode2, Loader2, RefreshCw } from 'lucide-react';
 import { cn } from '@app-builder/ui/utils';
 import { GeneratedApp } from './generated-app';
 

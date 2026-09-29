@@ -49,14 +49,14 @@ export function Hero() {
           >
             <Link
               href="/auth/signin"
-              className="h-12 group flex w-full items-center justify-center gap-2 rounded-full bg-primary px-7 text-sm font-semibold text-primary-foreground transition-transform hover:scale-[1.02] sm:w-auto"
+              className="group flex h-12 w-full items-center justify-center gap-2 rounded-full bg-primary px-7 text-sm font-semibold text-primary-foreground transition-transform hover:scale-[1.02] sm:w-auto"
             >
               Build your first app
               <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
             </Link>
             <a
               href="#demo"
-              className="h-12 flex w-full items-center justify-center gap-2 rounded-full border border-border-strong bg-white/[0.03] px-7 text-sm font-medium text-foreground transition-colors hover:bg-white/[0.08] sm:w-auto"
+              className="flex h-12 w-full items-center justify-center gap-2 rounded-full border border-border-strong bg-white/[0.03] px-7 text-sm font-medium text-foreground transition-colors hover:bg-white/[0.08] sm:w-auto"
             >
               <Play className="h-3.5 w-3.5 fill-white" />
               Watch the build

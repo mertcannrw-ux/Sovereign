@@ -1,12 +1,12 @@
 'use client';
 
-import { ArrowRight, MousePointerClick, Sparkles } from 'lucide-react';
+import { ArrowRight, Clock, MousePointerClick, Sparkles } from 'lucide-react';
 import { TemplateSketch } from '@/app/dashboard/templates/template-sketch';
 import { templates } from '@/data/templates';
 import { templateGuides } from '@/data/templates';
 import type { TemplateCategory } from '@/data/templates';
 import { Aurora } from '../backdrop';
-import { Reveal, SectionHeading, Stagger, StaggerItem } from '../primitives';
+import { Eyebrow, Reveal, SectionHeading, Stagger, StaggerItem } from '../primitives';
 import { DemoPlayer } from '../demo/demo-player';
 import { visualEditorScenes } from '../demo/closeup-videos';
 
@@ -29,17 +29,6 @@ const CATEGORY_ART: Record<TemplateCategory, { accent: string; surface: string }
   'Health & Fitness': { accent: '#FF8F9E', surface: '#270D12' },
   Education: { accent: '#77E0D3', surface: '#092320' },
 };
-
-const SHOWCASE = [
-  'tpl-crm',
-  'tpl-kanban',
-  'tpl-checkout',
-  'tpl-admin-panel',
-  'tpl-billing-portal',
-  'tpl-blog',
-  'tpl-landing-page',
-  'tpl-approval-workflow',
-];
 
 const TOOL_CHIPS = [
   { label: 'Text', prompt: 'Change the text to ' },
@@ -67,6 +56,7 @@ export function VisualEditorSection() {
         <div className="grid items-center gap-12 lg:grid-cols-[0.85fr_1.15fr] lg:gap-16">
           <div>
             <SectionHeading
+              eyebrow="Visual editor"
               title="Point at the thing. Change the thing."
               copy="Edit mode injects a targeting overlay straight into the running preview. Click any element, pick a tool or just type, and Sovereign patches the exact file that element came from — then shows you the diff as a new version."
             />
@@ -133,88 +123,94 @@ export function VisualEditorSection() {
 }
 
 export function TemplatesSection() {
-  const showcase = SHOWCASE.map((id) => templates.find((item) => item.id === id)).filter(
-    (item): item is (typeof templates)[number] => Boolean(item),
-  );
+  // One rail, duplicated. The keyframe translates by exactly -50%, which is one
+  // set of cards, so the second copy lands where the first began and the loop
+  // has no visible seam.
+  const rail = [...templates, ...templates];
 
   return (
     <section
       id="templates"
-      className="relative scroll-mt-20 border-y border-white/[0.08] bg-background-subtle/50 py-24 sm:py-32"
+      className="relative scroll-mt-20 overflow-hidden border-y border-white/[0.08] bg-background-subtle/50 py-24 sm:py-32"
     >
       <div className="mx-auto max-w-[1320px] px-5 sm:px-8">
-        <SectionHeading
-          title="Start from a shape, not a blank page."
-          copy="Twenty-one patterns across seven categories. Pick one, name the project, and the brief is already waiting in the prompt — nothing is generated until you send it."
-        />
+        <div className="flex flex-col gap-8 lg:flex-row lg:items-start lg:justify-between">
+          <Reveal className="max-w-xl">
+            <Eyebrow>Templates</Eyebrow>
+            <h2 className="mt-6 text-balance text-[clamp(2.25rem,5vw,3.5rem)] font-extrabold leading-[1.03] tracking-[-0.045em] text-foreground">
+              Start from a pattern, not a blank page.
+            </h2>
+            <p className="mt-5 max-w-lg text-base leading-7 text-foreground-muted">
+              Twenty-one briefs with layout, screens and scope already written. Open one and the
+              prompt is waiting for you.
+            </p>
+          </Reveal>
 
-        <Stagger className="mt-14 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {showcase.map((template) => {
-            const art = CATEGORY_ART[template.category as TemplateCategory];
-            const guide = templateGuides[template.id]!;
-            return (
-              <StaggerItem
-                key={template.id}
-                className="group overflow-hidden rounded-2xl border border-border bg-background transition-colors duration-300 hover:border-border-strong"
-              >
-                <div className="aspect-[16/10] overflow-hidden">
-                  <TemplateSketch
-                    layout={guide.layout}
-                    accent={art.accent}
-                    surface={art.surface}
-                    className="h-full w-full transition-transform duration-500 group-hover:scale-[1.03]"
-                  />
-                </div>
-                <div className="p-5">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="truncate text-sm font-semibold text-foreground">
-                      {template.name}
-                    </p>
-                    <span className="shrink-0 text-[10px] tabular-nums text-foreground-muted">
-                      {template.cloneCount.toLocaleString('en-US')} clones
-                    </span>
-                  </div>
-                  <p className="mt-2 line-clamp-2 text-xs leading-5 text-foreground-muted">
-                    {template.description}
-                  </p>
-                </div>
-              </StaggerItem>
-            );
-          })}
-        </Stagger>
-
-        <Reveal className="mt-10 flex flex-wrap items-center gap-3">
-          {(
-            [
-              'Productivity',
-              'E-commerce',
-              'SaaS',
-              'Content',
-              'Internal Tools',
-              'Health & Fitness',
-              'Education',
-            ] as const
-          ).map((category) => (
-            <span
-              key={category}
-              className="rounded-full border px-3 py-1.5 text-xs font-medium"
-              style={{
-                borderColor: `${CATEGORY_ART[category].accent}33`,
-                backgroundColor: CATEGORY_ART[category].surface,
-                color: CATEGORY_ART[category].accent,
-              }}
+          <Reveal delay={0.08} className="shrink-0">
+            <a
+              href="/auth/signin"
+              className="group inline-flex h-11 items-center gap-2 rounded-full border border-border-strong px-5 text-sm font-medium text-foreground transition-colors hover:border-foreground-muted hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40"
             >
-              {category}
-            </span>
-          ))}
-          <a
-            href="/auth/signin"
-            className="group ml-auto inline-flex items-center gap-1.5 text-sm font-medium text-primary"
-          >
-            Browse the catalog
-            <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
-          </a>
-        </Reveal>
+              Browse all templates
+              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+            </a>
+          </Reveal>
+        </div>
+      </div>
+
+      {/*
+        Full-bleed rail. The track is one duplicated list translated -50% over a
+        long period, so the drift is slower than anyone can track. The mask
+        dissolves both edges instead of slicing cards, and hovering holds it
+        still so a card can be read.
+      */}
+      <div className="group/rail mt-14">
+        <div className="landing-marquee overflow-hidden">
+          <ul className="animate-marquee flex w-max gap-4 group-hover/rail:[animation-play-state:paused]">
+            {rail.map((template, index) => {
+              const art = CATEGORY_ART[template.category as TemplateCategory];
+              const guide = templateGuides[template.id]!;
+              return (
+                <li
+                  key={`${template.id}-${index}`}
+                  className="w-[230px] shrink-0 overflow-hidden rounded-2xl border border-border bg-background transition-colors duration-300 hover:border-border-strong sm:w-[248px]"
+                >
+                  <div className="relative aspect-[16/10] overflow-hidden">
+                    <TemplateSketch
+                      layout={guide.layout}
+                      accent={art.accent}
+                      surface={art.surface}
+                      className="h-full w-full transition-transform duration-500 hover:scale-[1.03]"
+                    />
+                    <span
+                      aria-hidden
+                      className="absolute inset-x-8 top-0 h-px"
+                      style={{ backgroundColor: art.accent, opacity: 0.55 }}
+                    />
+                  </div>
+
+                  <div className="p-4">
+                    <div className="flex items-center gap-2">
+                      <p className="min-w-0 truncate text-sm font-semibold text-foreground">
+                        {template.name}
+                      </p>
+                      <span className="shrink-0 rounded border border-border bg-background-muted px-1.5 py-px text-[9px] font-medium text-foreground-muted">
+                        template
+                      </span>
+                    </div>
+                    <p className="mt-2 line-clamp-2 text-xs leading-5 text-foreground-muted">
+                      {template.description}
+                    </p>
+                    <div className="mt-3.5 flex items-center gap-1.5 border-t border-border pt-3 text-[11px] text-foreground-muted">
+                      <Clock className="h-3 w-3 shrink-0" />
+                      {template.cloneCount.toLocaleString('en-US')} projects started
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       </div>
     </section>
   );

@@ -81,6 +81,7 @@ export function ByokSection() {
 
           <div className="order-1 lg:order-2">
             <SectionHeading
+              eyebrow="Bring your own keys"
               title="Pay the provider. Keep the leverage."
               copy="Sovereign is not a reseller. There are no credits, no markups and no metered middleman — you connect the providers you already use, and the composer can switch between any of them per request."
             />
@@ -102,6 +103,7 @@ export function SecuritySection() {
     >
       <div className="mx-auto max-w-[1320px] px-5 sm:px-8">
         <SectionHeading
+          eyebrow="Security & architecture"
           title="The unglamorous parts, done properly."
           copy="Your keys, your code and your prompts are the whole product. Here is what stands between them and anyone else."
         />

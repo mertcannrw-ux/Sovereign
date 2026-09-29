@@ -116,6 +116,7 @@ export function ProductSection() {
     <section id="product" className="relative scroll-mt-20 py-24 sm:py-32">
       <div className="mx-auto max-w-[1320px] px-5 sm:px-8">
         <SectionHeading
+          eyebrow="One connected workspace"
           title="A faster path from intent to interface."
           copy="Conversation, live preview, code, data and infrastructure share one project. Nothing is a mockup you have to throw away — every change lands in the same app you are shipping."
         />
@@ -267,6 +268,7 @@ export function WorkflowSection() {
     >
       <div className="mx-auto max-w-[1320px] px-5 sm:px-8">
         <SectionHeading
+          eyebrow="How it works"
           title="Make software the way you think."
           copy="Start in English, end up in the source. Move between natural language, visual editing and code without losing context."
         />

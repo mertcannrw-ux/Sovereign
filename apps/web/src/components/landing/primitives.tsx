@@ -74,12 +74,29 @@ export function StaggerItem({ children, className }: { children: ReactNode; clas
   );
 }
 
+export function Eyebrow({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-primary',
+        className,
+      )}
+    >
+      <span aria-hidden className="h-px w-6 bg-primary" />
+      {children}
+    </span>
+  );
+}
+
 export function SectionHeading({
+  eyebrow,
   title,
   copy,
   align = 'left',
   className,
 }: {
+  /** Small label above the heading. Omit to render the heading on its own. */
+  eyebrow?: string;
   title: ReactNode;
   copy: ReactNode;
   align?: 'left' | 'center';
@@ -93,7 +110,13 @@ export function SectionHeading({
         className,
       )}
     >
-      <h2 className="text-balance text-[clamp(2.25rem,5vw,3.75rem)] font-extrabold leading-[1.03] tracking-[-0.045em] text-foreground">
+      {eyebrow ? <Eyebrow>{eyebrow}</Eyebrow> : null}
+      <h2
+        className={cn(
+          'text-balance text-[clamp(2.25rem,5vw,3.75rem)] font-extrabold leading-[1.03] tracking-[-0.045em] text-foreground',
+          eyebrow && 'mt-6',
+        )}
+      >
         {title}
       </h2>
       <p className="mt-5 max-w-2xl text-balance text-base leading-7 text-foreground-muted sm:text-lg sm:leading-8">
