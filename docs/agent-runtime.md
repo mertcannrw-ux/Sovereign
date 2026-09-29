@@ -25,15 +25,51 @@ against the code after it was written:
   (`apps/web/src/lib/preview-startup.ts`, `use-webcontainer.ts`).
 - `applyStackContract` autofix, version snapshots, and the design-direction flow
   (`packages/codegen/src/contract.ts`, `apps/web/src/lib/versioning.ts`).
+- **The `run` tool (Milestone 1, the Step 3/PR 6 bridge):** an allowlisted
+  command (`npm install`, `npx tsc --noEmit`, `npx vite build` —
+  `apps/web/src/lib/runtime-commands.ts`) executes in the caller's WebContainer
+  and its merged stdout/stderr, exit code and duration return to the loop as a
+  tool result. The server blocks on a `GenerationToolTrace` row polled by
+  `apps/web/src/lib/runtime-bridge.ts` and woken in-process by
+  `POST /api/generate/runtime/[requestId]`
+  (`apps/web/src/app/api/generate/runtime/[requestId]/route.ts`); the client
+  half is `use-preview-runtime.ts` + `use-webcontainer.ts`. The `run` tool is
+  only offered when the client sends `X-Sovereign-Runtime: 1`; a `run` call
+  without the capability fails closed. Runs are persisted as `GenerationRun`
+  rows with one trace per tool call.
+- **Preview console errors feed the model:** `WebContainer.boot` now uses
+  `forwardPreviewErrors: true`, the client keeps a bounded ring of forwarded
+  iframe errors (`use-webcontainer.ts`), sends them with each turn
+  (`runtimeErrors` in the `POST /api/generate` body) and attaches them to every
+  `run` result.
+- **Container reconcile (FS-before-run barrier):** before any `run` — and on
+  every authoritative file-set write (`ready`, seed, restore) — the client makes
+  the shared WebContainer match the project's file set (`syncProjectTree`):
+  another project's leftovers and files this project deleted are removed
+  (vendor dirs, `package-lock.json` and the Sovereign overlay files excepted),
+  then the file set is rewritten. Without it, `tsc` compiled a foreign tree and
+  the agent chased errors in files it could neither read nor delete.
+- **No default caps on a run (BYOK):** the step ceiling and the no-progress
+  guard are opt-in only (`SOVEREIGN_MAX_ITERATIONS` / `SOVEREIGN_MAX_NO_PROGRESS`,
+  parsed by `apps/web/src/lib/agent-limits.ts`). A run ends when the model
+  finishes, the user presses Stop, the project lease is lost, or the provider
+  fails. On Vercel the stream is bounded by `maxDuration = 800` (Hobby: 300).
 
 **Not implemented** (the sections below describe intended design only)
 
-- The `GenerationRun` / `GenerationToolTrace` / `VerifyReport` / `AgentPlan`
-  model exists in `prisma/schema.prisma`, but **no application code reads or
-  writes those tables**. There is no run persistence, tool-call tracing, verify
-  loop, or auto-fix counter.
-- `POST /api/generate/runtime/[runId]`, the E2B verify path, and the
-  Plan-vs-Build mode split.
+- `VerifyReport` / `AgentPlan` are still unused, and there is no automatic
+  verify loop (static jsx-a11y / E2B `tsc` + `vite build`), no auto-fix
+  counter, and no `WAITING_RUNTIME` / `VERIFYING` status transitions — the
+  `GenerationRun` row only records RUNNING → SUCCEEDED / FAILED / CANCELED and
+  the per-call traces.
+- The E2B verify path, the `filesRevision` digest check on `runtime-request`,
+  and the Plan-vs-Build mode split. Instead of comparing digests, the client
+  **reconciles** the shared container with the authoritative file set before it
+  spawns any command: paths the project does not have are deleted first
+  (`syncProjectTree` in `use-webcontainer.ts`), because the WebContainer is one
+  instance per browser session and otherwise keeps another project's tree —
+  which `tsc`, walking all of `src`, reports as errors in files the agent cannot
+  read or delete.
 
 Read the "Verify loop" and "Data Model Changes" sections as a proposal. Delete
 this notice once the corresponding code lands.
@@ -64,12 +100,12 @@ The project page (`apps/web/src/app/project/[id]/page.tsx`, 1,843 lines) is the 
 2. Decrypts a BYOK key with AES-256-GCM (`apps/web/src/lib/crypto.ts`).
 3. Loads `ProjectFile` rows into `const files = new Map(project.files.map(...))` — **not a disk workspace**.
 4. Builds a 10-message history plus a giant user blob (name, description, empty/existing flag, path manifest, optional `editTarget`, attachments, image-gen capability).
-5. Loops up to `MAX_ITERATIONS = 40`. Each iteration calls `provider.stream(...)` with `trimMessagesForContext` (`CONTEXT_BUDGET_CHARS = 80_000`). `trimMessagesForContext` **always retains** `messages[0]` when it is `role: system`; it skips over-budget _middle_ messages rather than dropping the system prompt.
-6. Parses the entire completion as JSON-in-text. Three consecutive parse failures abort. Five consecutive non-mutating turns abort.
+5. Loops until the model finishes. There is **no step cap and no no-progress guard by default**: `MAX_ITERATIONS` and `MAX_NO_PROGRESS_TURNS` are only bounded when an operator opts in with `SOVEREIGN_MAX_ITERATIONS` / `SOVEREIGN_MAX_NO_PROGRESS` (BYOK runs are bounded by the user's budget, the client's Stop button, lease ownership, and provider errors). Each iteration calls `provider.stream(...)` with `trimMessagesForContext` (`CONTEXT_BUDGET_CHARS = 80_000`). `trimMessagesForContext` **always retains** `messages[0]` when it is `role: system`; it skips over-budget _middle_ messages rather than dropping the system prompt.
+6. Parses the entire completion as JSON-in-text (native `tool_calls` are preferred when the provider supports them). Three consecutive parse failures fall back to surfacing the model's own text as the answer; there is **no default** abort on non-mutating turns (`SOVEREIGN_MAX_NO_PROGRESS` opts in).
 7. Executes `think | read_files | write_file | edit_file | delete_file | generate_images | propose_design_directions | ask_questions | respond | finish`.
 8. Batches file mutations into one Prisma transaction + `createVersion` (`apps/web/src/lib/versioning.ts`). Generate currently calls `createVersion(tx, projectId, null, changes)` — `sourceMessageId` is null, and `createVersion` has no `message` argument.
 9. Streams SSE: `phase`, `step`, `thinking`, `answer`, `file-preview`, `file-operation`, `image-job`, `design-directions`, `questions`, `ready`, `failed`. `answer` carries a cumulative snapshot of the user-facing answer text (`respond.message` / `finish.summary` / plain prose) while the model writes it, and `content: ""` when a turn settles as a tool call; `ready` remains authoritative. `consumeGenerationStream` **drops unknown event names** (lines 118–138).
-10. The route is `dynamic = 'force-dynamic'` and the repo contains **zero** `maxDuration` exports.
+10. The route is `dynamic = 'force-dynamic'` and `maxDuration = 800` (Vercel's GA ceiling for Fluid functions; Hobby caps at 300). The runtime POST route sets `force-dynamic` only — it is a single DB write, not a long-running handler.
 
 The client writes previewed files into WebContainer at a 120 ms throttle and bumps an iframe `revision` at 500 ms (`page.tsx` ~642–648). The agent never sees whether Vite started, whether `npm` failed, or whether the iframe threw. `WebContainer.boot({ forwardPreviewErrors: 'exceptions-only' })` is already set (`use-webcontainer.ts` line 26); nothing consumes those events.
 
@@ -267,7 +303,7 @@ Empty tree → SHA-256 of the empty string (no trailing newline). Unit-test empt
 
 **Tab close / abort:** `request.signal` abort (already F-01) → waiter times out at `timeoutMs` (default 60s, 180s only for rewritten `npm install`) → tool result `{ error: "runtime_unavailable", reason: "timeout" | "aborted" }`. **No host retry.** The model may `run` again (user still there) or finish with a note that preview runtime was lost.
 
-**`export const maxDuration = 300`** on `apps/web/src/app/api/generate/route.ts` and on the runtime POST route. A 40-iteration generate already cannot survive Vercel’s default. Combined with `run` waits, 300s is the ceiling, not a budget to fill: the model should not `npm install` every turn (PR 4 auto-installs on WC boot).
+**`export const maxDuration = 800`** on `apps/web/src/app/api/generate/route.ts` only (the runtime POST route is a single DB write and needs no extended timeout). The loop has no step cap, so wall clock — not a step count — is what a long generate runs out of first. 800s is Vercel's generally available maximum for Fluid functions (Pro/Enterprise; Hobby caps at 300s, and 1800s is Pro/Enterprise beta). Combined with `run` waits, the timeout is the ceiling, not a budget to fill: the model should not `npm install` every turn (PR 4 auto-installs on WC boot). Anything that must outlive even that needs durable execution (Vercel Workflows), not a bigger number here — and note that a long idle `run` wait emits no bytes, which HTTP/1.1 clients and proxies may cut; stream a heartbeat if that becomes the failure mode.
 
 #### Verify / CI worker
 
@@ -675,7 +711,7 @@ Codex ([Unrolling the Codex agent loop](https://openai.com/index/unrolling-the-c
 8. **`run` is rare.** PR 4 auto-installs on boot. The model should `run` `tsc` / `vite build` / tests, not `npm install` every turn. Harness may no-op a redundant `npm install` if WC already installed that `filesRevision`.
 9. **Subagents** — later.
 
-**Hosting:** `maxDuration = 300` on generate. E2B verify is a `BackgroundJob` plus a **real worker** (`/api/cron/jobs` or long-lived loop), not in-process and not enqueue-and-pray. Interactive `run` waits by polling `GenerationToolTrace` (optional TCP Redis `BRPOP`).
+**Hosting:** `maxDuration = 800` on generate. E2B verify is a `BackgroundJob` plus a **real worker** (`/api/cron/jobs` or long-lived loop), not in-process and not enqueue-and-pray. Interactive `run` waits by polling `GenerationToolTrace` (optional TCP Redis `BRPOP`).
 
 ---
 
@@ -705,9 +741,20 @@ interface GenerateBody {
 
 Query/header: `runtime=1` / `X-Sovereign-Runtime: 1`.
 
-`export const maxDuration = 300` on the route.
+`export const maxDuration = 800` on the route.
 
-### `POST /api/generate/runtime/[runId]`
+### `POST /api/generate/runtime/[requestId]`
+
+> **Shipped shape (Milestone 1):** the shipped route is keyed by `requestId`, not
+> the run id: `POST /api/generate/runtime/[requestId]`. Body:
+> `{ status: 'complete' | 'failed', output, exitCode, durationMs, error?, consoleErrors? }`
+> (`RuntimeCommandResult` in `apps/web/src/lib/runtime-commands.ts`). Auth is
+> session + `trace.run.userId === session.user.id` + `requireProjectRole(EDITOR)`;
+> unknown/foreign request ids and already-answered ones return 404 /
+> `{ ok: true, duplicate: true }`. It always updates the `GenerationToolTrace`
+> row and wakes the in-process waiter (`apps/web/src/lib/runtime-bridge.ts`).
+> `filesRevision`, `revision_mismatch`, Redis pub/sub and the `WAITING_RUNTIME`
+> status transition are **not** implemented yet.
 
 Auth: session + `GenerationRun.userId === session.user.id` + `requireProjectRole(EDITOR)` on `run.projectId`.
 
@@ -728,6 +775,15 @@ Auth: session + `GenerationRun.userId === session.user.id` + `requireProjectRole
 ### SSE events
 
 `consumeGenerationStream` **must** parse `runtime-request` (PR 6). Until then, clients must not set `runtime=1`.
+
+> **Shipped shape (Milestone 1):** the emitted event carries
+> `{ requestId: string; toolCallId?: string; command: string; timeoutMs: number }`
+> (`RuntimeRequestEventData` in `apps/web/src/lib/generation-stream.ts`). The
+> client re-resolves `command` against the allowlist itself and ignores `argv`;
+> `filesRevision` and `overlay` are **not** sent — the client drains its own
+> write chain before spawning instead. The reply is a POST to
+> `/api/generate/runtime/[requestId]`. `plan` / `verify` events and
+> `ready.verifyStatus` are **not** implemented.
 
 ```ts
 | { type: 'runtime-request'; data: { requestId: string; toolCallId: string; command: string; argv: string[]; timeoutMs: number; filesRevision: string; overlay: { path: string; operation: 'create' | 'update' | 'delete'; content?: string }[] } }
@@ -962,7 +1018,7 @@ Reuse `apps/web/src/server/telemetry.ts`. Add `encryptedKey` to `REDACTED_FIELDS
 
 **Alerts:** E2B job timeout > 5%; `runtime_unavailable` > 15% (tab close is common — tune after baseline); deploy webhook signature failures.
 
-PR 2 also ships `maxDuration = 300`. Runtime-bridge integration tests (fake WC spawn + write-then-run same turn + poll waiter) live in PR 6.
+PR 2 also ships `maxDuration = 800`. Runtime-bridge integration tests (fake WC spawn + write-then-run same turn + poll waiter) live in PR 6.
 
 ---
 
@@ -1040,7 +1096,7 @@ Residual (non-blocking, can wait until after PR 6 telemetry): poll waiter p95 ma
 
 9. **Prisma: `GenerationRun`, `GenerationToolTrace` (pending-request columns), `AgentPlan`, `VerifyReport` 1:1 on `runId` (`@unique`). No `A11yReport`. Do not reuse `Agent`/`AgentRun`.** `autoFixCount` only on the run. FS tool `arguments` are path+hash only. `createVersion` gains `message`.
 
-10. **Efficiency:** stable prefix, deterministic stubs (no LLM compaction), rare `run`, `maxDuration = 300`, E2B as a job. No −20–40% token claim. Subagents later.
+10. **Efficiency:** stable prefix, deterministic stubs (no LLM compaction), rare `run`, `maxDuration = 800`, E2B as a job. No −20–40% token claim. Subagents later.
 
 11. **Split the 1,843-line project page and builder WCAG _before_ the `run` handler** so PR 6 does not grow the god file.
 
@@ -1093,7 +1149,7 @@ Each PR is independently reviewable and mergeable behind a flag. Flags default o
 ### PR 2 — Generate loop speaks native tools (FS still in-memory Map)
 
 - **Title:** `feat(generate): execute native tools instead of JSON-in-text`
-- **Files/components:** `apps/web/src/app/api/generate/route.ts` (`maxDuration = 300`), `apps/web/src/lib/agent-protocol.ts`, `buildAgentSystemPrompt` (new helper, both prompts tested), `apps/web/src/server/telemetry.ts` (log counters only). **Not** compaction in this PR.
+- **Files/components:** `apps/web/src/app/api/generate/route.ts` (`maxDuration = 800`), `apps/web/src/lib/agent-protocol.ts`, `buildAgentSystemPrompt` (new helper, both prompts tested), `apps/web/src/server/telemetry.ts` (log counters only). **Not** compaction in this PR.
 - **Dependencies:** PR 1a (Anthropic/Google keep JSON until 1b/1c)
 - **Changes:** Pass `SOVEREIGN_TOOLS` without `run`/`update_plan` when `SOVEREIGN_NATIVE_TOOLS=1`. Map tool_calls onto existing executors. Assistant message with no tool calls ends the loop. Incremental parse of `write_file`/`edit_file` argument buffers → existing `file-preview`. Fallback parser when tools not offered or one-shot JSON. Flag-off → **current prompt verbatim**.
 

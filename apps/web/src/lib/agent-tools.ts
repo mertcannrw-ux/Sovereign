@@ -1,6 +1,7 @@
 import type { ProviderCompleteOptions } from '@app-builder/ai-gateway';
 import type { AIProvider } from '@app-builder/shared';
 import { parseAgentAction, type AgentAction } from '@/lib/agent-protocol';
+import { RUNTIME_COMMAND_NAMES } from '@/lib/runtime-commands';
 
 export const NATIVE_TOOL_PROVIDERS: ReadonlySet<AIProvider> = new Set([
   'openai',
@@ -14,7 +15,36 @@ export function nativeToolsEnabled(provider: AIProvider): boolean {
   return NATIVE_TOOL_PROVIDERS.has(provider);
 }
 
-export const SOVEREIGN_TOOLS: NonNullable<ProviderCompleteOptions['tools']> = [
+export type SovereignTool = NonNullable<ProviderCompleteOptions['tools']>[number];
+
+/**
+ * The `run` tool executes in the browser WebContainer, so it is offered only
+ * when the calling client advertises runtime support (`X-Sovereign-Runtime: 1`).
+ * Offering it to a client that would silently drop `runtime-request` would burn
+ * a turn per attempt and stall the loop until the waiter timed out.
+ */
+export const SOVEREIGN_RUNTIME_TOOL: SovereignTool = {
+  type: 'function',
+  function: {
+    name: 'run',
+    description: `Run one allowlisted command in the project sandbox and read its stdout/stderr and exit code. Allowed commands: ${RUNTIME_COMMAND_NAMES.join(
+      ', ',
+    )}. Use it after writing or changing files to verify the project type-checks and builds before you finish.`,
+    parameters: {
+      type: 'object',
+      properties: {
+        command: {
+          type: 'string',
+          enum: [...RUNTIME_COMMAND_NAMES],
+          description: 'One of the allowlisted commands, exactly as listed.',
+        },
+      },
+      required: ['command'],
+    },
+  },
+};
+
+export const SOVEREIGN_TOOLS: SovereignTool[] = [
   {
     type: 'function',
     function: {

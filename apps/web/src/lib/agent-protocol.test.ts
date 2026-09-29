@@ -13,6 +13,35 @@ import {
 } from '@/lib/agent-protocol';
 
 describe('agent protocol', () => {
+  it('parses a run action and rejects empty commands', () => {
+    expect(parseAgentAction(JSON.stringify({ type: 'run', command: 'npx tsc --noEmit' }))).toEqual({
+      type: 'run',
+      command: 'npx tsc --noEmit',
+    });
+    expect(() => parseAgentAction(JSON.stringify({ type: 'run', command: '   ' }))).toThrow(
+      'Run action requires a command',
+    );
+    expect(() =>
+      parseAgentAction(JSON.stringify({ type: 'run', command: 'x'.repeat(200) })),
+    ).toThrow('Run action requires a command');
+  });
+
+  it('does not report run actions as filesystem mutations or transcript answers', () => {
+    expect(getAgentFileMutationPaths({ type: 'run', command: 'npm install' })).toEqual(new Set());
+    expect(getSettledAnswer({ type: 'run', command: 'npm install' })).toBeNull();
+  });
+
+  it('strips embedded run JSON from a conversational reply', () => {
+    expect(
+      parseAgentAction(
+        JSON.stringify({
+          type: 'respond',
+          message: 'Done. {"type":"run","command":"npx vite build"}',
+        }),
+      ),
+    ).toEqual({ type: 'respond', message: 'Done.' });
+  });
+
   it('parses one planned action', () => {
     expect(
       parseAgentAction(

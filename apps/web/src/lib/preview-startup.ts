@@ -119,7 +119,12 @@ export interface PreviewEventSource {
   on(event: 'error', listener: (error: { message: string }) => void): unknown;
   on(
     event: 'preview-message',
-    listener: (message: { type?: string; message?: string; stack?: string }) => void,
+    listener: (message: {
+      type?: string;
+      message?: string;
+      stack?: string;
+      args?: unknown[];
+    }) => void,
   ): unknown;
 }
 
@@ -271,13 +276,38 @@ export function getPreviewOverlayFiles(): PreviewSourceFile[] {
   ];
 }
 
+/**
+ * Console errors (`PREVIEW_CONSOLE_ERROR`) arrive as `args` — `String(arg)` on
+ * an object prints `[object Object]`, and React logs component stacks as
+ * strings inside `args`, so each entry is described as precisely as possible.
+ */
+function formatPreviewArgs(args: unknown[] | undefined): string {
+  if (!args || args.length === 0) return '';
+  return args
+    .map((arg) => {
+      if (typeof arg === 'string') return arg;
+      if (arg instanceof Error) return arg.stack ?? arg.message;
+      if (typeof arg === 'object' && arg !== null) {
+        try {
+          return JSON.stringify(arg) ?? String(arg);
+        } catch {
+          return String(arg);
+        }
+      }
+      return String(arg);
+    })
+    .join(' ');
+}
+
 export function formatForwardedPreviewError(message: {
   type?: string;
   message?: string;
   stack?: string;
+  args?: unknown[];
 }): string {
   const kind = message.type ?? 'exception';
-  const body = [message.message, message.stack].filter(Boolean).join('\n');
+  const description = message.message ?? formatPreviewArgs(message.args);
+  const body = [description, message.stack].filter(Boolean).join('\n');
   return `[preview ${kind}] ${body}`.trim();
 }
 
@@ -288,16 +318,19 @@ export function formatContainerError(error: { message: string }): string {
 /**
  * Subscribe to container diagnostics and return an unsubscribe function.
  *
- * The returned teardown matters: the WebContainer is a module-level singleton
- * shared by every mount, so listeners that outlive their hook instance keep
- * writing into that instance's dead `setState`. Without unsubscribing, a
- * remount (dashboard → project) leaks listeners and the preview stops
- * recovering.
+ * `onPreviewError` receives only forwarded preview messages (console errors,
+ * unhandled rejections and uncaught exceptions from the preview iframe) —
+ * these are the lines the agent loop is allowed to see. The returned teardown
+ * matters: the WebContainer is a module-level singleton shared by every mount,
+ * so listeners that outlive their hook instance keep writing into that
+ * instance's dead `setState`. Without unsubscribing, a remount
+ * (dashboard → project) leaks listeners and the preview stops recovering.
  */
 export function subscribePreviewDiagnostics(
   container: PreviewEventSource,
   onLog: (line: string) => void,
   onContainerError?: (message: string) => void,
+  onPreviewError?: (line: string) => void,
 ): () => void {
   const subscriptions = [
     container.on('error', (error) => {
@@ -305,7 +338,9 @@ export function subscribePreviewDiagnostics(
       onContainerError?.(error.message);
     }),
     container.on('preview-message', (message) => {
-      onLog(formatForwardedPreviewError(message));
+      const line = formatForwardedPreviewError(message);
+      onLog(line);
+      onPreviewError?.(line);
     }),
   ];
   return () => {

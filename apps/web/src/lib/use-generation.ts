@@ -73,6 +73,7 @@ export interface UseGenerationOptions {
     | 'files'
     | 'flushPendingWrites'
     | 'handleRuntimeRequest'
+    | 'getPreviewErrors'
   >;
   history: GenerationHistoryMessage[] | undefined;
   onHistoryRefetch: () => Promise<unknown>;
@@ -386,9 +387,12 @@ export function useGeneration({
       setClarifyingQuestions([]);
       setActiveDesignDirections(null);
       try {
+        const previewErrors = runtime.getPreviewErrors();
         const response = await fetch('/api/generate', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          // Capability handshake: the server offers the `run` tool only when
+          // this client can execute a `runtime-request` in its WebContainer.
+          headers: { 'Content-Type': 'application/json', 'X-Sovereign-Runtime': '1' },
           signal: abortController.signal,
           body: JSON.stringify({
             projectId,
@@ -396,6 +400,9 @@ export function useGeneration({
             modelName: selectedModel,
             modelProvider: selectedProvider,
             reasoningEffort: reasoningEffort === 'auto' ? undefined : reasoningEffort,
+            // Preview console errors the browser already saw, so a "it's
+            // broken" turn starts with evidence instead of a blind read pass.
+            ...(previewErrors.length > 0 ? { runtimeErrors: previewErrors } : {}),
             ...(currentEditTarget ? { editTarget: currentEditTarget } : {}),
             ...(directionResponseOverride ? { directionResponse: directionResponseOverride } : {}),
             ...(attachments && attachments.length > 0 ? { files: attachments } : {}),
@@ -456,6 +463,12 @@ export function useGeneration({
               });
               runtime.applyFilePreview(event.data);
             }
+            return;
+          }
+          if (event.type === 'runtime-request') {
+            // The server is blocked on this result: execute the allowlisted
+            // command in the WebContainer and POST stdout/stderr/exit code back.
+            await runtime.handleRuntimeRequest(event.data);
             return;
           }
           if (event.type === 'design-directions') {

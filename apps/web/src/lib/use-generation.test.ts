@@ -29,6 +29,7 @@ function createPreview(): UseGenerationOptions['preview'] {
     applyImmediateWrite: vi.fn().mockResolvedValue(undefined),
     flushPendingWrites: vi.fn().mockResolvedValue(undefined),
     handleRuntimeRequest: vi.fn().mockResolvedValue(undefined),
+    getPreviewErrors: vi.fn(() => []),
   };
 }
 

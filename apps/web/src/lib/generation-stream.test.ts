@@ -156,6 +156,25 @@ describe('consumeGenerationStream', () => {
     });
   });
 
+  it('delivers a runtime-request event the client must answer', async () => {
+    const body =
+      'event: runtime-request\ndata: {"requestId":"req-1","toolCallId":"call-1","command":"npx tsc --noEmit","timeoutMs":120000}\n\n';
+    const onEvent = vi.fn();
+
+    await consumeGenerationStream(new Response(body, { status: 200 }), onEvent);
+
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    expect(onEvent).toHaveBeenCalledWith({
+      type: 'runtime-request',
+      data: {
+        requestId: 'req-1',
+        toolCallId: 'call-1',
+        command: 'npx tsc --noEmit',
+        timeoutMs: 120_000,
+      },
+    });
+  });
+
   it('skips malformed SSE data blocks without throwing', async () => {
     const encoder = new TextEncoder();
     const stream = new ReadableStream({

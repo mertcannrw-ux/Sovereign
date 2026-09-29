@@ -36,6 +36,20 @@ export interface FilePreviewEvent {
   column?: number;
 }
 
+/**
+ * A `run` tool call the server wants executed in this browser's WebContainer.
+ * The client executes it and POSTs the result to
+ * `/api/generate/runtime/{requestId}`; the generation stream is blocked until
+ * that POST lands (or the budget expires).
+ */
+export interface RuntimeRequestEventData {
+  requestId: string;
+  toolCallId?: string;
+  /** Allowlisted command string, e.g. `npx tsc --noEmit`. */
+  command: string;
+  timeoutMs?: number;
+}
+
 export interface ImageJobEventData {
   id: string;
   status: 'running' | 'complete' | 'failed';
@@ -101,6 +115,7 @@ export type GenerationEvent =
   | { type: 'step'; data: AgentStep }
   | { type: 'file-operation'; data: FileOperationEvent }
   | { type: 'file-preview'; data: FilePreviewEvent }
+  | { type: 'runtime-request'; data: RuntimeRequestEventData }
   | { type: 'thinking'; data: { content: string } }
   /**
    * Full snapshot of the user-facing answer text streamed so far (never a
@@ -135,6 +150,7 @@ function parseEventBlock(block: string): GenerationEvent | null {
     event !== 'step' &&
     event !== 'file-operation' &&
     event !== 'file-preview' &&
+    event !== 'runtime-request' &&
     event !== 'thinking' &&
     event !== 'answer' &&
     event !== 'questions' &&
