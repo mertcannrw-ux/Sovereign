@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  RUNTIME_HEARTBEAT_MS,
   RUNTIME_TRACE_PENDING,
-  clearRuntimeResult,
   coerceRuntimeResult,
   putRuntimeResult,
   takeRuntimeResult,
@@ -41,7 +41,6 @@ describe('runtime result hand-off', () => {
     }
     expect(takeRuntimeResult('req-0')).toBeNull();
     expect(takeRuntimeResult('req-39')).toEqual(COMPLETE_RESULT);
-    clearRuntimeResult('req-39');
   });
 });
 
@@ -185,5 +184,58 @@ describe('waitForRuntimeResult', () => {
 
     expect(outcome).toEqual({ kind: 'aborted' });
     expect(calls).toHaveLength(0);
+  });
+
+  it('heartbeats while waiting and stops once a result arrives', async () => {
+    // `sleep` must advance the clock: `Date.now() >= nextHeartbeatAt` decides
+    // the beat, so an instant sleep would never fire one in real time either.
+    const { loadTrace } = traceQueue(
+      { status: RUNTIME_TRACE_PENDING, result: null },
+      { status: RUNTIME_TRACE_PENDING, result: null },
+      { status: 'complete', result: COMPLETE_RESULT },
+    );
+    const heartbeats: string[] = [];
+    const now = { value: Date.now() };
+    const wait = waitForRuntimeResult({
+      requestId: 'req-heartbeat',
+      timeoutMs: 45_000,
+      loadTrace,
+      onHeartbeat: () => heartbeats.push('beat'),
+      pollIntervalMs: RUNTIME_HEARTBEAT_MS,
+      sleep: async (ms: number) => {
+        now.value += ms;
+      },
+    });
+    // Drive the loop: stub Date.now before the first await resolves.
+    const realNow = Date.now;
+    let outcome: Awaited<typeof wait> | undefined;
+    try {
+      Date.now = () => now.value;
+      outcome = await wait;
+    } finally {
+      Date.now = realNow;
+    }
+
+    expect(outcome).toEqual({ kind: 'result', result: { ...COMPLETE_RESULT, consoleErrors: [] } });
+    // Poll 1 (t+0): pending, no beat. Poll 2 (t+15s): pending, beat. Poll 3
+    // (t+30s): complete — result returned, no third beat.
+    expect(heartbeats.length).toBe(1);
+  });
+
+  it('never heartbeats when no callback is provided', async () => {
+    const { loadTrace } = traceQueue(
+      { status: RUNTIME_TRACE_PENDING, result: null },
+      { status: 'complete', result: COMPLETE_RESULT },
+    );
+
+    await expect(
+      waitForRuntimeResult({
+        requestId: 'req-no-callback',
+        timeoutMs: 60_000,
+        loadTrace,
+        pollIntervalMs: RUNTIME_HEARTBEAT_MS,
+        sleep: async () => {},
+      }),
+    ).resolves.toEqual({ kind: 'result', result: { ...COMPLETE_RESULT, consoleErrors: [] } });
   });
 });

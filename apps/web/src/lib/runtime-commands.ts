@@ -115,7 +115,6 @@ export interface RuntimeCommandResult extends RuntimeCommandExecution {
   consoleErrors?: string[];
 }
 
-export const MAX_RUNTIME_OUTPUT_BYTES = 64_000;
 export const MAX_RUNTIME_ERROR_CHARS = 2_000;
 
 /**

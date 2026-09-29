@@ -7,7 +7,11 @@ import {
   type StackContractChange,
 } from '@app-builder/codegen';
 import { TRPCError } from '@trpc/server';
-import { resolveNoProgressGuard, resolveOptionalLimit } from '@/lib/agent-limits';
+import {
+  assertPlanAllowsMaxDuration,
+  resolveNoProgressGuard,
+  resolveOptionalLimit,
+} from '@/lib/agent-limits';
 import { uploadProjectAsset } from '@/server/assets/project-assets';
 import { getR2ConfigStatus } from '@/server/assets/r2';
 import { AIProvider } from '@app-builder/shared';
@@ -69,11 +73,17 @@ export const dynamic = 'force-dynamic';
 /**
  * Longest a single generate stream may run. The agent loop has no step cap, so
  * wall clock is the only bound left: 800s is Vercel's generally available
- * maximum for Fluid functions (Pro/Enterprise). Hobby caps at 300 — lower this
- * literal to 300 if the project deploys there. Truly unbounded runs need
- * Vercel Workflows (durable execution), not a longer function timeout.
+ * maximum for Fluid functions (Pro/Enterprise). This must stay a numeric
+ * literal — Next extracts it statically (SWC) and silently drops non-literal
+ * values (compute-in-environment or `Math.min(...)`) back to the platform
+ * default. Hobby's ceiling is 300s and the build fails at deploy time above
+ * it, so `assertPlanAllowsMaxDuration` turns the misconfiguration into a
+ * startup error with the exact fix instead of a confusing Vercel build error.
+ * Truly unbounded runs need Vercel Workflows (durable execution), not a
+ * longer function timeout.
  */
 export const maxDuration = 800;
+assertPlanAllowsMaxDuration(maxDuration);
 
 interface GenerateBody {
   projectId?: string;
@@ -838,6 +848,9 @@ export async function POST(request: NextRequest) {
               requestId,
               timeoutMs: budgetMs,
               signal: abortController.signal,
+              // A `run` can wait minutes on one POST; without periodic bytes an
+              // idle-timeout-happy proxy cuts the stream mid-`npm install`.
+              onHeartbeat: () => send('runtime-heartbeat', { requestId }),
               loadTrace: async (id) => {
                 const row = await db.generationToolTrace.findFirst({
                   where: { requestId: id },
@@ -1113,8 +1126,17 @@ export async function POST(request: NextRequest) {
             // The provider cut the completion off at its token ceiling (either
             // SOVEREIGN_MAX_TOKENS or a provider-imposed limit). Parsing a
             // truncated action would fail; ask the model to finish the output in
-            // the next turn — never counted as a failure, never aborted.
+            // the next turn — never counted as a protocol failure, but it does
+            // count as a no-progress turn: a model whose every completion hits
+            // the ceiling would otherwise loop forever, burning a BYOK key.
             if (truncatedThisTurn) {
+              consecutiveNoProgressIterations += 1;
+              if (consecutiveNoProgressIterations >= MAX_NO_PROGRESS_TURNS) {
+                throw new Error(
+                  `The agent hit the token limit ${consecutiveNoProgressIterations} turns in a row without making filesystem progress. ` +
+                    `Raise SOVEREIGN_MAX_TOKENS or simplify the requested change.`,
+                );
+              }
               messages.push(
                 streamedToolCalls.length > 0
                   ? { role: 'assistant', content: responseContent, toolCalls: streamedToolCalls }

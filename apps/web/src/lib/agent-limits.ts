@@ -16,6 +16,28 @@ export function resolveOptionalLimit(raw: string | undefined): number | undefine
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
 }
 
+/** Vercel Hobby's function timeout ceiling; Pro/Enterprise allows more. */
+export const VERCEL_HOBBY_MAX_DURATION = 300;
+
+/**
+ * `maxDuration` on the generate route must stay a numeric literal (Next
+ * extracts it statically), so a Hobby deployment cannot lower it via env — it
+ * must edit the literal. An un-edited literal fails the Vercel build with a
+ * plan error at deploy time; this check moves that failure to boot with the
+ * exact fix spelled out, and only fires on Vercel Hobby (`VERCEL` is set by
+ * the platform, and only Hobby sets the 300s ceiling in practice).
+ */
+export function assertPlanAllowsMaxDuration(maxDuration: number): void {
+  const isVercel = process.env.VERCEL === '1';
+  if (isVercel && maxDuration > VERCEL_HOBBY_MAX_DURATION) {
+    throw new Error(
+      `maxDuration=${maxDuration}s exceeds Vercel Hobby's ${VERCEL_HOBBY_MAX_DURATION}s ceiling and the deploy will fail. ` +
+        `Lower the maxDuration literal in apps/web/src/app/api/generate/route.ts to ${VERCEL_HOBBY_MAX_DURATION}, ` +
+        `or upgrade the Vercel plan.`,
+    );
+  }
+}
+
 /**
  * Consecutive non-mutating turns before the run stops, or `Infinity` when the
  * guard is off — which is the default. Reading files, thinking out loud and

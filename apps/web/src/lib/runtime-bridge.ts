@@ -30,6 +30,9 @@ export const RUNTIME_POLL_INTERVAL_MS = 250;
 /** Extra time over the command budget before the waiter gives up. */
 export const RUNTIME_RESULT_GRACE_MS = 15_000;
 
+/** How often the waiter fires `onHeartbeat` while waiting. */
+export const RUNTIME_HEARTBEAT_MS = 15_000;
+
 /** Only the fields the waiter reads from a trace row. */
 export interface RuntimeTraceRow {
   status: string;
@@ -59,11 +62,6 @@ export function takeRuntimeResult(requestId: string): RuntimeCommandResult | nul
   if (!result) return null;
   inProcessResults.delete(requestId);
   return result;
-}
-
-/** Drop a stored result (the caller is done with the request). */
-export function clearRuntimeResult(requestId: string): void {
-  inProcessResults.delete(requestId);
 }
 
 /**
@@ -112,7 +110,15 @@ export interface WaitForRuntimeResultOptions {
   signal?: AbortSignal;
   /** Reads the persisted trace row — the only state shared across instances. */
   loadTrace: (requestId: string) => Promise<RuntimeTraceRow | null>;
+  /**
+   * Fired every {@link RUNTIME_HEARTBEAT_MS} while waiting. The SSE stream
+   * emits nothing while a `run` executes — up to 195s for `npm install` —
+   * and idle-timeout-happy proxies kill a silent stream long before the
+   * command finishes. The client cannot miss a `runtime-request` because of
+   * this: it arrives before the wait starts, not on the heartbeat schedule.
+   */
   pollIntervalMs?: number;
+  onHeartbeat?: () => void;
   /** Injectable for tests. */
   sleep?: (ms: number) => Promise<void>;
 }
@@ -129,6 +135,7 @@ export async function waitForRuntimeResult(
   const pollIntervalMs = options.pollIntervalMs ?? RUNTIME_POLL_INTERVAL_MS;
   const sleep = options.sleep ?? defaultSleep;
   const deadline = Date.now() + options.timeoutMs;
+  let nextHeartbeatAt = Date.now() + RUNTIME_HEARTBEAT_MS;
 
   for (;;) {
     const local = takeRuntimeResult(requestId);
@@ -145,6 +152,12 @@ export async function waitForRuntimeResult(
     if (signal?.aborted) return { kind: 'aborted' };
     const remaining = deadline - Date.now();
     if (remaining <= 0) return { kind: 'timeout' };
+    // Keep the SSE stream alive: 250ms of silence turns into a periodic
+    // heartbeat event so idle-timeout-happy proxies don't cut the run.
+    if (Date.now() >= nextHeartbeatAt) {
+      nextHeartbeatAt = Date.now() + RUNTIME_HEARTBEAT_MS;
+      options.onHeartbeat?.();
+    }
     await sleep(Math.min(pollIntervalMs, remaining));
   }
 }
