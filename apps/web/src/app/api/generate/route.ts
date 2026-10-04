@@ -1999,8 +1999,13 @@ export async function POST(request: NextRequest) {
             send('failed', {
               message: error instanceof Error ? error.message : 'Agent run failed',
               // Lets the client pick an accurate headline instead of assuming
-              // every provider failure is a bad API key.
-              code: error instanceof ProviderError ? error.code : undefined,
+              // every provider failure is a bad API key. Only local refusals
+              // may identify themselves as loopback policy failures.
+              code:
+                error instanceof ProviderError &&
+                (error.status === 0 || error.code !== 'loopback_blocked')
+                  ? error.code
+                  : undefined,
             });
           }
           await settleGenerationRun(stoppedByClient ? 'CANCELED' : 'FAILED', finalUsage);

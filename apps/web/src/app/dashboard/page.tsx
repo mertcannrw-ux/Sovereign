@@ -263,6 +263,18 @@ function DashboardContent() {
             </p>
           ) : null}
           <DialogFooter>
+            {createError && orgsQuery.isError && !orgsQuery.data?.[0]?.id ? (
+              <Button
+                variant="outline"
+                disabled={orgsQuery.isFetching}
+                onClick={async () => {
+                  const result = await orgsQuery.refetch();
+                  if (!result.isError) setCreateError(null);
+                }}
+              >
+                {orgsQuery.isFetching ? 'Retrying…' : 'Retry'}
+              </Button>
+            ) : null}
             <DialogClose asChild>
               <Button variant="outline">Cancel</Button>
             </DialogClose>

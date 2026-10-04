@@ -231,7 +231,9 @@ export const chatRouter = router({
           // errorFormatter, which substitutes the generic message, so the
           // blocked reason must travel under a code whose message survives.
           const blockedLoopback =
-            error instanceof ProviderError && error.code === 'loopback_blocked';
+            error instanceof ProviderError &&
+            error.status === 0 &&
+            error.code === 'loopback_blocked';
           throw new TRPCError(
             blockedLoopback
               ? {
