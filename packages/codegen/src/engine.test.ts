@@ -191,7 +191,7 @@ describe('buildSystemPrompt', () => {
     const context: SystemPromptContext = {
       manifest: { 'package.json': 'abcdef1234567890' },
       relevantFiles: [{ path: 'package.json', content: '{}' }],
-      userRequirements: '',
+      userRequirements: 'Add a search box',
       projectSettings: { name: 'Todo', techStack: CONFIG.techStack },
       budget: budget(),
     };
