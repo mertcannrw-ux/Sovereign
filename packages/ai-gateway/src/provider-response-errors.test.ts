@@ -21,8 +21,10 @@ import { ProviderError } from './types';
 
 const encoder = new TextEncoder();
 
+/** Build a closed byte stream from text chunks for response reader tests. */
 function bodyOf(chunks: readonly string[]): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
+    /** Encode and enqueue each fixture chunk, then close the response body. */
     start(controller) {
       for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
       controller.close();
@@ -34,12 +36,14 @@ function bodyOf(chunks: readonly string[]): ReadableStream<Uint8Array> {
  *  what has to win, so the test drives the clock instead of sleeping. */
 function stalledBody(): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
+    /** Leave reads pending so the response reader must enforce its timeout. */
     pull() {
       // Intentionally never enqueues or closes.
     },
   });
 }
 
+/** Serialize a minimal successful OpenAI chat response with token usage. */
 function openAiOkBody(): string {
   return JSON.stringify({
     choices: [{ message: { content: 'hi' }, finish_reason: 'stop' }],

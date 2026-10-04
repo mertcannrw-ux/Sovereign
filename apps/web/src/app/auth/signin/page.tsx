@@ -26,6 +26,7 @@ const OAUTH_ERROR_MESSAGES: Record<string, string> = {
   Configuration: 'Sign-in is misconfigured on the server. Please contact support.',
 };
 
+/** Render credential and OAuth sign-in controls with errors from the URL or sign-in attempt. */
 function SignInForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -232,6 +233,7 @@ function SignInForm() {
   );
 }
 
+/** Show a loading fallback while the sign-in form waits for search parameters. */
 export default function SignInPage() {
   return (
     <Suspense

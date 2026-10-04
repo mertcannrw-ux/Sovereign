@@ -20,6 +20,7 @@ const CONFIG: EngineConfig = {
   },
 };
 
+/** Build a prompt-budget fixture with optional overrides for individual tests. */
 function budget(overrides: Partial<SystemPromptContext['budget']> = {}) {
   return {
     maxInputTokens: 128000,

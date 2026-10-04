@@ -26,6 +26,7 @@ export function visualEditorPlugin(options: VisualEditorOptions = {}): Plugin {
   return {
     name: 'visual-editor-plugin',
     enforce: 'pre',
+    /** Inject editor IDs into enabled JSX/TSX inputs; return null when no changes are needed. */
     transform(code: string, id: string) {
       if (!enabled) return null;
       if (!id.match(/\.(tsx|jsx)$/)) return null;

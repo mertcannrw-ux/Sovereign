@@ -177,6 +177,10 @@ function mapHistoryMessage(message: GenerationHistoryMessage): ChatMessage {
   };
 }
 
+/**
+ * Manage generation requests, streamed preview and chat state, and cancellation.
+ * Expose controls for sending prompts and responding to clarification questions.
+ */
 export function useGeneration({
   projectId,
   selectedModel,

@@ -569,6 +569,7 @@ abstract class OpenAICompatibleProvider implements Provider {
 
   // ── Non-streaming ──
 
+  /** Request an OpenAI-compatible completion, validating custom endpoints and preserving response errors. */
   async complete(
     model: string,
     messages: GatewayMessage[],
@@ -603,6 +604,7 @@ abstract class OpenAICompatibleProvider implements Provider {
 
   // ── Streaming ──
 
+  /** Yield OpenAI-compatible streaming chunks and return the accumulated completion and usage. */
   async *stream(
     model: string,
     messages: GatewayMessage[],
@@ -846,6 +848,7 @@ abstract class OpenAICompatibleProvider implements Provider {
     };
   }
 
+  /** Fetch and sort model IDs from the default or SSRF-validated custom OpenAI-compatible endpoint. */
   async listModels(apiKey: string, baseUrl?: string, signal?: AbortSignal): Promise<string[]> {
     const rawBase = baseUrl ?? this.getDefaultBaseUrl();
     const normalized = this.normalizeBaseUrl(rawBase);
@@ -909,6 +912,7 @@ export class GroqProvider extends OpenAICompatibleProvider {
 export class AnthropicProvider implements Provider {
   readonly name: AIProvider = 'anthropic';
 
+  /** Request an Anthropic completion, validating custom endpoints and preserving response errors. */
   async complete(
     model: string,
     messages: GatewayMessage[],
@@ -938,6 +942,7 @@ export class AnthropicProvider implements Provider {
   }
   // ── Streaming ──
 
+  /** Yield Anthropic streaming chunks and return the accumulated completion and usage. */
   async *stream(
     model: string,
     messages: GatewayMessage[],
@@ -1147,6 +1152,7 @@ export class AnthropicProvider implements Provider {
     return { content, finishReason: 'stop', usage };
   }
 
+  /** Fetch sorted model IDs from the fixed Anthropic endpoint; the base URL argument is ignored. */
   async listModels(apiKey: string, _baseUrl?: string, signal?: AbortSignal): Promise<string[]> {
     const url = 'https://api.anthropic.com/v1/models';
     const response = await ssrfFetch(
@@ -1180,6 +1186,7 @@ export class AnthropicProvider implements Provider {
 export class GoogleProvider implements Provider {
   readonly name: AIProvider = 'google';
 
+  /** Request a Gemini completion, validating custom endpoints and preserving response errors. */
   async complete(
     model: string,
     messages: GatewayMessage[],
@@ -1419,6 +1426,7 @@ export class GoogleProvider implements Provider {
     return { content, finishReason: 'stop', usage };
   }
 
+  /** Fetch sorted Gemini model IDs with the models/ prefix removed, validating custom endpoints. */
   async listModels(apiKey: string, baseUrl?: string, signal?: AbortSignal): Promise<string[]> {
     const rawBase = baseUrl ?? 'https://generativelanguage.googleapis.com/v1beta';
     const url = `${rawBase}/models`;
@@ -1457,6 +1465,7 @@ export class GoogleProvider implements Provider {
 export class OllamaProvider implements Provider {
   readonly name: AIProvider = 'ollama';
 
+  /** Request an Ollama completion, enforcing SSRF and loopback policy even for the default endpoint. */
   async complete(
     model: string,
     messages: GatewayMessage[],
@@ -1614,6 +1623,7 @@ export class OllamaProvider implements Provider {
     return { content, finishReason: 'stop', usage };
   }
 
+  /** Fetch sorted Ollama model names, enforcing SSRF and loopback policy; the API key is unused. */
   async listModels(_apiKey: string, baseUrl?: string, signal?: AbortSignal): Promise<string[]> {
     const url = `${baseUrl ?? 'http://localhost:11434'}/api/tags`;
     // validateUrl: true — the default endpoint is loopback and must go through

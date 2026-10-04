@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 
+/** Log a route error and render a recovery screen with the boundary reset action. */
 export default function Error({
   error,
   reset,

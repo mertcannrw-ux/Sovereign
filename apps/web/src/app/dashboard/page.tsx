@@ -58,6 +58,7 @@ const statusMap: Record<DbStatus, 'draft' | 'published' | 'archived'> = {
   PUBLISHED: 'published',
   ARCHIVED: 'archived',
 };
+/** Render the authenticated project list, initial-load recovery, and project creation dialog. */
 function DashboardContent() {
   const { data: session, status: authStatus } = useSession();
   const router = useRouter();
@@ -122,6 +123,7 @@ function DashboardContent() {
     void projectsQuery.fetchNextPage();
   };
 
+  /** Create a project in the first available workspace, then navigate to its editor. */
   async function createProject() {
     if (!name.trim() || isCreating) return;
     const orgId = orgsQuery.data?.[0]?.id;

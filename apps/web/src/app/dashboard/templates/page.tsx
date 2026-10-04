@@ -104,6 +104,7 @@ export default function TemplatesPage() {
   );
 }
 
+/** Browse templates with URL-backed filters and a synchronized project creation draft. */
 function TemplatesCatalog() {
   const { status } = useSession();
   const router = useRouter();

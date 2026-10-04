@@ -28,6 +28,10 @@ function assetContentType(objectKey: string): string {
 // this same route behind the same checks. Legacy ProjectAsset rows that stored
 // a bucket public URL still point directly at R2 and never reach this route.
 
+/**
+ * Serve a recorded project asset authorized by a signed preview URL or project membership.
+ * Allow cross-origin reads only when a valid preview token is supplied.
+ */
 export async function GET(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
   const { path: segments } = await context.params;
   if (segments.length === 0) return new NextResponse('Asset not found', { status: 404 });
@@ -117,6 +121,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ pat
   }
 }
 
+/** Return the CORS preflight response for cross-origin preview asset requests. */
 export async function OPTIONS() {
   // Preflight carries no payload, so a wildcard here leaks nothing; it lets a
   // cross-origin signed-URL fetch proceed.

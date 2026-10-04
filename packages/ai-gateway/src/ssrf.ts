@@ -181,6 +181,7 @@ function isPrivateIP(ip: string): boolean {
   return true; // Unknown format – block
 }
 
+/** Return whether a valid dotted-decimal IPv4 address belongs to the 127.0.0.0/8 loopback range. */
 function isLoopbackIPv4(ip: string): boolean {
   if (!isIPv4(ip)) return false;
   // `IPV4_RE` already enforces 0-255, so no further range check is needed.
@@ -241,6 +242,7 @@ export type SsrfReason =
 export class SsrfError extends Error {
   readonly reason: SsrfReason;
 
+  /** Create an SSRF rejection with a machine-readable reason and explanatory message. */
   constructor(reason: SsrfReason, message: string) {
     super(message);
     this.name = 'SsrfError';
@@ -312,6 +314,7 @@ export async function validateOutboundUrl(
 
 // ─── DNS resolution ───────────────────────────────────────
 
+/** Resolve all host addresses, rejecting DNS failures or any private address with SsrfError. */
 async function resolveHostnameValidated(hostname: string): Promise<string[]> {
   // Use dns.lookup (getaddrinfo) instead of resolve4/resolve6 because
   // some environments (e.g. Windows with certain network configs) have
