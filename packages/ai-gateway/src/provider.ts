@@ -360,7 +360,7 @@ export async function ssrfFetch(
       }
     } catch (e) {
       if (e instanceof SsrfError) {
-        throw new ProviderError(providerName, 0, 'ssrf_blocked', e.message);
+        throw new ProviderError(providerName, 0, e.reason, e.message);
       }
       throw e;
     }
@@ -517,6 +517,34 @@ export async function readResponseText(
   return new TextDecoder().decode(await readResponseBytes(providerName, response, options));
 }
 
+/**
+ * Safe `response.json()`.
+ *
+ * `readResponseText` runs *outside* the parse guard deliberately: it is where
+ * `request_timeout` and `response_too_large` originate, and callers key retry
+ * behaviour off those codes. Letting them fall into the `invalid_json` branch
+ * would relabel an infrastructure failure as a malformed payload — with
+ * `response.status === 200`, since this runs only after the `!response.ok`
+ * check — and silently make timeouts non-retryable.
+ */
+export async function readJsonResponse(
+  providerName: AIProvider,
+  response: Response,
+  options?: ReadResponseOptions,
+): Promise<unknown> {
+  const text = await readResponseText(providerName, response, options);
+  try {
+    return JSON.parse(text) as unknown;
+  } catch (e) {
+    throw new ProviderError(
+      providerName,
+      response.status,
+      'invalid_json',
+      `Failed to parse response: ${e instanceof Error ? e.message : 'Unknown error'}`,
+    );
+  }
+}
+
 // ─── Provider Interface ───────────────────────────────────
 
 // ─── OpenAI-compatible providers (OpenAI, Mistral, Groq) ──
@@ -541,6 +569,7 @@ abstract class OpenAICompatibleProvider implements Provider {
 
   // ── Non-streaming ──
 
+  /** Request an OpenAI-compatible completion, validating custom endpoints and preserving response errors. */
   async complete(
     model: string,
     messages: GatewayMessage[],
@@ -550,8 +579,10 @@ abstract class OpenAICompatibleProvider implements Provider {
     const rawBase = options?.baseUrl ?? this.getDefaultBaseUrl();
     const baseUrl = this.normalizeBaseUrl(rawBase);
     const url = `${baseUrl}/chat/completions`;
+    // Validate only caller-supplied endpoints. The default base URL is a
+    // constant, so validating it buys no SSRF protection while adding a DNS
+    // lookup and an undestroyed per-request IP-pinning Agent on every call.
     const hasCustomEndpoint = options?.baseUrl !== undefined;
-
     const response = await ssrfFetch(
       this.name,
       url,
@@ -567,12 +598,13 @@ abstract class OpenAICompatibleProvider implements Provider {
       throw await this.parseError(response);
     }
 
-    const data: unknown = JSON.parse(await readResponseText(this.name, response));
+    const data = await readJsonResponse(this.name, response);
     return this.parseNonStreamingResponse(data);
   }
 
   // ── Streaming ──
 
+  /** Yield OpenAI-compatible streaming chunks and return the accumulated completion and usage. */
   async *stream(
     model: string,
     messages: GatewayMessage[],
@@ -583,7 +615,6 @@ abstract class OpenAICompatibleProvider implements Provider {
     const baseUrl = this.normalizeBaseUrl(rawBase);
     const url = `${baseUrl}/chat/completions`;
     const hasCustomEndpoint = options?.baseUrl !== undefined;
-
     const response = await ssrfFetch(
       this.name,
       url,
@@ -817,12 +848,12 @@ abstract class OpenAICompatibleProvider implements Provider {
     };
   }
 
+  /** Fetch and sort model IDs from the default or SSRF-validated custom OpenAI-compatible endpoint. */
   async listModels(apiKey: string, baseUrl?: string, signal?: AbortSignal): Promise<string[]> {
     const rawBase = baseUrl ?? this.getDefaultBaseUrl();
     const normalized = this.normalizeBaseUrl(rawBase);
     const url = `${normalized}/models`;
     const hasCustomEndpoint = baseUrl !== undefined;
-
     const response = await ssrfFetch(
       this.name,
       url,
@@ -835,7 +866,7 @@ abstract class OpenAICompatibleProvider implements Provider {
       throw await this.parseError(response);
     }
 
-    const data: unknown = JSON.parse(await readResponseText(this.name, response));
+    const data = await readJsonResponse(this.name, response);
     if (!isObject(data)) throw new Error('Invalid models response');
 
     const rawData = data['data'];
@@ -881,6 +912,7 @@ export class GroqProvider extends OpenAICompatibleProvider {
 export class AnthropicProvider implements Provider {
   readonly name: AIProvider = 'anthropic';
 
+  /** Request an Anthropic completion, validating custom endpoints and preserving response errors. */
   async complete(
     model: string,
     messages: GatewayMessage[],
@@ -890,7 +922,6 @@ export class AnthropicProvider implements Provider {
     const baseUrl = options?.baseUrl ?? 'https://api.anthropic.com/v1';
     const url = `${baseUrl}/messages`;
     const hasCustomEndpoint = options?.baseUrl !== undefined;
-
     const response = await ssrfFetch(
       this.name,
       url,
@@ -906,11 +937,12 @@ export class AnthropicProvider implements Provider {
       throw await this.parseError(response);
     }
 
-    const data: unknown = JSON.parse(await readResponseText(this.name, response));
+    const data = await readJsonResponse(this.name, response);
     return this.parseNonStreamingResponse(data);
   }
   // ── Streaming ──
 
+  /** Yield Anthropic streaming chunks and return the accumulated completion and usage. */
   async *stream(
     model: string,
     messages: GatewayMessage[],
@@ -920,7 +952,6 @@ export class AnthropicProvider implements Provider {
     const baseUrl = options?.baseUrl ?? 'https://api.anthropic.com/v1';
     const url = `${baseUrl}/messages`;
     const hasCustomEndpoint = options?.baseUrl !== undefined;
-
     const response = await ssrfFetch(
       this.name,
       url,
@@ -1121,6 +1152,7 @@ export class AnthropicProvider implements Provider {
     return { content, finishReason: 'stop', usage };
   }
 
+  /** Fetch sorted model IDs from the fixed Anthropic endpoint; the base URL argument is ignored. */
   async listModels(apiKey: string, _baseUrl?: string, signal?: AbortSignal): Promise<string[]> {
     const url = 'https://api.anthropic.com/v1/models';
     const response = await ssrfFetch(
@@ -1129,9 +1161,15 @@ export class AnthropicProvider implements Provider {
       {
         headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
       },
+      // `_baseUrl` is not honoured — this endpoint is a constant, so there is
+      // nothing caller-supplied to validate.
       { signal },
     );
-    const data: unknown = JSON.parse(await readResponseText(this.name, response));
+
+    if (!response.ok) {
+      throw await this.parseError(response);
+    }
+    const data = await readJsonResponse(this.name, response);
     if (!isObject(data)) throw new Error('Invalid models response');
     const rawData = data['data'];
     if (!Array.isArray(rawData)) return [];
@@ -1148,6 +1186,7 @@ export class AnthropicProvider implements Provider {
 export class GoogleProvider implements Provider {
   readonly name: AIProvider = 'google';
 
+  /** Request a Gemini completion, validating custom endpoints and preserving response errors. */
   async complete(
     model: string,
     messages: GatewayMessage[],
@@ -1173,7 +1212,7 @@ export class GoogleProvider implements Provider {
       throw await this.parseError(response);
     }
 
-    const data: unknown = JSON.parse(await readResponseText(this.name, response));
+    const data = await readJsonResponse(this.name, response);
     return this.parseResponse(data);
   }
 
@@ -1387,6 +1426,7 @@ export class GoogleProvider implements Provider {
     return { content, finishReason: 'stop', usage };
   }
 
+  /** Fetch sorted Gemini model IDs with the models/ prefix removed, validating custom endpoints. */
   async listModels(apiKey: string, baseUrl?: string, signal?: AbortSignal): Promise<string[]> {
     const rawBase = baseUrl ?? 'https://generativelanguage.googleapis.com/v1beta';
     const url = `${rawBase}/models`;
@@ -1401,7 +1441,11 @@ export class GoogleProvider implements Provider {
       { validateUrl: hasCustomEndpoint, signal },
     );
 
-    const data: unknown = JSON.parse(await readResponseText(this.name, response));
+    if (!response.ok) {
+      throw await this.parseError(response);
+    }
+
+    const data = await readJsonResponse(this.name, response);
     if (!isObject(data)) throw new Error('Invalid models response');
     const rawData = data['models'];
     if (!Array.isArray(rawData)) return [];
@@ -1421,6 +1465,7 @@ export class GoogleProvider implements Provider {
 export class OllamaProvider implements Provider {
   readonly name: AIProvider = 'ollama';
 
+  /** Request an Ollama completion, enforcing SSRF and loopback policy even for the default endpoint. */
   async complete(
     model: string,
     messages: GatewayMessage[],
@@ -1448,7 +1493,7 @@ export class OllamaProvider implements Provider {
       throw await this.parseError(response);
     }
 
-    const data: unknown = JSON.parse(await readResponseText(this.name, response));
+    const data = await readJsonResponse(this.name, response);
     return this.parseResponse(data);
   }
 
@@ -1578,6 +1623,7 @@ export class OllamaProvider implements Provider {
     return { content, finishReason: 'stop', usage };
   }
 
+  /** Fetch sorted Ollama model names, enforcing SSRF and loopback policy; the API key is unused. */
   async listModels(_apiKey: string, baseUrl?: string, signal?: AbortSignal): Promise<string[]> {
     const url = `${baseUrl ?? 'http://localhost:11434'}/api/tags`;
     // validateUrl: true — the default endpoint is loopback and must go through
@@ -1593,7 +1639,7 @@ export class OllamaProvider implements Provider {
         'unknown',
         'Failed to fetch Ollama models',
       );
-    const data: unknown = JSON.parse(await readResponseText(this.name, response));
+    const data = await readJsonResponse(this.name, response);
     if (!isObject(data)) throw new Error('Invalid Ollama models response');
     const rawData = data['models'];
     if (!Array.isArray(rawData)) return [];

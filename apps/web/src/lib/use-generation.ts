@@ -177,6 +177,10 @@ function mapHistoryMessage(message: GenerationHistoryMessage): ChatMessage {
   };
 }
 
+/**
+ * Manage generation requests, streamed preview and chat state, and cancellation.
+ * Expose controls for sending prompts and responding to clarification questions.
+ */
 export function useGeneration({
   projectId,
   selectedModel,
@@ -516,7 +520,11 @@ export function useGeneration({
             await onHistoryRefetchRef.current();
             return;
           }
-          if (event.type === 'failed') throw new Error(event.data.message);
+          if (event.type === 'failed') {
+            // Carry `code` through so the headline below can distinguish a
+            // blocked endpoint (a deployment setting) from a bad credential.
+            throw Object.assign(new Error(event.data.message), { code: event.data.code });
+          }
 
           if (event.type !== 'ready') return;
           // The event carries the full authoritative file set: nothing that was
@@ -589,13 +597,17 @@ export function useGeneration({
         if (!aborted) {
           onRestoreInputRef.current?.(text);
           const detail = error instanceof Error ? error.message : 'Failed to generate the app.';
+          const code = (error as { code?: string } | undefined)?.code;
           const failureMessage: ChatMessage = {
             id: crypto.randomUUID(),
             role: 'system',
             // Provider failures are raw JSON/HTML dumps; the transcript gets a
             // clean sentence, with the unfiltered text only in the collapsed
             // detail below.
-            content: 'Generation failed. Check your API key and model settings, then try again.',
+            content:
+              code === 'loopback_blocked'
+                ? `Generation blocked: ${detail}`
+                : 'Generation failed. Check your API key and model settings, then try again.',
             timestamp: new Date(),
             model: `${selectedProvider}:${selectedModel}`,
             thinking: formatErrorDetail(detail),

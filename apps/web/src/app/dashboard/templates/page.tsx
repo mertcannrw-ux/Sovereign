@@ -104,6 +104,7 @@ export default function TemplatesPage() {
   );
 }
 
+/** Browse templates with URL-backed filters and a synchronized project creation draft. */
 function TemplatesCatalog() {
   const { status } = useSession();
   const router = useRouter();
@@ -125,10 +126,6 @@ function TemplatesCatalog() {
   const urlQuery = searchParams.get('q') ?? '';
   const [search, setSearch] = useState(urlQuery);
   const [seenQuery, setSeenQuery] = useState(urlQuery);
-  if (urlQuery !== seenQuery) {
-    setSeenQuery(urlQuery);
-    setSearch(urlQuery);
-  }
 
   const [name, setName] = useState(selected?.name ?? '');
   const [brief, setBrief] = useState(selectedGuide?.brief ?? '');
@@ -137,12 +134,23 @@ function TemplatesCatalog() {
   const [creating, setCreating] = useState(false);
   const [pickedOrgId, setPickedOrgId] = useState('');
 
-  if (selected && selectedGuide && selected.id !== draftFor) {
-    setDraftFor(selected.id);
-    setName(selected.name);
-    setBrief(selectedGuide.brief);
-    setCreateError(null);
-  }
+  // Sync state with URL query parameter
+  useEffect(() => {
+    if (urlQuery !== seenQuery) {
+      setSeenQuery(urlQuery);
+      setSearch(urlQuery);
+    }
+  }, [urlQuery, seenQuery]);
+
+  // Sync state with selected template
+  useEffect(() => {
+    if (selected && selectedGuide && selected.id !== draftFor) {
+      setDraftFor(selected.id);
+      setName(selected.name);
+      setBrief(selectedGuide.brief);
+      setCreateError(null);
+    }
+  }, [selected, selectedGuide, draftFor]);
 
   const href = (patch: Partial<Parameters<typeof catalogHref>[0]> = {}) =>
     catalogHref({

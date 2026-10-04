@@ -328,6 +328,10 @@ function messageRecord(message: {
   };
 }
 
+/**
+ * Authorize a project generation request and stream its progress and result as SSE.
+ * Return HTTP errors for rejected requests and failed events for errors during generation.
+ */
 export async function POST(request: NextRequest) {
   const session = await getVerifiedSession();
   if (!session?.user?.id) return Response.json({ error: 'Unauthorized' }, { status: 401 });
@@ -608,6 +612,7 @@ export async function POST(request: NextRequest) {
     };
 
     const stream = new ReadableStream<Uint8Array>({
+      /** Run the agent, emit progress events, and settle the run when the stream ends. */
       async start(controller) {
         const send = (event: string, data: unknown) => {
           try {
@@ -1993,6 +1998,14 @@ export async function POST(request: NextRequest) {
           } else {
             send('failed', {
               message: error instanceof Error ? error.message : 'Agent run failed',
+              // Lets the client pick an accurate headline instead of assuming
+              // every provider failure is a bad API key. Only local refusals
+              // may identify themselves as loopback policy failures.
+              code:
+                error instanceof ProviderError &&
+                (error.status === 0 || error.code !== 'loopback_blocked')
+                  ? error.code
+                  : undefined,
             });
           }
           await settleGenerationRun(stoppedByClient ? 'CANCELED' : 'FAILED', finalUsage);

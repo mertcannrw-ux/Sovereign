@@ -224,8 +224,10 @@ export function hashIp(ip: string): string {
       throw new Error('NEXTAUTH_SECRET must be set for IP hashing');
     }
   }
-  return createHmac('sha256', secret || 'dev-secret-key-fallback')
-    .update(ip)
-    .digest('hex')
-    .slice(0, 32);
+  // Derive a dedicated key for IP hashing to avoid reusing NEXTAUTH_SECRET
+  // directly (CWE-321). HKDF-like construction: extract then expand.
+  const derivedKey = createHmac('sha256', secret || 'dev-secret-key-fallback')
+    .update('rate-limit-ip-hashing')
+    .digest();
+  return createHmac('sha256', derivedKey).update(ip).digest('hex').slice(0, 32);
 }

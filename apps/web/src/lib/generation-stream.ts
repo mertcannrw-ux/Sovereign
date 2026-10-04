@@ -128,7 +128,7 @@ export type GenerationEvent =
   | { type: 'image-job'; data: ImageJobEventData }
   | { type: 'design-directions'; data: DesignDirectionsEventData }
   | { type: 'ready'; data: GenerationReadyEvent }
-  | { type: 'failed'; data: { message: string } };
+  | { type: 'failed'; data: { message: string; code?: string } };
 
 function parseEventBlock(block: string): GenerationEvent | null {
   let event = '';

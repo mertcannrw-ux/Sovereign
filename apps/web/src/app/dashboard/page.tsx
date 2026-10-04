@@ -58,6 +58,7 @@ const statusMap: Record<DbStatus, 'draft' | 'published' | 'archived'> = {
   PUBLISHED: 'published',
   ARCHIVED: 'archived',
 };
+/** Render the authenticated project list, initial-load recovery, and project creation dialog. */
 function DashboardContent() {
   const { data: session, status: authStatus } = useSession();
   const router = useRouter();
@@ -80,6 +81,7 @@ function DashboardContent() {
     },
   );
   const orgsQuery = trpc.organizations.list.useQuery();
+
   const createMutation = trpc.projects.create.useMutation();
   const [showNew, setShowNew] = useState(false);
   const [name, setName] = useState('');
@@ -121,11 +123,18 @@ function DashboardContent() {
     void projectsQuery.fetchNextPage();
   };
 
+  /** Create a project in the first available workspace, then navigate to its editor. */
   async function createProject() {
     if (!name.trim() || isCreating) return;
     const orgId = orgsQuery.data?.[0]?.id;
     if (!orgId) {
-      setCreateError('No workspace found. Create or join an organization first.');
+      // `organizations.list` only feeds this lookup, so a failure here is
+      // reported in the dialog instead of blocking the whole dashboard.
+      setCreateError(
+        orgsQuery.isError
+          ? 'Could not load your workspaces. Check your connection and try again.'
+          : 'No workspace found. Create or join an organization first.',
+      );
       return;
     }
     setIsCreating(true);
@@ -159,6 +168,33 @@ function DashboardContent() {
       </div>
     );
   if (!session) return null;
+
+  // Initial-load failures render after the auth guards, and after every hook
+  // has run. Both queries fire while the session is still loading, so
+  // rendering these first would surface UNAUTHORIZED as a dead-end "Failed to
+  // load" screen for anonymous visitors — with a Retry button that refetches
+  // into the same failure — racing the redirect to /auth/signin.
+  // `&& !data` keeps a working page visible: react-query retains `data` when
+  // a background refetch fails, and the global query-cache onError toast
+  // (lib/trpc/react.tsx) already surfaces that transient failure.
+  if (projectsQuery.isError && !projectsQuery.data) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="mx-auto max-w-md p-8 text-center">
+          <h1 className="mb-4 text-2xl font-bold text-foreground">Failed to load projects</h1>
+          <p className="mb-6 text-foreground-secondary">
+            {projectsQuery.error.message || 'An unexpected error occurred.'}
+          </p>
+          <button
+            onClick={() => projectsQuery.refetch()}
+            className="rounded-md bg-primary px-4 py-2 text-primary-foreground hover:bg-primary-hover"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-full bg-background">
@@ -227,6 +263,18 @@ function DashboardContent() {
             </p>
           ) : null}
           <DialogFooter>
+            {createError && orgsQuery.isError && !orgsQuery.data?.[0]?.id ? (
+              <Button
+                variant="outline"
+                disabled={orgsQuery.isFetching}
+                onClick={async () => {
+                  const result = await orgsQuery.refetch();
+                  if (!result.isError) setCreateError(null);
+                }}
+              >
+                {orgsQuery.isFetching ? 'Retrying…' : 'Retry'}
+              </Button>
+            ) : null}
             <DialogClose asChild>
               <Button variant="outline">Cancel</Button>
             </DialogClose>

@@ -87,6 +87,11 @@ function detectMediaType(bytes: Uint8Array, fallbackHeader?: string): string {
   return 'image/png';
 }
 
+/**
+ * Generate an image through an OpenAI-compatible endpoint and return its bytes and media type.
+ * Accept base64 data or a validated download URL, enforcing response size and time limits.
+ * Throw ProviderError for request, response, or download failures.
+ */
 export async function generateImage(
   model: string,
   prompt: string,
@@ -125,7 +130,7 @@ export async function generateImage(
       throw err;
     }
     if (err instanceof SsrfError) {
-      throw new ProviderError('openai', 0, 'ssrf_blocked', err.message);
+      throw new ProviderError('openai', 0, err.reason, err.message);
     }
     throw new ProviderError(
       'openai',

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { randomUUID } from 'node:crypto';
-import { getProvider } from '@app-builder/ai-gateway';
+import { getProvider, ProviderError } from '@app-builder/ai-gateway';
 import { AIProvider } from '@app-builder/shared';
 import { protectedProcedure, router } from '../trpc';
 import { requireProjectRole } from '@/server/authz';
@@ -219,11 +219,32 @@ export const chatRouter = router({
           );
           responseContent = result.content;
           usage = result.usage;
-        } catch {
-          throw new TRPCError({
-            code: 'INTERNAL_SERVER_ERROR',
-            message: 'AI provider request failed. Check your API key or try again.',
-          });
+        } catch (error) {
+          // A refused endpoint is a deployment-configuration failure, not a bad
+          // credential: the operator pointed a provider at localhost (Ollama,
+          // vLLM) and the ALLOW_LOOPBACK_PROVIDERS policy declined it. Telling
+          // them to check their API key sends them to debug the wrong thing, so
+          // surface the actionable reason verbatim. Every other failure keeps
+          // the generic line — the remaining SSRF reasons name internal address
+          // space and belong in the server log only. BAD_REQUEST is deliberate:
+          // INTERNAL_SERVER_ERROR maps to INTERNAL_ERROR in the app's
+          // errorFormatter, which substitutes the generic message, so the
+          // blocked reason must travel under a code whose message survives.
+          const blockedLoopback =
+            error instanceof ProviderError &&
+            error.status === 0 &&
+            error.code === 'loopback_blocked';
+          throw new TRPCError(
+            blockedLoopback
+              ? {
+                  code: 'BAD_REQUEST',
+                  message: `AI provider request blocked: ${error.message}`,
+                }
+              : {
+                  code: 'INTERNAL_SERVER_ERROR',
+                  message: 'AI provider request failed. Check your API key or try again.',
+                },
+          );
         }
 
         // ── 7. Parse file diffs from the response ──

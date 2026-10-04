@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { Suspense, useState, type FormEvent } from 'react';
+
 import { signIn } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
@@ -25,7 +26,8 @@ const OAUTH_ERROR_MESSAGES: Record<string, string> = {
   Configuration: 'Sign-in is misconfigured on the server. Please contact support.',
 };
 
-export default function SignInPage() {
+/** Render credential and OAuth sign-in controls with errors from the URL or sign-in attempt. */
+function SignInForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const oauthError = searchParams.get('error');
@@ -228,5 +230,23 @@ export default function SignInPage() {
         </div>
       </section>
     </main>
+  );
+}
+
+/** Show a loading fallback while the sign-in form waits for search parameters. */
+export default function SignInPage() {
+  return (
+    <Suspense
+      // Without a fallback this page prerenders as an empty shell — it is the
+      // only boundary in the app without one, and `useSearchParams` forces the
+      // static-render bailout on every build.
+      fallback={
+        <div className="grid min-h-screen place-items-center bg-background">
+          <div className="h-7 w-7 animate-spin rounded-full border-2 border-border border-t-primary" />
+        </div>
+      }
+    >
+      <SignInForm />
+    </Suspense>
   );
 }
