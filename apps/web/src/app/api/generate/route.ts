@@ -1993,6 +1993,9 @@ export async function POST(request: NextRequest) {
           } else {
             send('failed', {
               message: error instanceof Error ? error.message : 'Agent run failed',
+              // Lets the client pick an accurate headline instead of assuming
+              // every provider failure is a bad API key.
+              code: error instanceof ProviderError ? error.code : undefined,
             });
           }
           await settleGenerationRun(stoppedByClient ? 'CANCELED' : 'FAILED', finalUsage);

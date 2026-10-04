@@ -44,7 +44,7 @@ export function visualEditorPlugin(options: VisualEditorOptions = {}): Plugin {
       if (transformed === code) return null;
       return {
         code: transformed,
-        map: { mappings: '' } as unknown as import('vite').TransformResult['map'],
+        map: null,
       };
     },
   };

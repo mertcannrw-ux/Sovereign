@@ -6,7 +6,7 @@ export type { Provider } from './gateway';
 export { getProvider } from './provider';
 export { ssrfFetch } from './provider';
 export { validateUrl, validateOutboundUrl, loopbackProvidersAllowed, SsrfError } from './ssrf';
-export type { ValidateUrlOptions } from './ssrf';
+export type { ValidateUrlOptions, SsrfReason } from './ssrf';
 export {
   OpenAIProvider,
   AnthropicProvider,

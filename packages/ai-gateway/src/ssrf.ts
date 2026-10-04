@@ -10,7 +10,7 @@ import { promises as dns } from 'dns';
 
 // ─── IP address helpers ────────────────────────────────────
 
-const IPV4_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+const IPV4_RE = /^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/;
 const isIPv4 = (ip: string) => IPV4_RE.test(ip);
 const isIPv6 = (ip: string) => !isIPv4(ip) && ip.includes(':');
 
@@ -182,11 +182,9 @@ function isPrivateIP(ip: string): boolean {
 }
 
 function isLoopbackIPv4(ip: string): boolean {
-  const match = IPV4_RE.exec(ip);
-  if (!match) return false;
-  const octets = [Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4])];
-  if (octets.some((n) => n > 255)) return false;
-  return octets[0] === 127;
+  if (!isIPv4(ip)) return false;
+  // `IPV4_RE` already enforces 0-255, so no further range check is needed.
+  return ip.split('.')[0] === '127';
 }
 
 /**
@@ -225,10 +223,28 @@ export type ValidateUrlOptions = {
 
 // ─── URL validation ────────────────────────────────────────
 
+/**
+ * Why a URL was refused. Callers switch on this rather than on the message:
+ * `loopback_blocked` is the one failure an operator can fix by configuration
+ * (and the only one worth naming verbatim to a user), while the rest describe
+ * attempts that should stay opaque outside the server log.
+ */
+export type SsrfReason =
+  | 'loopback_blocked'
+  | 'invalid_url'
+  | 'scheme'
+  | 'credentials'
+  | 'fragment'
+  | 'private_ip'
+  | 'dns_failure';
+
 export class SsrfError extends Error {
-  constructor(message: string) {
+  readonly reason: SsrfReason;
+
+  constructor(reason: SsrfReason, message: string) {
     super(message);
     this.name = 'SsrfError';
+    this.reason = reason;
   }
 }
 
@@ -242,29 +258,32 @@ export function validateUrl(url: string, options?: ValidateUrlOptions): URL {
   try {
     parsed = new URL(url);
   } catch {
-    throw new SsrfError('Invalid URL');
+    throw new SsrfError('invalid_url', 'Invalid URL');
   }
 
   const isLocalHost = isLoopbackHostname(parsed.hostname);
   const allowLoopback = options?.allowLoopback ?? loopbackProvidersAllowed();
 
   if (isLocalHost && !allowLoopback) {
-    throw new SsrfError('Loopback URLs are not allowed');
+    throw new SsrfError(
+      'loopback_blocked',
+      'Loopback URLs are not allowed. Set ALLOW_LOOPBACK_PROVIDERS=true to use a local provider (Ollama, vLLM) on a host that runs one.',
+    );
   }
 
   if (parsed.protocol === 'http:' && !isLocalHost) {
-    throw new SsrfError('Only HTTPS URLs are allowed');
+    throw new SsrfError('scheme', 'Only HTTPS URLs are allowed');
   }
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-    throw new SsrfError('Only HTTPS URLs are allowed');
+    throw new SsrfError('scheme', 'Only HTTPS URLs are allowed');
   }
 
   if (parsed.username || parsed.password) {
-    throw new SsrfError('URLs with credentials are not allowed');
+    throw new SsrfError('credentials', 'URLs with credentials are not allowed');
   }
 
   if (parsed.hash) {
-    throw new SsrfError('URLs with fragments are not allowed');
+    throw new SsrfError('fragment', 'URLs with fragments are not allowed');
   }
 
   return parsed;
@@ -302,13 +321,13 @@ async function resolveHostnameValidated(hostname: string): Promise<string[]> {
     const result = await dns.lookup(hostname, { all: true });
     addresses = result;
   } catch {
-    throw new SsrfError('DNS resolution failed');
+    throw new SsrfError('dns_failure', 'DNS resolution failed');
   }
 
   const validIPs: string[] = [];
   for (const entry of addresses) {
     if (isPrivateIP(entry.address)) {
-      throw new SsrfError(`Private IP address blocked: ${entry.address}`);
+      throw new SsrfError('private_ip', `Private IP address blocked: ${entry.address}`);
     }
     validIPs.push(entry.address);
   }

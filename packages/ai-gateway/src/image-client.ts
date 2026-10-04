@@ -125,7 +125,7 @@ export async function generateImage(
       throw err;
     }
     if (err instanceof SsrfError) {
-      throw new ProviderError('openai', 0, 'ssrf_blocked', err.message);
+      throw new ProviderError('openai', 0, err.reason, err.message);
     }
     throw new ProviderError(
       'openai',
