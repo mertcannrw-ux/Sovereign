@@ -56,7 +56,11 @@ const container = vi.hoisted(() => {
         files.set('node_modules/vite/bin/vite.js', '#!/usr/bin/env node\n');
         return { exit: Promise.resolve(0), output: emptyOutput(), kill: vi.fn() };
       }
-      return { exit: Promise.withResolvers<number>().promise, output: emptyOutput(), kill: vi.fn() };
+      return {
+        exit: Promise.withResolvers<number>().promise,
+        output: emptyOutput(),
+        kill: vi.fn(),
+      };
     }),
     fs: {
       mkdir: vi.fn(async () => undefined),

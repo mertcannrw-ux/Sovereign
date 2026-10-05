@@ -222,7 +222,7 @@ function mockHost(options?: {
     readFile:
       options?.stamp === undefined
         ? undefined
-        : async (path) => (path === VITE_INSTALL_STAMP_PATH ? options.stamp ?? null : null),
+        : async (path) => (path === VITE_INSTALL_STAMP_PATH ? (options.stamp ?? null) : null),
     writeFile: async (path, content) => {
       writes.push({ path, content });
     },
@@ -493,7 +493,10 @@ describe('startPreviewProcess', () => {
   it('installs without a stamp when the caller provides no package.json content', async () => {
     // Guards the "stamp present but content unknown" case: guessing from a
     // stale stamp could boot Vite against uninstalled dependencies.
-    const { host, spawns } = mockHost({ viteEntry: true, stamp: '{"dependencies":{"vite":"6.3.5"}}' });
+    const { host, spawns } = mockHost({
+      viteEntry: true,
+      stamp: '{"dependencies":{"vite":"6.3.5"}}',
+    });
     await startPreviewProcess(host, { mode: 'vite', onLog: () => {} });
 
     expect(spawns[0]).toEqual({ command: 'npm', args: ['install', '--ignore-scripts'] });

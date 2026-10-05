@@ -519,9 +519,7 @@ async function startVitePreview(
     onLog('Skipping npm install: dependencies already installed for this package.json.');
   } else {
     onLog('Installing preview dependencies (npm install --ignore-scripts)…');
-    const install = await host.spawn(VITE_INSTALL_COMMAND.command, [
-      ...VITE_INSTALL_COMMAND.args,
-    ]);
+    const install = await host.spawn(VITE_INSTALL_COMMAND.command, [...VITE_INSTALL_COMMAND.args]);
     if (isCancelled?.()) {
       killQuietly(install);
       throw new PreviewBootCancelledError();

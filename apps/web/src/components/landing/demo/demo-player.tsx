@@ -2,7 +2,15 @@
 
 import { AnimatePresence, motion, useInView, useReducedMotion } from 'framer-motion';
 import { Pause, Play, RotateCcw } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react';
 import { cn } from '@app-builder/ui/utils';
 import { ease } from '@/components/landing/primitives';
 
@@ -84,7 +92,11 @@ export function DemoPlayer({
   // hydration (the transport's play/pause button). `useSyncExternalStore`
   // serves the server snapshot for the hydration render and the live client
   // snapshot afterwards, so the first render stays deterministic.
-  const mounted = useSyncExternalStore(noopSubscribe, () => true, () => false);
+  const mounted = useSyncExternalStore(
+    noopSubscribe,
+    () => true,
+    () => false,
+  );
   const reducedMotion = mounted && Boolean(prefersReducedMotion);
   // design.md: with `prefers-reduced-motion` set the film holds its poster
   // frame until the viewer presses Play, then behaves normally.
