@@ -17,6 +17,8 @@ import {
   shouldBootVite,
   startPreviewProcess,
   subscribePreviewDiagnostics,
+  VITE_DIRECT_ENTRY_PATH,
+  VITE_INSTALL_STAMP_PATH,
   withTimeout,
   type PreviewProcess,
   type PreviewProcessHost,
@@ -168,7 +170,13 @@ function emptyOutput(): ReadableStream<string> {
   });
 }
 
-function mockProcess(exit: Promise<number> = new Promise(() => {})): PreviewProcess {
+/** A process whose exit never settles, like a live dev server. */
+function pendingExit(): Promise<number> {
+  const { promise } = Promise.withResolvers<number>();
+  return promise;
+}
+
+function mockProcess(exit: Promise<number> = pendingExit()): PreviewProcess {
   return {
     exit,
     output: emptyOutput(),
@@ -176,27 +184,54 @@ function mockProcess(exit: Promise<number> = new Promise(() => {})): PreviewProc
   };
 }
 
-function mockHost(options?: { installExit?: number; viteExit?: number; viteSpawnError?: Error }): {
+function mockHost(options?: {
+  installExit?: number;
+  viteExit?: number;
+  viteSpawnError?: Error;
+  /** Serve the direct-entry existence probe. */
+  viteEntry?: boolean;
+  directExit?: number;
+  directSpawnError?: Error;
+  /** Content returned for the install stamp; omit for "no stamp". */
+  stamp?: string;
+}): {
   host: PreviewProcessHost;
   spawns: Array<{ command: string; args: string[] }>;
+  writes: Array<{ path: string; content: string }>;
 } {
   const spawns: Array<{ command: string; args: string[] }> = [];
+  const writes: Array<{ path: string; content: string }> = [];
   const host: PreviewProcessHost = {
     async spawn(command, args) {
       spawns.push({ command, args });
       if (command === 'npm') return mockProcess(Promise.resolve(options?.installExit ?? 0));
+      if (command === 'node' && args[0] === VITE_DIRECT_ENTRY_PATH) {
+        if (options?.directSpawnError) throw options.directSpawnError;
+        return mockProcess(
+          options?.directExit === undefined ? pendingExit() : Promise.resolve(options.directExit),
+        );
+      }
       if (command === 'npx') {
         if (options?.viteSpawnError) throw options.viteSpawnError;
         return mockProcess(
-          options?.viteExit === undefined
-            ? new Promise(() => {})
-            : Promise.resolve(options.viteExit),
+          options?.viteExit === undefined ? pendingExit() : Promise.resolve(options.viteExit),
         );
       }
-      return mockProcess(new Promise(() => {}));
+      return mockProcess(pendingExit());
     },
+    readFile:
+      options?.stamp === undefined
+        ? undefined
+        : async (path) => (path === VITE_INSTALL_STAMP_PATH ? options.stamp ?? null : null),
+    writeFile: async (path, content) => {
+      writes.push({ path, content });
+    },
+    exists:
+      options?.viteEntry === undefined
+        ? undefined
+        : async (path) => options.viteEntry === true && path === VITE_DIRECT_ENTRY_PATH,
   };
-  return { host, spawns };
+  return { host, spawns, writes };
 }
 
 describe('startPreviewProcess', () => {
@@ -282,7 +317,7 @@ describe('startPreviewProcess', () => {
         if (command === 'npm') {
           return { exit: installExit.promise, output: emptyOutput(), kill: vi.fn() };
         }
-        return mockProcess(new Promise(() => {}));
+        return mockProcess();
       },
     };
 
@@ -369,6 +404,112 @@ describe('startPreviewProcess', () => {
       { command: 'npx', args: ['vite', '--host'] },
     ]);
   });
+
+  it('prefers the direct vite entry over npx when it is installed', async () => {
+    const { host, spawns, writes } = mockHost({ viteEntry: true });
+    const logs: string[] = [];
+    const packageJson = '{"dependencies":{"vite":"6.3.5"}}';
+    const result = await startPreviewProcess(host, {
+      mode: 'vite',
+      onLog: (line) => logs.push(line),
+      packageJson,
+    });
+
+    expect(result.engine).toBe('vite');
+    expect(spawns).toEqual([
+      { command: 'npm', args: ['install', '--ignore-scripts'] },
+      { command: 'node', args: [VITE_DIRECT_ENTRY_PATH, '--host'] },
+    ]);
+    // A successful install records the stamp so the next boot can skip it.
+    expect(writes).toEqual([{ path: VITE_INSTALL_STAMP_PATH, content: packageJson }]);
+  });
+
+  it('retries with npx when the direct entry spawn fails', async () => {
+    const { host, spawns } = mockHost({ viteEntry: true, directSpawnError: new Error('EIO') });
+    const result = await startPreviewProcess(host, { mode: 'vite', onLog: () => {} });
+
+    expect(result.engine).toBe('vite');
+    expect(spawns).toEqual([
+      { command: 'npm', args: ['install', '--ignore-scripts'] },
+      { command: 'node', args: [VITE_DIRECT_ENTRY_PATH, '--host'] },
+      { command: 'npx', args: ['vite', '--host'] },
+    ]);
+  });
+
+  it('retries with npx when the direct entry exits immediately', async () => {
+    const { host, spawns } = mockHost({ viteEntry: true, directExit: 1 });
+    const result = await startPreviewProcess(host, { mode: 'vite', onLog: () => {} });
+
+    expect(result.engine).toBe('vite');
+    expect(spawns.at(-1)).toEqual({ command: 'npx', args: ['vite', '--host'] });
+  });
+
+  it('skips npm install when the stamp matches the project package.json', async () => {
+    const packageJson = '{"dependencies":{"vite":"6.3.5"}}';
+    const { host, spawns, writes } = mockHost({ viteEntry: true, stamp: packageJson });
+    const logs: string[] = [];
+    const result = await startPreviewProcess(host, {
+      mode: 'vite',
+      onLog: (line) => logs.push(line),
+      packageJson,
+    });
+
+    expect(result.engine).toBe('vite');
+    expect(spawns).toEqual([{ command: 'node', args: [VITE_DIRECT_ENTRY_PATH, '--host'] }]);
+    expect(writes).toEqual([]);
+    expect(logs.some((line) => line.includes('Skipping npm install'))).toBe(true);
+  });
+
+  it('reinstalls when the stamp does not match the project package.json', async () => {
+    const { host, spawns, writes } = mockHost({ viteEntry: true, stamp: '{"dependencies":{}}' });
+    const packageJson = '{"dependencies":{"lucide-react":"1.0.0"}}';
+    await startPreviewProcess(host, { mode: 'vite', onLog: () => {}, packageJson });
+
+    expect(spawns[0]).toEqual({ command: 'npm', args: ['install', '--ignore-scripts'] });
+    expect(writes).toEqual([{ path: VITE_INSTALL_STAMP_PATH, content: packageJson }]);
+  });
+
+  it('reinstalls when the stamp matches but the installed entry is missing', async () => {
+    // The stamp is never invalidated, so a match alone must not be trusted: a
+    // wiped node_modules has to be rebuilt instead of leaving `npx` to fetch
+    // floating packages on top of missing app dependencies.
+    const packageJson = '{"dependencies":{"vite":"6.3.5"}}';
+    const { host, spawns, writes } = mockHost({ viteEntry: false, stamp: packageJson });
+    await startPreviewProcess(host, { mode: 'vite', onLog: () => {}, packageJson });
+
+    expect(spawns[0]).toEqual({ command: 'npm', args: ['install', '--ignore-scripts'] });
+    expect(writes).toEqual([{ path: VITE_INSTALL_STAMP_PATH, content: packageJson }]);
+  });
+
+  it('skips the install on a host without an exists probe when the stamp matches', async () => {
+    const packageJson = '{"dependencies":{"vite":"6.3.5"}}';
+    const { host, spawns } = mockHost({ stamp: packageJson });
+    const result = await startPreviewProcess(host, { mode: 'vite', onLog: () => {}, packageJson });
+
+    expect(result.engine).toBe('vite');
+    expect(spawns).toEqual([{ command: 'npx', args: ['vite', '--host'] }]);
+  });
+
+  it('installs without a stamp when the caller provides no package.json content', async () => {
+    // Guards the "stamp present but content unknown" case: guessing from a
+    // stale stamp could boot Vite against uninstalled dependencies.
+    const { host, spawns } = mockHost({ viteEntry: true, stamp: '{"dependencies":{"vite":"6.3.5"}}' });
+    await startPreviewProcess(host, { mode: 'vite', onLog: () => {} });
+
+    expect(spawns[0]).toEqual({ command: 'npm', args: ['install', '--ignore-scripts'] });
+  });
+
+  it('does not write the stamp when npm install fails', async () => {
+    const { host, writes } = mockHost({ installExit: 1 });
+    const result = await startPreviewProcess(host, {
+      mode: 'vite',
+      onLog: () => {},
+      packageJson: '{"dependencies":{}}',
+    });
+
+    expect(result.engine).toBe('static');
+    expect(writes).toEqual([]);
+  });
 });
 
 describe('scheduleViteReadyFallback', () => {
@@ -393,7 +534,7 @@ describe('scheduleViteReadyFallback', () => {
 
   it('falls back when Vite never becomes ready', async () => {
     vi.useFakeTimers();
-    const process = mockProcess(new Promise(() => {}));
+    const process = mockProcess();
     const onFallback = vi.fn();
     scheduleViteReadyFallback(process, {
       timeoutMs: 30_000,
@@ -408,7 +549,7 @@ describe('scheduleViteReadyFallback', () => {
 
   it('does not fall back after cancel (server-ready)', async () => {
     vi.useFakeTimers();
-    const process = mockProcess(new Promise(() => {}));
+    const process = mockProcess();
     const onFallback = vi.fn();
     const cancel = scheduleViteReadyFallback(process, {
       timeoutMs: 30_000,

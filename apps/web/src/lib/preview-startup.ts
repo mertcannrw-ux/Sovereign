@@ -75,6 +75,24 @@ export const VITE_INSTALL_COMMAND = {
   args: ['install', '--ignore-scripts'],
 } as const;
 export const VITE_DEV_COMMAND = { command: 'npx', args: ['vite', '--host'] } as const;
+/**
+ * Vite's actual CLI entry. `npx` re-resolves the package on every boot (and may
+ * consult the registry); spawning this through `node` skips that. Used only
+ * when {@link PreviewProcessHost.exists} confirms the shim is present, so a
+ * missing entry never silently downgrades the preview — we fall back to `npx`.
+ */
+export const VITE_DIRECT_ENTRY_PATH = 'node_modules/vite/bin/vite.js';
+export const VITE_DIRECT_PREVIEW_COMMAND = {
+  command: 'node',
+  args: [VITE_DIRECT_ENTRY_PATH, '--host'],
+} as const;
+/**
+ * Container-side marker recording the `package.json` content for which
+ * `npm install` last exited 0 in this container instance. Under
+ * {@link isSovereignOverlayPath}, so project-tree reconciliation never deletes
+ * it; a reset container starts with a fresh filesystem and no stamp.
+ */
+export const VITE_INSTALL_STAMP_PATH = '.sovereign/npm-stamp';
 
 export type PreviewEngine = 'static' | 'vite';
 
@@ -113,6 +131,12 @@ function killQuietly(process: PreviewProcess): void {
 
 export interface PreviewProcessHost {
   spawn: (command: string, args: string[]) => Promise<PreviewProcess>;
+  /** Read a container file as UTF-8; resolves `null` for missing/unreadable files. */
+  readFile?: (path: string) => Promise<string | null>;
+  /** Write a container file, creating parent directories as needed. */
+  writeFile?: (path: string, content: string) => Promise<void>;
+  /** Whether a container path exists. Used to gate the direct Vite entry. */
+  exists?: (path: string) => Promise<boolean>;
 }
 
 export interface PreviewEventSource {
@@ -376,6 +400,21 @@ async function rejectIfAlreadyExited(process: PreviewProcess, label: string): Pr
   }
 }
 
+async function spawnVite(
+  host: PreviewProcessHost,
+  command: { command: string; args: readonly string[] },
+  isCancelled?: () => boolean,
+): Promise<PreviewProcess> {
+  const vite = await host.spawn(command.command, [...command.args]);
+  // Same orphan-server guard as every other spawn here: an owner that left
+  // during the spawn must not leave a listener on 5173 for the next project.
+  if (isCancelled?.()) {
+    killQuietly(vite);
+    throw new PreviewBootCancelledError();
+  }
+  return vite;
+}
+
 /** Watch a spawned Vite process until it is promoted, dies, or times out. */
 export function scheduleViteReadyFallback(
   process: PreviewProcess,
@@ -451,42 +490,97 @@ async function startVitePreview(
   host: PreviewProcessHost,
   onLog: (line: string) => void,
   installTimeoutMs: number,
-  isCancelled?: () => boolean,
+  isCancelled: (() => boolean) | undefined,
+  packageJson: string | null | undefined,
 ): Promise<PreviewProcess> {
   throwIfCancelled(isCancelled);
-  onLog('Installing preview dependencies (npm install --ignore-scripts)…');
-  const install = await host.spawn(VITE_INSTALL_COMMAND.command, [...VITE_INSTALL_COMMAND.args]);
-  if (isCancelled?.()) {
-    killQuietly(install);
-    throw new PreviewBootCancelledError();
+  // `npm install` is the dominant cost of a Vite boot. WebContainer keeps a
+  // live `node_modules` for the whole browser session, so the second boot of
+  // a project (HMR-less reload, project switch, Retry) can reuse it wholesale
+  // when nothing touched the dependency set: `npm install` only ever ran after
+  // the project's current `package.json` was written, and anything that edits
+  // those files through the app rewrites `package.json` byte-for-byte with
+  // them, so an unchanged file means an unchanged dependency set.
+  const stamp = host.readFile
+    ? await host.readFile(VITE_INSTALL_STAMP_PATH).catch(() => null)
+    : null;
+  const stampMatches =
+    packageJson != null && host.readFile != null && stamp !== null && stamp === packageJson;
+  // The stamp proves only that some install for this exact content exited 0 —
+  // it is never invalidated, so the tree it describes may since have been
+  // deleted or left partial (a failed install that was then reverted, an
+  // agent-issued `rm -rf node_modules`). Trusting it blindly would let `npx`
+  // fetch a floating Vite on top of missing app dependencies, so probe the
+  // installed entry before skipping.
+  const skipInstall =
+    stampMatches &&
+    (host.exists == null || (await host.exists(VITE_DIRECT_ENTRY_PATH).catch(() => false)));
+  if (skipInstall) {
+    onLog('Skipping npm install: dependencies already installed for this package.json.');
+  } else {
+    onLog('Installing preview dependencies (npm install --ignore-scripts)…');
+    const install = await host.spawn(VITE_INSTALL_COMMAND.command, [
+      ...VITE_INSTALL_COMMAND.args,
+    ]);
+    if (isCancelled?.()) {
+      killQuietly(install);
+      throw new PreviewBootCancelledError();
+    }
+    attachProcessOutput(install, onLog);
+    const installCode = await withTimeout(
+      install.exit,
+      installTimeoutMs,
+      'npm install --ignore-scripts timed out',
+      () => {
+        try {
+          install.kill();
+        } catch {
+          // Process may already have exited.
+        }
+      },
+    );
+    // npm install takes seconds; navigating away in that window is the common
+    // case. Spawning Vite here anyway leaves an orphan listening on 5173 that
+    // the *next* project's preview adopts as its own URL — the stale-preview
+    // bug.
+    throwIfCancelled(isCancelled);
+    if (installCode !== 0) {
+      throw new Error(`npm install --ignore-scripts failed (exit ${installCode})`);
+    }
+    if (packageJson != null && host.writeFile) {
+      // Best-effort marker: a failed write only costs a redundant install
+      // later, never correctness.
+      await host.writeFile(VITE_INSTALL_STAMP_PATH, packageJson).catch(() => {});
+    }
   }
-  attachProcessOutput(install, onLog);
-  const installCode = await withTimeout(
-    install.exit,
-    installTimeoutMs,
-    'npm install --ignore-scripts timed out',
-    () => {
-      try {
-        install.kill();
-      } catch {
-        // Process may already have exited.
-      }
-    },
-  );
-  // npm install takes seconds; navigating away in that window is the common
-  // case. Spawning Vite here anyway leaves an orphan listening on 5173 that the
-  // *next* project's preview adopts as its own URL — the stale-preview bug.
-  throwIfCancelled(isCancelled);
-  if (installCode !== 0) {
-    throw new Error(`npm install --ignore-scripts failed (exit ${installCode})`);
+
+  // `npx` re-resolves the package (occasionally against the registry) on every
+  // boot. The install above guarantees Vite's own bin shim exists, so spawning
+  // it directly is strictly cheaper. Anything unexpected about the entry — a
+  // hand-edited `package.json` that skipped Vite, a half-deleted
+  // `node_modules` — is re-checked with `npx` rather than downgrading the
+  // preview to static: the static server cannot run TS React apps, so a
+  // silently blank pane is the worst failure mode here.
+  const hasDirectEntry = host.exists
+    ? await host.exists(VITE_DIRECT_ENTRY_PATH).catch(() => false)
+    : false;
+  if (hasDirectEntry) {
+    onLog(`Starting Vite (\`node ${VITE_DIRECT_ENTRY_PATH} --host\`)…`);
+    try {
+      const vite = await spawnVite(host, VITE_DIRECT_PREVIEW_COMMAND, isCancelled);
+      attachProcessOutput(vite, onLog);
+      await rejectIfAlreadyExited(vite, 'Vite');
+      return vite;
+    } catch (error) {
+      if (error instanceof PreviewBootCancelledError) throw error;
+      onLog(
+        `Direct Vite entry failed (${error instanceof Error ? error.message : error}). Retrying with npx…`,
+      );
+    }
   }
 
   onLog('Starting Vite (`npx vite --host`)…');
-  const vite = await host.spawn(VITE_DEV_COMMAND.command, [...VITE_DEV_COMMAND.args]);
-  if (isCancelled?.()) {
-    killQuietly(vite);
-    throw new PreviewBootCancelledError();
-  }
+  const vite = await spawnVite(host, VITE_DEV_COMMAND, isCancelled);
   attachProcessOutput(vite, onLog);
   await rejectIfAlreadyExited(vite, 'Vite');
   return vite;
@@ -502,6 +596,8 @@ export async function startPreviewProcess(
     existingStatic?: PreviewProcess | null;
     /** True once the caller no longer wants this preview (its page went away). */
     isCancelled?: () => boolean;
+    /** The project's current `package.json` content, for the install stamp. */
+    packageJson?: string | null;
   },
 ): Promise<StartPreviewProcessResult> {
   if (options.mode !== 'vite') {
@@ -517,6 +613,7 @@ export async function startPreviewProcess(
       options.onLog,
       options.installTimeoutMs ?? NPM_INSTALL_TIMEOUT_MS,
       options.isCancelled,
+      options.packageJson,
     );
     return { process, engine: 'vite' };
   } catch (error) {
