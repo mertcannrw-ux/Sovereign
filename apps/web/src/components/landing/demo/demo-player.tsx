@@ -2,9 +2,20 @@
 
 import { AnimatePresence, motion, useInView, useReducedMotion } from 'framer-motion';
 import { Pause, Play, RotateCcw } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react';
 import { cn } from '@app-builder/ui/utils';
 import { ease } from '@/components/landing/primitives';
+
+/** Stable no-op subscription: the only thing this store reports is "hydrated". */
+const noopSubscribe = () => () => {};
 
 /** What a scene receives on every frame of the player clock. */
 export interface DemoFrame {
@@ -75,7 +86,21 @@ export function DemoPlayer({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const inView = useInView(containerRef, { amount: 0.3 });
-  const reducedMotion = useReducedMotion();
+  const prefersReducedMotion = useReducedMotion();
+  // `useReducedMotion()` reads `matchMedia` during the first client render but
+  // resolves null on the server, so deriving markup from it directly breaks
+  // hydration (the transport's play/pause button). `useSyncExternalStore`
+  // serves the server snapshot for the hydration render and the live client
+  // snapshot afterwards, so the first render stays deterministic.
+  const mounted = useSyncExternalStore(
+    noopSubscribe,
+    () => true,
+    () => false,
+  );
+  const reducedMotion = mounted && Boolean(prefersReducedMotion);
+  // design.md: with `prefers-reduced-motion` set the film holds its poster
+  // frame until the viewer presses Play, then behaves normally.
+  const [playRequested, setPlayRequested] = useState(false);
 
   const segments = useMemo<Segment[]>(
     () =>
@@ -99,7 +124,18 @@ export function DemoPlayer({
   const [time, setTime] = useState(() => segments[posterIndex]?.start ?? 0);
   const [paused, setPaused] = useState(false);
 
-  const running = inView && !paused && !reducedMotion && total > 0;
+  const running = inView && !paused && total > 0 && (!reducedMotion || playRequested);
+
+  const toggle = useCallback(() => {
+    // First press under reduced motion overrides the poster hold rather than
+    // flipping `paused`, which would leave the film parked forever.
+    if (reducedMotion && !playRequested) {
+      setPlayRequested(true);
+      setPaused(false);
+      return;
+    }
+    setPaused((value) => !value);
+  }, [reducedMotion, playRequested]);
 
   useEffect(() => {
     if (!running) return;
@@ -156,9 +192,8 @@ export function DemoPlayer({
         total={total}
         progress={progress}
         caption={scene?.caption ?? ''}
-        paused={paused}
-        reducedMotion={Boolean(reducedMotion)}
-        onToggle={() => setPaused((value) => !value)}
+        playing={running}
+        onToggle={toggle}
         onRestart={() => seek(0)}
         onSeek={(next) => seek(next.start)}
       />
@@ -173,8 +208,7 @@ function Transport({
   total,
   progress,
   caption,
-  paused,
-  reducedMotion,
+  playing,
   onToggle,
   onRestart,
   onSeek,
@@ -185,8 +219,7 @@ function Transport({
   total: number;
   progress: number;
   caption: string;
-  paused: boolean;
-  reducedMotion: boolean;
+  playing: boolean;
   onToggle: () => void;
   onRestart: () => void;
   onSeek: (segment: Segment) => void;
@@ -197,13 +230,13 @@ function Transport({
         <button
           type="button"
           onClick={onToggle}
-          aria-label={paused || reducedMotion ? 'Play demo' : 'Pause demo'}
+          aria-label={playing ? 'Pause demo' : 'Play demo'}
           className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40"
         >
-          {paused || reducedMotion ? (
-            <Play className="h-4 w-4 translate-x-px fill-current" />
-          ) : (
+          {playing ? (
             <Pause className="h-4 w-4 fill-current" />
+          ) : (
+            <Play className="h-4 w-4 translate-x-px fill-current" />
           )}
         </button>
         <button

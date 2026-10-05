@@ -56,7 +56,13 @@ let previewErrorSink: (line: string) => void = () => {};
 /** Teardown for the diagnostics subscription belonging to `containerPromise`. */
 let diagnosticsUnsubscribe: (() => void) | null = null;
 
-async function getContainer(): Promise<WebContainer> {
+/**
+ * Not `async` on purpose: {@link warmWebContainer} compares the promise it got
+ * back against the module-level cache to decide whether a failed warm boot is
+ * still the cached one. An `async` wrapper is a fresh promise on every call, so
+ * that identity check would never match.
+ */
+function getContainer(): Promise<WebContainer> {
   if (!containerPromise) {
     containerPromise = import('@webcontainer/api').then(({ WebContainer }) =>
       WebContainer.boot({
@@ -94,6 +100,26 @@ function resetContainer(): void {
     .catch(() => {
       // Never booted (or already torn down) — nothing to release.
     });
+}
+
+/**
+ * Start (or join) the container boot without claiming ownership of a preview.
+ * The hook's own boot waits behind `enabled` — authenticated plus the project
+ * file fetch — so without this the multi-second runtime download/instantiation
+ * cannot begin until those complete; warming at mount lets the first real
+ * `getContainer()` await an already-in-flight boot. A page that never boots a
+ * preview pays the boot cost too: the sandbox runtime is downloaded,
+ * instantiated, and by the shared-container design kept resident for the tab.
+ */
+export function warmWebContainer(): void {
+  const warming = getContainer();
+  void warming.catch(() => {
+    // A failed warm boot must not poison the page's own attempt: drop the
+    // rejected promise so the next getContainer() starts a fresh sandbox —
+    // but only while it is still the cached one; a retry that already
+    // replaced it owns the container now.
+    if (containerPromise === warming) resetContainer();
+  });
 }
 
 async function ensureParentDirectories(container: WebContainer, path: string) {
@@ -491,7 +517,7 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
   );
 
   const bootPreview = useCallback(
-    async (mode: PreviewEngine) => {
+    async (mode: PreviewEngine, packageJson: string | null) => {
       const container = await getContainer();
       if (!aliveRef.current) return;
       if (mode === 'vite') {
@@ -506,12 +532,36 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
       let started: StartPreviewProcessResult;
       try {
         started = await startPreviewProcess(
-          { spawn: (command, args) => container.spawn(command, args) },
+          {
+            spawn: (command, args) => container.spawn(command, args),
+            readFile: async (path) => {
+              try {
+                return await container.fs.readFile(path, 'utf-8');
+              } catch {
+                return null;
+              }
+            },
+            writeFile: async (path, content) => {
+              await ensureParentDirectories(container, path);
+              await container.fs.writeFile(path, content);
+            },
+            exists: async (path) => {
+              // The public FS API has no stat(); listing the parent directory
+              // is the cheapest existence probe. A missing directory rejects,
+              // which the caller treats as "not present".
+              const slash = path.lastIndexOf('/');
+              const dir = slash === -1 ? '.' : path.slice(0, slash);
+              const base = slash === -1 ? path : path.slice(slash + 1);
+              const entries: string[] = await container.fs.readdir(dir);
+              return entries.includes(base);
+            },
+          },
           {
             mode,
             onLog: appendLog,
             existingStatic: liveStatic,
             isCancelled: () => !aliveRef.current,
+            packageJson,
           },
         );
       } catch (error) {
@@ -542,7 +592,10 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
       }
       viteAttemptedRef.current = true;
       try {
-        await bootPreview('vite');
+        await bootPreview(
+          'vite',
+          files.find((file) => file.path === 'package.json')?.content ?? null,
+        );
       } catch (error) {
         appendLog(
           `Vite preview failed: ${error instanceof Error ? error.message : 'unknown error'}. Keeping the static file server.`,
@@ -696,7 +749,10 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
 
         const mode: PreviewEngine = shouldBootVite(seedFiles) ? 'vite' : 'static';
         if (mode === 'vite') viteAttemptedRef.current = true;
-        await bootPreview(mode);
+        await bootPreview(
+          mode,
+          seedFiles.find((file) => file.path === 'package.json')?.content ?? null,
+        );
       } catch (error) {
         // A boot whose owner went away is not a failure: the shared container
         // and any other project's preview must be left exactly as they are.
@@ -800,6 +856,12 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
       diagnosticsError = () => {};
       previewErrorSink = () => {};
     };
+  }, []);
+
+  useEffect(() => {
+    // Start the container boot at mount so its download/instantiation overlaps
+    // the auth + project-file queries; `boot()` below joins the same promise.
+    warmWebContainer();
   }, []);
 
   useEffect(() => {
