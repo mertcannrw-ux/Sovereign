@@ -7,6 +7,7 @@ import {
   takeRuntimeResult,
   waitForRuntimeResult,
   type RuntimeTraceRow,
+  type RuntimeWaitOutcome,
 } from '@/lib/runtime-bridge';
 
 const COMPLETE_RESULT = {
@@ -195,23 +196,25 @@ describe('waitForRuntimeResult', () => {
       { status: 'complete', result: COMPLETE_RESULT },
     );
     const heartbeats: string[] = [];
-    const now = { value: Date.now() };
-    const wait = waitForRuntimeResult({
-      requestId: 'req-heartbeat',
-      timeoutMs: 45_000,
-      loadTrace,
-      onHeartbeat: () => heartbeats.push('beat'),
-      pollIntervalMs: RUNTIME_HEARTBEAT_MS,
-      sleep: async (ms: number) => {
-        now.value += ms;
-      },
-    });
-    // Drive the loop: stub Date.now before the first await resolves.
     const realNow = Date.now;
-    let outcome: Awaited<typeof wait> | undefined;
+    const now = { value: Date.now() };
+    let outcome: RuntimeWaitOutcome | undefined;
     try {
+      // `deadline`/`nextHeartbeatAt` are read in the synchronous prologue, so
+      // the fake clock must be live before the call: a wall-clock tick between
+      // the snapshot and the call would leave `nextHeartbeatAt` past every
+      // stubbed reading and silently suppress the beat.
       Date.now = () => now.value;
-      outcome = await wait;
+      outcome = await waitForRuntimeResult({
+        requestId: 'req-heartbeat',
+        timeoutMs: 45_000,
+        loadTrace,
+        onHeartbeat: () => heartbeats.push('beat'),
+        pollIntervalMs: RUNTIME_HEARTBEAT_MS,
+        sleep: async (ms: number) => {
+          now.value += ms;
+        },
+      });
     } finally {
       Date.now = realNow;
     }
