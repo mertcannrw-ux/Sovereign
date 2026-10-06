@@ -6,6 +6,7 @@ import {
   readResponseBytes,
   readResponseText,
   readSSEStream,
+  ssrfFetch,
 } from './provider';
 import type { GatewayMessage } from './tool-calls';
 
@@ -303,5 +304,132 @@ describe('stream readers', () => {
       await expect(run).rejects.toThrow(/Stream idle/);
       expect(events).toEqual([{ event: 'content_block_delta', data: '{"i":1}' }]);
     });
+  });
+});
+
+describe('ssrfFetch cancellation', () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.useRealTimers();
+  });
+
+  /**
+   * undici errors the response body when the request signal aborts. A mock that
+   * ignored the signal would make these tests pass whatever `ssrfFetch` did
+   * with it, so the abort is wired into the body exactly as the real client does.
+   */
+  function fetchWithLiveBody(
+    produce: (controller: ReadableStreamDefaultController<Uint8Array>) => void,
+  ) {
+    return vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const signal = init?.signal;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          produce(controller);
+          signal?.addEventListener(
+            'abort',
+            () => {
+              try {
+                controller.error(new DOMException('This operation was aborted', 'AbortError'));
+              } catch {
+                // The body already closed or errored.
+              }
+            },
+            { once: true },
+          );
+        },
+      });
+      return new Response(body, { status: 200 });
+    }) as unknown as typeof fetch;
+  }
+
+  /** A provider that accepts the connection and then never answers. */
+  function stallingFetch() {
+    return vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      await new Promise<never>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          'abort',
+          () => reject(new DOMException('This operation was aborted', 'AbortError')),
+          { once: true },
+        );
+      });
+    }) as unknown as typeof fetch;
+  }
+
+  it('cancels the response body when the caller aborts after headers arrive', async () => {
+    // Regression: the external abort listener was removed in a `finally` that
+    // ran as soon as `fetch()` resolved, so a Stop after the first byte left the
+    // upstream request running — and billing — to completion.
+    globalThis.fetch = fetchWithLiveBody((controller) => {
+      controller.enqueue(new Uint8Array([1]));
+      // The peer keeps the body open; nothing else will ever end this stream.
+    });
+    const caller = new AbortController();
+
+    const response = await ssrfFetch('openai', 'https://api.example.com/v1/chat', undefined, {
+      signal: caller.signal,
+    });
+    const reader = response.body!.getReader();
+    expect((await reader.read()).value).toEqual(new Uint8Array([1]));
+
+    caller.abort();
+
+    await expect(reader.read()).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('reports a caller abort as cancelled, not as a retryable timeout', async () => {
+    globalThis.fetch = stallingFetch();
+    const caller = new AbortController();
+
+    const pending = ssrfFetch('openai', 'https://api.example.com/v1/chat', undefined, {
+      signal: caller.signal,
+    });
+    caller.abort();
+
+    // Callers retry `request_timeout`; a request the user stopped must not be.
+    await expect(pending).rejects.toMatchObject({ code: 'cancelled' });
+  });
+
+  it('still reports the header deadline as a retryable timeout', async () => {
+    vi.useFakeTimers();
+    globalThis.fetch = stallingFetch();
+
+    const pending = ssrfFetch('openai', 'https://api.example.com/v1/chat', undefined, {
+      timeout: 10,
+    });
+    // Attach the rejection handler BEFORE advancing the clock: otherwise the
+    // abort rejects with nothing listening and Node reports an unhandled error.
+    const assertion = expect(pending).rejects.toMatchObject({ code: 'request_timeout' });
+    await vi.advanceTimersByTimeAsync(10);
+
+    await assertion;
+  });
+
+  it('does not let the header deadline bound the response body', async () => {
+    // The deadline covers time-to-headers; streaming generations run far longer
+    // and are bounded per chunk by the stream readers instead. If the deadline
+    // were extended over the body, the 20ms abort below would land before the
+    // 30ms chunk and this read would reject instead of returning bytes.
+    vi.useFakeTimers();
+    globalThis.fetch = fetchWithLiveBody((controller) => {
+      setTimeout(() => {
+        try {
+          controller.enqueue(new Uint8Array([7]));
+          controller.close();
+        } catch {
+          // Body already errored — the deadline reached it. Asserted below.
+        }
+      }, 30);
+    });
+
+    const response = await ssrfFetch('openai', 'https://api.example.com/v1/chat', undefined, {
+      timeout: 20,
+    });
+    await vi.advanceTimersByTimeAsync(30);
+
+    const { value } = await response.body!.getReader().read();
+    expect(value).toEqual(new Uint8Array([7]));
   });
 });

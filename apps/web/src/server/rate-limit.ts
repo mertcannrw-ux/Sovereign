@@ -6,6 +6,7 @@
 
 import { env } from '@/env';
 import { createHmac } from 'node:crypto';
+import { isIP } from 'node:net';
 
 // ─── Types ────────────────────────────────────────────────
 
@@ -230,4 +231,72 @@ export function hashIp(ip: string): string {
     .update('rate-limit-ip-hashing')
     .digest();
   return createHmac('sha256', derivedKey).update(ip).digest('hex').slice(0, 32);
+}
+
+/**
+ * Header bag as it reaches a rate-limit call site: a `Headers` instance from a
+ * route handler, or a plain object from next-auth's
+ * `authorize(credentials, req)` — `RequestInternal.headers` is
+ * `Record<string, any>` there, built from `Object.fromEntries(await headers())`,
+ * so it has no `.get` method. The value type is pinned to what HTTP headers
+ * actually are rather than `unknown`, so passing something that is not a header
+ * bag (the whole `req`, say) is a compile error instead of a silent null.
+ */
+export type HeaderBag = Headers | Record<string, string | string[] | undefined> | undefined;
+
+function readHeader(headers: HeaderBag, name: string): string | null {
+  if (!headers) return null;
+  // Duck-type rather than `instanceof Headers`: a cross-realm or polyfilled
+  // Headers (Next's edge runtime, undici) is not this realm's constructor.
+  const get = (headers as Partial<Headers>).get;
+  if (typeof get === 'function') return get.call(headers as Headers, name);
+  // Plain object. HTTP header names are case-insensitive and neither Next's
+  // `headers()` nor Node's IncomingHttpHeaders guarantees the casing a caller
+  // asks for, so match case-insensitively instead of assuming lowercase keys.
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === name && typeof value === 'string') return value;
+  }
+  return null;
+}
+
+/**
+ * The caller's real IP for rate-limit keys, or null when it cannot be trusted.
+ *
+ * Only meaningful behind a reverse proxy (`TRUSTED_PROXY`): without one every
+ * request appears to come from the app itself, so keying on IP would collapse
+ * all users into a single bucket. Both consumers — tRPC's `createContext` and
+ * the credentials `authorize` hook — MUST resolve the IP here so the two paths
+ * cannot drift into different keying for the same request. A null return means
+ * "no trustworthy IP", and each caller applies its own fallback.
+ */
+export function trustedClientIp(headers: HeaderBag): string | null {
+  if (!env.TRUSTED_PROXY) return null;
+
+  const forwarded = readHeader(headers, 'x-forwarded-for');
+  if (forwarded) {
+    const entries = forwarded
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    // Proxies APPEND the caller's address, so the right-most entry is the one
+    // added by our trusted proxy. Earlier entries are client-supplied and
+    // spoofable — never trust them for a rate-limit key.
+    const last = entries[entries.length - 1];
+    if (last && isIP(last)) return last;
+    // XFF is present but carries no usable peer address, so the proxy is not
+    // appending one. Fail closed instead of falling through to X-Real-IP: on a
+    // pass-through proxy that header is pure client text, and honouring it
+    // hands out a fresh rate-limit bucket per request — the very bypass the
+    // X-Real-IP branch below exists to prevent. Null keeps each caller on its
+    // documented fallback (per-email keying in `authorize`, 127.0.0.1 in tRPC).
+    return null;
+  }
+
+  // Reached only when XFF is ABSENT: a proxy/CDN that appends to XFF but does
+  // not set X-Real-IP (a common default) would otherwise let any client mint a
+  // fresh rate-limit bucket by sending an arbitrary `X-Real-IP` header.
+  const realIp = readHeader(headers, 'x-real-ip')?.trim();
+  if (realIp && isIP(realIp)) return realIp;
+
+  return null;
 }

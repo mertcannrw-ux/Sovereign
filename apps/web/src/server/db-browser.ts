@@ -63,25 +63,91 @@ export interface ColumnInfo {
 }
 
 /**
- * Strip string literals and comments from SQL so the remaining text can be
- * inspected for dangerous tokens. Quotes and comments are replaced with spaces
- * to preserve token boundaries.
+ * A PostgreSQL dollar-quote opener: `$$` or `$tag$`. Tags follow identifier
+ * rules — they cannot start with a digit and cannot contain `$` — so `$1`
+ * stays a positional parameter instead of opening a quote. `scan.l`'s
+ * `dolq_start`/`dolq_cont` also admit every byte >= 0x80, so a tag may hold
+ * non-ASCII: matching only the ASCII subset would leave such a body unstripped,
+ * where a stray quote inside it could swallow live SQL as a phantom literal.
+ * Sticky so the match anchors at the scan position without slicing the
+ * (up to 200 KB) input.
  */
-export function stripSqlLiterals(sql: string): string {
+const DOLLAR_TAG_RE = /\$(?:[A-Za-z_\u0080-\uFFFF][A-Za-z0-9_\u0080-\uFFFF]*)?\$/y;
+
+/**
+ * Strip string literals and comments from SQL so the remaining text can be
+ * inspected for dangerous tokens. Literals and comments are replaced with
+ * spaces to preserve token boundaries; double-quoted IDENTIFIERS are preserved
+ * so schema-qualified references stay visible to the pattern checks below.
+ *
+ * Returns null when a literal, quoted identifier or block comment is
+ * unterminated. Callers MUST reject in that case: an unterminated construct
+ * runs to end of input, so carrying on would inspect a prefix of the statement
+ * while the database executes all of it.
+ *
+ * The invariant `sanitizeSqlForTenant` depends on: everything this function
+ * returns is faithful to the input's SQL structure — it never drops a token
+ * PostgreSQL would parse. Only literal *bodies* become opaque, and those are
+ * data, not SQL. The one deliberate divergence runs the safe way: `scan.l`'s
+ * `quotecontinue` also lets a literal resume after `'` + newline + `'`, which
+ * this scanner does not follow, so it can only expose MORE text to the guards
+ * than the server parses, never less.
+ */
+
+/**
+ * True when the single quote at `index` opens a PostgreSQL E-string (`E'…'`),
+ * whose body treats a backslash as an escape — `scan.l` state `<xe>` consumes
+ * `\` plus the next character in `xeescape`, `xeoctesc`, `xehexesc` and
+ * `xeunicode`, so `\'` is content rather than a terminator.
+ *
+ * Every other quote form ends at the first unpaired quote: ordinary `'…'`
+ * (`<xq>`), `U&'…'` (`<xus>`), `B'…'` and `X'…'` all match on `xqinside`
+ * `[^']+` with no backslash rule, and `U&"…"` (`<xui>`) shares `xdinside` with
+ * a plain delimited identifier. Applying escapes where the server does not
+ * would make this scanner's literal run past the server's and blank live SQL.
+ *
+ * The `E` must not be the tail of a longer identifier: flex takes the longest
+ * match, so `SELECTE'x'` is the identifier `SELECTE` followed by an ordinary
+ * literal, not an E-string.
+ */
+function opensEscapeString(sql: string, index: number): boolean {
+  const prefix = sql[index - 1];
+  if (prefix !== 'E' && prefix !== 'e') return false;
+  const before = index >= 2 ? sql[index - 2] : undefined;
+  return !/[A-Za-z0-9_$\u0080-\uFFFF]/.test(before ?? '');
+}
+
+export function stripSqlLiterals(sql: string): string | null {
   let out = '';
   let i = 0;
   while (i < sql.length) {
     const ch = sql[i];
     const next = sql[i + 1];
     if (ch === "'") {
+      const escapes = opensEscapeString(sql, i);
       i += 1;
+      let closed = false;
       while (i < sql.length) {
+        if (escapes && sql[i] === '\\') {
+          // `E'…'` only: a backslash consumes the next character as a unit, so
+          // `\'` does not end the literal. A trailing `\` at end of input steps
+          // past it and leaves `closed` false, which rejects below.
+          i += 2;
+          continue;
+        }
         if (sql[i] === "'") {
-          i += sql[i + 1] === "'" ? 2 : 1;
+          // `''` is an escaped quote inside the literal, not its terminator.
+          if (sql[i + 1] === "'") {
+            i += 2;
+            continue;
+          }
+          i += 1;
+          closed = true;
           break;
         }
         i += 1;
       }
+      if (!closed) return null;
       out += ' ';
     } else if (ch === '"') {
       // Double quotes denote IDENTIFIERS in SQL, not string literals.
@@ -89,33 +155,60 @@ export function stripSqlLiterals(sql: string): string {
       // survive stripping and can be caught by the pattern checks below.
       out += ch;
       i += 1;
+      let closed = false;
       while (i < sql.length) {
         if (sql[i] === '"') {
+          if (sql[i + 1] === '"') {
+            out += '""';
+            i += 2;
+            continue;
+          }
           out += '"';
-          i += sql[i + 1] === '"' ? 2 : 1;
+          i += 1;
+          closed = true;
           break;
         }
         out += sql[i];
         i += 1;
       }
+      if (!closed) return null;
     } else if (ch === '-' && next === '-') {
-      while (i < sql.length && sql[i] !== '\n') i += 1;
+      // `scan.l` defines `comment ("--"{non_newline}*)` with `non_newline
+      // [^\n\r]` and `newline [\n\r]`, so a bare CR ends the comment on the
+      // server too. Stopping only at LF would blank the live SQL after the CR.
+      while (i < sql.length && sql[i] !== '\n' && sql[i] !== '\r') i += 1;
       out += ' ';
     } else if (ch === '/' && next === '*') {
-      i += 2;
-      while (i < sql.length && !(sql[i] === '*' && sql[i + 1] === '/')) i += 1;
-      i = Math.min(i + 2, sql.length);
+      // Block comments NEST in PostgreSQL, so track depth: stopping at the
+      // first `*/` would expose the remainder of a nested comment as live SQL.
+      let depth = 0;
+      while (i < sql.length) {
+        if (sql[i] === '/' && sql[i + 1] === '*') {
+          depth += 1;
+          i += 2;
+        } else if (sql[i] === '*' && sql[i + 1] === '/') {
+          depth -= 1;
+          i += 2;
+          if (depth === 0) break;
+        } else {
+          i += 1;
+        }
+      }
+      if (depth !== 0) return null;
       out += ' ';
-    } else if (ch === '$' && /[0-9A-Za-z_]/.test(next ?? '')) {
-      const tag = /^\$[A-Za-z_0-9]*\$/.exec(sql.slice(i))?.[0];
+    } else if (ch === '$') {
+      DOLLAR_TAG_RE.lastIndex = i;
+      const tag = DOLLAR_TAG_RE.exec(sql)?.[0];
       if (tag) {
         const end = sql.indexOf(tag, i + tag.length);
-        i = end >= 0 ? end + tag.length : sql.length;
+        if (end < 0) return null;
+        i = end + tag.length;
         out += ' ';
-        continue;
+      } else {
+        // Positional parameter (`$1`) or a bare `$`: keep it verbatim.
+        out += ch;
+        i += 1;
       }
-      out += ch;
-      i += 1;
     } else {
       out += ch;
       i += 1;
@@ -206,6 +299,17 @@ const FORBIDDEN_FUNCTIONS = [
   'schema_to_xml',
   'schema_to_xml_and_xmlschema',
   'schema_to_xmlschema',
+  // Sequence functions resolve a `regclass` from a *string* argument, so a
+  // schema-qualified target hides inside a literal the guards deliberately
+  // cannot inspect: setval('p_other.users_id_seq', 1) rewrites another
+  // tenant's sequence and nextval/currval read its values. Scoping the denial
+  // to foreign schemas is impossible for the same reason, so own-schema calls
+  // like nextval('users_id_seq') are rejected too — no console workflow needs
+  // to advance a sequence manually. (lastval takes no argument and cannot name
+  // another schema, so it stays allowed.)
+  'nextval',
+  'setval',
+  'currval',
   'set_config',
   'current_setting',
 ];
@@ -412,13 +516,17 @@ export function sanitizeSqlForTenant(sql: string, tenantSchema?: string): string
   const raw = sql.trim();
   if (raw.length > MAX_SQL_LENGTH) return null;
   // Inspect the structural SQL with string literals, dollar-quoted bodies, and
-  // comments removed, so legitimate quoted values are allowed.
-  const stripped = stripSqlLiterals(raw).trim();
-  if (!/^(SELECT|WITH)\s/i.test(stripped)) return null;
+  // comments removed, so legitimate quoted values are allowed. A null result
+  // means one of those constructs never terminated: reject instead of
+  // inspecting a prefix while the database executes the whole statement.
+  const stripped = stripSqlLiterals(raw);
+  if (stripped === null) return null;
+  const structural = stripped.trim();
+  if (!/^(SELECT|WITH)\s/i.test(structural)) return null;
   // A single statement must not contain an internal statement terminator. A
   // trailing semicolon is not a terminator — it ends the same statement, so
   // strip it before checking rather than rejecting `SELECT 1;`.
-  const withoutTrailingTerminator = stripped.replace(/;+\s*$/, '');
+  const withoutTrailingTerminator = structural.replace(/;+\s*$/, '');
   if (/;/.test(withoutTrailingTerminator)) return null;
 
   const upper = withoutTrailingTerminator.toUpperCase();
@@ -431,13 +539,39 @@ export function sanitizeSqlForTenant(sql: string, tenantSchema?: string): string
     if (pattern.test(withoutTrailingTerminator)) return null;
   }
 
+  // `U&"…"` is PostgreSQL's unicode-escape delimited identifier (scan.l
+  // `xuistart`). tokenizeSql splits it into `U`, `&`, `"…"`, so a qualifier
+  // written this way never reaches isForeignQualifiedName, and escapes like
+  // `p\0075blic` hide platform schema names from the patterns above. Tenant
+  // identifiers come from platform migrations and never need this form, so
+  // reject it outright rather than re-implement the server's UESCAPE decoding.
+  // The leading boundary mirrors flex's longest match: `xU&"…"` lexes as
+  // identifier `xU` + operator, not a xuistart, and must not be rejected.
+  if (/(^|[^A-Za-z0-9_$])u&"/i.test(withoutTrailingTerminator)) return null;
+
+  // stripSqlLiterals preserves double-quoted identifiers, and `"query_to_xml"(…)`
+  // is a valid call of the lowercase function — but the quote after the name
+  // matches neither \s nor ( in the call-site regex, so the raw text evades it.
+  // Check unquoted text instead: a quoted name resolves only when it equals the
+  // function name exactly, so unquoting can reveal calls but never hide one.
+  const unquotedIdentifiers = withoutTrailingTerminator.replace(
+    /"([^"]*(?:""[^"]*)*)"/g,
+    (_match, body: string) => body.replace(/""/g, '"'),
+  );
   for (const fn of FORBIDDEN_FUNCTIONS) {
     const regex = new RegExp(`(^|[^A-Za-z0-9_])${fn}\\s*\\(`, 'i');
-    if (regex.test(withoutTrailingTerminator)) return null;
+    if (regex.test(unquotedIdentifiers)) return null;
   }
 
   if (referencesForeignSchema(withoutTrailingTerminator, tenantSchema)) return null;
 
+  // Every check above ran on text that is structurally faithful to `raw`:
+  // stripSqlLiterals blanks only literal bodies and comments, agrees with
+  // PostgreSQL's lexer on where each construct ends (E-string backslash
+  // escapes, `''`, `""`, nesting block comments, dollar tags including
+  // non-ASCII ones, line comments terminated by CR or LF), and returns null
+  // rather than a prefix when a construct never terminates. Executing the
+  // caller's own statement therefore cannot smuggle a token the guards missed.
   return raw.replace(/;+\s*$/, '');
 }
 

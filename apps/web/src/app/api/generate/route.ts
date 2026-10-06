@@ -41,6 +41,11 @@ import {
   getStreamingFileFromToolCalls,
   nativeToolsEnabled,
 } from '@/lib/agent-tools';
+import type {
+  DesignDirectionRecord,
+  GenerationEvent,
+  GenerationEventSink,
+} from '@/lib/generation-stream';
 import {
   RUNTIME_COMMAND_NAMES,
   formatRuntimeObservation,
@@ -308,7 +313,13 @@ function parseProvider(value: string): AIProvider {
   return parsed.data;
 }
 
-function encodeEvent(event: string, data: unknown): Uint8Array {
+/**
+ * Serialize one SSE frame. The event name is pinned to the wire contract so a
+ * producer cannot emit a frame the consumer's total `KNOWN_EVENT_TYPES` record
+ * would silently drop — typing only the local `send` binding leaves this
+ * serializer as an unchecked back door for any future direct caller.
+ */
+function encodeEvent(event: GenerationEvent['type'], data: unknown): Uint8Array {
   return new TextEncoder().encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
@@ -323,7 +334,10 @@ function messageRecord(message: {
     id: message.id,
     role: message.role,
     content: message.content,
-    timestamp: message.timestamp,
+    // The wire contract declares an ISO string. `JSON.stringify` produced the
+    // same bytes from the Date, but emitting the string keeps the declared
+    // type and the payload in agreement.
+    timestamp: message.timestamp.toISOString(),
     model: message.model,
   };
 }
@@ -614,7 +628,10 @@ export async function POST(request: NextRequest) {
     const stream = new ReadableStream<Uint8Array>({
       /** Run the agent, emit progress events, and settle the run when the stream ends. */
       async start(controller) {
-        const send = (event: string, data: unknown) => {
+        // Typed against the wire contract: an event name or payload the
+        // consumer does not declare is a compile error here, not a frame it
+        // silently drops at runtime.
+        const send: GenerationEventSink = (event, data) => {
           try {
             if (controller.desiredSize !== null) controller.enqueue(encodeEvent(event, data));
           } catch {
@@ -756,7 +773,10 @@ export async function POST(request: NextRequest) {
             }
             for (const { change } of persistable) {
               send('file-operation', {
-                operation: change.operation,
+                // `VersionDiffEntry.operation` also allows 'restore' (version
+                // timeline restores), which this endpoint never produces; to a
+                // preview that would be an ordinary content write.
+                operation: change.operation === 'restore' ? 'update' : change.operation,
                 path: change.file,
                 ...(change.after !== undefined ? { content: change.after } : {}),
                 versionNumber: latestVersion,
@@ -1775,7 +1795,7 @@ export async function POST(request: NextRequest) {
                   id: directionSet.id,
                   status: 'pending',
                   originalRequest: prompt ?? '',
-                  directions: directionSet.directions,
+                  directions: directionSet.directions as DesignDirectionRecord[],
                 });
 
                 const dirStep: AgentStep = {
@@ -1867,7 +1887,7 @@ export async function POST(request: NextRequest) {
                   id: directionSet.id,
                   status: setStatus,
                   originalRequest: prompt ?? '',
-                  directions: updatedSet?.directions ?? [],
+                  directions: (updatedSet?.directions ?? []) as DesignDirectionRecord[],
                 });
 
                 const assistantMsg = await db.chatMessage.create({
@@ -1883,7 +1903,7 @@ export async function POST(request: NextRequest) {
 
                 send('ready', {
                   userMessage: messageRecord(userMessage),
-                  assistantMessage: messageRecord(assistantMsg),
+                  assistantMessage: { ...messageRecord(assistantMsg), tokenUsage: finalUsage },
                   files: [...files].map(([p, c]) => ({ path: p, content: c })),
                   versionNumber: latestVersion,
                 });
