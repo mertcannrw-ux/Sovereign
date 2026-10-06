@@ -48,7 +48,8 @@
   },
   "overrides": {
     "@types/react": "19.2.0",
-    "@types/react-dom": "19.2.0"
+    "@types/react-dom": "19.2.0",
+    "source-map-js": "1.2.2"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
