@@ -339,17 +339,29 @@ describe('sanitizeSqlForTenant — identifier-encoding and regclass bypasses', (
     // Regression: `U&"…"` is a single IDENT token to PostgreSQL (unicode-escape
     // delimited identifier) but three tokens to the table scanner, so neither
     // referencesForeignSchema nor the platform patterns ever saw the qualifier.
-    ['unicode-escape identifier qualifying another tenant schema', `SELECT * FROM U&"${OTHER}"."users"`],
+    [
+      'unicode-escape identifier qualifying another tenant schema',
+      `SELECT * FROM U&"${OTHER}"."users"`,
+    ],
     // `p\0075blic` decodes to `public` server-side; the raw text never contains
     // the platform name, so only an outright rejection of the construct helps.
-    ['unicode-escape identifier hiding a platform schema name behind \\0075 escapes', 'SELECT * FROM U&"p\\0075blic"."sessions"'],
+    [
+      'unicode-escape identifier hiding a platform schema name behind \\0075 escapes',
+      'SELECT * FROM U&"p\\0075blic"."sessions"',
+    ],
     ['lowercase unicode-escape identifier', `SELECT * FROM u&"${OTHER}"."users"`],
     ['unicode-escape identifier after an opening paren', `SELECT * FROM (U&"${OTHER}"."users") x`],
     // Regression: the call-site regex anchors on `fn\s*\(`, but after a quoted
     // name comes `"` — matching neither — so quoting a forbidden function
     // defeated the check while PostgreSQL still resolves the lowercase name.
-    ['quoted forbidden function name', `SELECT "query_to_xml"('SELECT email FROM ${OTHER}.users', true, true, '')`],
-    ['quoted forbidden function with a space before the paren', `SELECT "dblink" ('host=x dbname=y', 'SELECT 1')`],
+    [
+      'quoted forbidden function name',
+      `SELECT "query_to_xml"('SELECT email FROM ${OTHER}.users', true, true, '')`,
+    ],
+    [
+      'quoted forbidden function with a space before the paren',
+      `SELECT "dblink" ('host=x dbname=y', 'SELECT 1')`,
+    ],
     // Regression: sequence functions resolve a regclass from a string literal,
     // which stripSqlLiterals deliberately blanks — the schema-qualified target
     // was invisible to every guard, so a VIEWER could mutate or read another
