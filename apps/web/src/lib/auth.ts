@@ -3,11 +3,9 @@ import GoogleProvider from 'next-auth/providers/google';
 import GitHubProvider from 'next-auth/providers/github';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import bcrypt from 'bcryptjs';
-import { isIP } from 'node:net';
 import { getDb } from './db';
 import { canAdoptAccountByEmail } from './account-linking';
-import { checkRateLimit, hashIp } from '@/server/rate-limit';
-import { env } from '@/env';
+import { checkRateLimit, hashIp, trustedClientIp } from '@/server/rate-limit';
 import { ensurePersonalOrganization } from '@/server/onboarding';
 
 export function oauthProvidersEnabled(): { google: boolean; github: boolean } {
@@ -62,7 +60,10 @@ function buildProviders(): NextAuthOptions['providers'] {
         // (and a victim's own sign-ins never share the attacker's bucket).
         // Falls back to per-email keying otherwise (keeps dev/local buckets
         // distinct and never collapses onto a single global key).
-        const ip = trustedProxyClientIp(req);
+        // next-auth hands `authorize` a plain header object rather than a
+        // `Headers` instance; `trustedClientIp` accepts both shapes so this
+        // path and tRPC's `createContext` resolve the same IP the same way.
+        const ip = trustedClientIp(req.headers);
         const rate = await checkRateLimit('signIn', ip ? `${hashIp(ip)}:${email}` : email);
         if (!rate.allowed) {
           throw new Error('Too many sign-in attempts. Please try again later.');
@@ -89,39 +90,6 @@ function buildProviders(): NextAuthOptions['providers'] {
     }),
   );
   return providers;
-}
-
-/**
- * Resolve the caller's real IP for sign-in rate limiting. Only meaningful when
- * `TRUSTED_PROXY` is set; otherwise returns null so callers keep their existing
- * keying (per-email) instead of collapsing onto a single global bucket.
- *
- * Kept behaviourally identical to `getClientIp` in `lib/trpc/context.ts`.
- */
-function trustedProxyClientIp(req: unknown): string | null {
-  if (!env.TRUSTED_PROXY) return null;
-  const headers = (req as { headers?: Headers })?.headers;
-  if (!headers || typeof headers.get !== 'function') return null;
-
-  const forwarded = headers.get('x-forwarded-for');
-  if (forwarded) {
-    const entries = forwarded
-      .split(',')
-      .map((entry) => entry.trim())
-      .filter(Boolean);
-    // Right-most entry is appended by our trusted proxy. Earlier entries are
-    // client-supplied and spoofable, so they are never used for the key.
-    const last = entries[entries.length - 1];
-    if (last && isIP(last)) return last;
-  }
-
-  // X-Forwarded-For wins: if the proxy appends to XFF without setting
-  // X-Real-IP, honouring a client-supplied `X-Real-IP` first would hand out a
-  // fresh rate-limit bucket per request. Only used when XFF is absent.
-  const realIp = headers.get('x-real-ip')?.trim();
-  if (realIp && isIP(realIp)) return realIp;
-
-  return null;
 }
 
 /**

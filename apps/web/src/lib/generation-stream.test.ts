@@ -175,6 +175,25 @@ describe('consumeGenerationStream', () => {
     });
   });
 
+  it('delivers a runtime-heartbeat instead of dropping it', async () => {
+    // Regression: the server emitted `runtime-heartbeat` while the consumer's
+    // hand-written event-name whitelist did not list it, so every frame was
+    // silently discarded. The whitelist is now a total record over the union,
+    // which makes the omission a compile error as well.
+    const body =
+      'event: runtime-heartbeat\ndata: {"requestId":"req-1"}\n\n' +
+      'event: runtime-request\ndata: {"requestId":"req-2","command":"npm install"}\n\n';
+    const onEvent = vi.fn();
+
+    await consumeGenerationStream(new Response(body, { status: 200 }), onEvent);
+
+    expect(onEvent).toHaveBeenNthCalledWith(1, {
+      type: 'runtime-heartbeat',
+      data: { requestId: 'req-1' },
+    });
+    expect(onEvent).toHaveBeenCalledTimes(2);
+  });
+
   it('skips malformed SSE data blocks without throwing', async () => {
     const encoder = new TextEncoder();
     const stream = new ReadableStream({

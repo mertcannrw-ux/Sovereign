@@ -50,6 +50,19 @@ export interface RuntimeRequestEventData {
   timeoutMs?: number;
 }
 
+/**
+ * Periodic frame emitted while the server waits on a browser-executed `run`
+ * tool call. Its purpose is transport-level: `waitForRuntimeResult` fires
+ * `onHeartbeat` every `RUNTIME_HEARTBEAT_MS` so an idle-timeout-happy proxy
+ * does not cut the SSE connection during a long `npm install`. No UI state
+ * consumes it — `useGeneration` has no branch for it, so the frame ends in
+ * that handler's catch-all no-op. It is a keep-alive, not a progress signal.
+ * Carries nothing beyond the request it belongs to.
+ */
+export interface RuntimeHeartbeatEventData {
+  requestId: string;
+}
+
 export interface ImageJobEventData {
   id: string;
   status: 'running' | 'complete' | 'failed';
@@ -70,6 +83,11 @@ export interface DesignDirectionRecord {
   palette: unknown;
   typography: unknown;
   layoutNotes: string;
+  /**
+   * Prisma stores this as a free-form `String` column with no enum, so a row's
+   * own type is `string`. The generate route is the only writer and narrows to
+   * these literals at its two emit sites.
+   */
   status: 'generating' | 'ready' | 'failed';
   previewAssetId?: string | null;
   errorMessage?: string | null;
@@ -116,6 +134,7 @@ export type GenerationEvent =
   | { type: 'file-operation'; data: FileOperationEvent }
   | { type: 'file-preview'; data: FilePreviewEvent }
   | { type: 'runtime-request'; data: RuntimeRequestEventData }
+  | { type: 'runtime-heartbeat'; data: RuntimeHeartbeatEventData }
   | { type: 'thinking'; data: { content: string } }
   /**
    * Full snapshot of the user-facing answer text streamed so far (never a
@@ -130,6 +149,44 @@ export type GenerationEvent =
   | { type: 'ready'; data: GenerationReadyEvent }
   | { type: 'failed'; data: { message: string; code?: string } };
 
+/**
+ * Producer-side counterpart of `GenerationEvent`, keyed by event name so the
+ * payload shape is checked at every emit site rather than only where the
+ * consumer switches on it. Emitting an event that is not part of the contract
+ * becomes a compile error instead of a frame the consumer silently drops.
+ */
+export type GenerationEventSink = <T extends GenerationEvent['type']>(
+  event: T,
+  data: Extract<GenerationEvent, { type: T }>['data'],
+) => void;
+
+/**
+ * Every wire event name, as a TOTAL record over the union: adding an event to
+ * `GenerationEvent` without listing it here is a compile error, and so is
+ * listing a name the union does not declare. The hand-written `!==` chain this
+ * replaces was how `runtime-heartbeat` came to be emitted by the server and
+ * dropped on the floor by the consumer.
+ */
+const KNOWN_EVENT_TYPES: Record<GenerationEvent['type'], true> = {
+  phase: true,
+  step: true,
+  'file-operation': true,
+  'file-preview': true,
+  'runtime-request': true,
+  'runtime-heartbeat': true,
+  thinking: true,
+  answer: true,
+  questions: true,
+  'image-job': true,
+  'design-directions': true,
+  ready: true,
+  failed: true,
+};
+
+function isKnownEventType(event: string): event is GenerationEvent['type'] {
+  return Object.hasOwn(KNOWN_EVENT_TYPES, event);
+}
+
 function parseEventBlock(block: string): GenerationEvent | null {
   let event = '';
   const data: string[] = [];
@@ -138,27 +195,12 @@ function parseEventBlock(block: string): GenerationEvent | null {
     if (line.startsWith('data:')) data.push(line.slice(5).trimStart());
   }
   if (!event || data.length === 0) return null;
+  if (!isKnownEventType(event)) return null;
 
   let payload: GenerationEvent['data'];
   try {
     payload = JSON.parse(data.join('\n')) as GenerationEvent['data'];
   } catch {
-    return null;
-  }
-  if (
-    event !== 'phase' &&
-    event !== 'step' &&
-    event !== 'file-operation' &&
-    event !== 'file-preview' &&
-    event !== 'runtime-request' &&
-    event !== 'thinking' &&
-    event !== 'answer' &&
-    event !== 'questions' &&
-    event !== 'image-job' &&
-    event !== 'design-directions' &&
-    event !== 'ready' &&
-    event !== 'failed'
-  ) {
     return null;
   }
   return { type: event, data: payload } as GenerationEvent;

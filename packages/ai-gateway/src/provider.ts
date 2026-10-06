@@ -370,9 +370,26 @@ export async function ssrfFetch(
   const timeoutMs = options?.timeout ?? DEFAULT_TIMEOUT_MS;
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-  // Forward external cancellation (client disconnect, route abort) to the request.
-  const onExternalAbort = () => controller.abort();
-  options?.signal?.addEventListener('abort', onExternalAbort, { once: true });
+  // The caller's signal must stay wired for the WHOLE request, including the
+  // response body — which is still in flight when `fetch()` resolves. A
+  // hand-rolled listener removed in the `finally` below detached it at header
+  // time, so a client disconnect (Stop) after the first byte left the provider
+  // call running, and billing, to completion.
+  //
+  // The link is not free. Node pins an `AbortSignal.any` composite in a
+  // process-global strong set until it aborts, loses its last abort listener,
+  // or its sources are collected — and undici never removes its abort listener
+  // on a normally-completing request. So each call keeps its request graph
+  // reachable from `options.signal`, which one agent run reuses for every
+  // provider call, for the life of that run. Measured: dropping the run signal
+  // released 99.9% of it once the event loop turned (FinalizationRegistry
+  // callbacks are not synchronous with gc()), so this is run-bounded retention,
+  // not a process-lifetime leak. Releasing at body-settle time instead would
+  // cost a per-request stream wrapper on the streaming hot path to save a few
+  // KB per call.
+  const signal = options?.signal
+    ? AbortSignal.any([controller.signal, options.signal])
+    : controller.signal;
   try {
     // validateOutboundUrl ensures the domain resolves strictly to public IPs.
     // We fetch the original URL (hostname intact for SNI) with redirect: 'error'
@@ -389,19 +406,29 @@ export async function ssrfFetch(
       ...init,
       ...(Object.keys(mergedHeaders).length ? { headers: mergedHeaders } : {}),
       ...(dispatcher !== undefined ? { dispatcher } : {}),
-      signal: controller.signal,
+      signal,
       redirect: 'error', // Zero redirects — block all redirects
     } as RequestInit & { dispatcher?: unknown });
     return response;
   } catch (e) {
     // Convert abort (timeout) into structured error
     if (e instanceof DOMException && e.name === 'AbortError') {
-      throw new ProviderError(providerName, 0, 'request_timeout', 'Request timed out');
+      // Keep a deliberate cancellation apart from a deadline: callers retry
+      // `request_timeout`, and a request the user stopped must not be retried.
+      const cancelled = options?.signal?.aborted === true;
+      throw new ProviderError(
+        providerName,
+        0,
+        cancelled ? 'cancelled' : 'request_timeout',
+        cancelled ? 'Request cancelled' : 'Request timed out',
+      );
     }
     throw e;
   } finally {
+    // The deadline bounds time-to-headers only. Streaming bodies are governed
+    // by the per-chunk idle timeout in the readers above; letting a 60s wall
+    // clock cover the body as well would kill legitimate long generations.
     clearTimeout(timeout);
-    options?.signal?.removeEventListener('abort', onExternalAbort);
   }
 }
 

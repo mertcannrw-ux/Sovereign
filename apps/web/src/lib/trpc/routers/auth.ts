@@ -143,9 +143,9 @@ export const authRouter = router({
       const email = input.email.trim().toLowerCase();
       // Bucket per IP+email (see register). Keying on `ctx.ipHash` alone would
       // put every caller behind one bucket whenever no trusted proxy header is
-      // present (getClientIp returns a constant 127.0.0.1), so a single
-      // anonymous attacker could exhaust the shared limit and block password
-      // resets for all users.
+      // present (trustedClientIp returns null, which createContext maps to a
+      // constant 127.0.0.1), so a single anonymous attacker could exhaust the
+      // shared limit and block password resets for all users.
       const identity = env.TRUSTED_PROXY ? `${ctx.ipHash}:${email}` : email;
       const rate = await checkRateLimit('passwordReset', identity);
       if (!rate.allowed) {
