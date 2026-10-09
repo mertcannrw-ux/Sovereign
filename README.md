@@ -26,7 +26,7 @@ Sovereign/
 │   ├── codegen/            # Code generation, parser, and patch protocol engine
 │   ├── shared/             # Shared TypeScript types, schemas, & utilities
 │   ├── tsconfig/           # Centralized TypeScript configurations
-│   ├── ui/                 # Reusable UI component library (Tailwind CSS)
+│   ├── ui/                 # Shared helpers: `cn()` class merge, date/key formatters
 │   └── visual-editor/      # Visual element editor, selector engine & property panels
 ├── prisma/
 │   ├── schema.prisma       # Database models & enums
