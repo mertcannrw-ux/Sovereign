@@ -112,17 +112,13 @@ abstract class OpenAICompatibleProvider implements Provider {
     // constant, so validating it buys no SSRF protection while adding a DNS
     // lookup and an undestroyed per-request IP-pinning Agent on every call.
     const hasCustomEndpoint = options?.baseUrl !== undefined;
-    const response = await requestCompletion(
-      this.name,
-      url,
-      {
-        headers: this.authHeaders(apiKey, { url, sessionId: options?.sessionId }),
-        payload: this.buildPayload(model, messages, options, false),
-        validateUrl: hasCustomEndpoint,
-        stream: false,
-        signal: options?.signal,
-      },
-    );
+    const response = await requestCompletion(this.name, url, {
+      headers: this.authHeaders(apiKey, { url, sessionId: options?.sessionId }),
+      payload: this.buildPayload(model, messages, options, false),
+      validateUrl: hasCustomEndpoint,
+      stream: false,
+      signal: options?.signal,
+    });
 
     if (!response.ok) {
       throw await this.parseError(response);
@@ -145,17 +141,13 @@ abstract class OpenAICompatibleProvider implements Provider {
     const baseUrl = this.normalizeBaseUrl(rawBase);
     const url = `${baseUrl}/chat/completions`;
     const hasCustomEndpoint = options?.baseUrl !== undefined;
-    const response = await requestCompletion(
-      this.name,
-      url,
-      {
-        headers: this.authHeaders(apiKey, { url, sessionId: options?.sessionId }),
-        payload: this.buildPayload(model, messages, options, true),
-        validateUrl: hasCustomEndpoint,
-        stream: true,
-        signal: options?.signal,
-      },
-    );
+    const response = await requestCompletion(this.name, url, {
+      headers: this.authHeaders(apiKey, { url, sessionId: options?.sessionId }),
+      payload: this.buildPayload(model, messages, options, true),
+      validateUrl: hasCustomEndpoint,
+      stream: true,
+      signal: options?.signal,
+    });
 
     if (!response.ok) {
       throw await this.parseError(response);
@@ -412,17 +404,13 @@ export class AnthropicProvider implements Provider {
     const baseUrl = options?.baseUrl ?? 'https://api.anthropic.com/v1';
     const url = `${baseUrl}/messages`;
     const hasCustomEndpoint = options?.baseUrl !== undefined;
-    const response = await requestCompletion(
-      this.name,
-      url,
-      {
-        headers: this.headers(apiKey),
-        payload: this.buildPayload(model, messages, options, false),
-        validateUrl: hasCustomEndpoint,
-        stream: false,
-        signal: options?.signal,
-      },
-    );
+    const response = await requestCompletion(this.name, url, {
+      headers: this.headers(apiKey),
+      payload: this.buildPayload(model, messages, options, false),
+      validateUrl: hasCustomEndpoint,
+      stream: false,
+      signal: options?.signal,
+    });
 
     if (!response.ok) {
       throw await this.parseError(response);
@@ -443,17 +431,13 @@ export class AnthropicProvider implements Provider {
     const baseUrl = options?.baseUrl ?? 'https://api.anthropic.com/v1';
     const url = `${baseUrl}/messages`;
     const hasCustomEndpoint = options?.baseUrl !== undefined;
-    const response = await requestCompletion(
-      this.name,
-      url,
-      {
-        headers: this.headers(apiKey),
-        payload: this.buildPayload(model, messages, options, true),
-        validateUrl: hasCustomEndpoint,
-        stream: true,
-        signal: options?.signal,
-      },
-    );
+    const response = await requestCompletion(this.name, url, {
+      headers: this.headers(apiKey),
+      payload: this.buildPayload(model, messages, options, true),
+      validateUrl: hasCustomEndpoint,
+      stream: true,
+      signal: options?.signal,
+    });
 
     if (!response.ok) {
       throw await this.parseError(response);
@@ -648,17 +632,13 @@ export class GoogleProvider implements Provider {
     const url = `${baseUrl}/models/${model}:generateContent`;
     const hasCustomEndpoint = options?.baseUrl !== undefined;
 
-    const response = await requestCompletion(
-      this.name,
-      url,
-      {
-        headers: this.headers(apiKey),
-        payload: this.buildPayload(messages, options),
-        validateUrl: hasCustomEndpoint,
-        stream: false,
-        signal: options?.signal,
-      },
-    );
+    const response = await requestCompletion(this.name, url, {
+      headers: this.headers(apiKey),
+      payload: this.buildPayload(messages, options),
+      validateUrl: hasCustomEndpoint,
+      stream: false,
+      signal: options?.signal,
+    });
 
     if (!response.ok) {
       throw await this.parseError(response);
@@ -680,17 +660,13 @@ export class GoogleProvider implements Provider {
     const url = `${baseUrl}/models/${model}:streamGenerateContent?alt=sse`;
     const hasCustomEndpoint = options?.baseUrl !== undefined;
 
-    const response = await requestCompletion(
-      this.name,
-      url,
-      {
-        headers: this.headers(apiKey),
-        payload: this.buildPayload(messages, options),
-        validateUrl: hasCustomEndpoint,
-        stream: true,
-        signal: options?.signal,
-      },
-    );
+    const response = await requestCompletion(this.name, url, {
+      headers: this.headers(apiKey),
+      payload: this.buildPayload(messages, options),
+      validateUrl: hasCustomEndpoint,
+      stream: true,
+      signal: options?.signal,
+    });
 
     if (!response.ok) {
       throw await this.parseError(response);
@@ -883,17 +859,13 @@ export class OllamaProvider implements Provider {
     // silently bypass that policy.
     const baseUrl = options?.baseUrl ?? 'http://localhost:11434';
 
-    const response = await requestCompletion(
-      this.name,
-      `${baseUrl}/api/chat`,
-      {
-        headers: { 'Content-Type': 'application/json' },
-        payload: this.buildPayload(model, messages, options, false),
-        validateUrl: true,
-        stream: false,
-        signal: options?.signal,
-      },
-    );
+    const response = await requestCompletion(this.name, `${baseUrl}/api/chat`, {
+      headers: { 'Content-Type': 'application/json' },
+      payload: this.buildPayload(model, messages, options, false),
+      validateUrl: true,
+      stream: false,
+      signal: options?.signal,
+    });
 
     if (!response.ok) {
       throw await this.parseError(response);
@@ -911,17 +883,13 @@ export class OllamaProvider implements Provider {
   ): AsyncGenerator<AIStreamChunk, AICompletionResponse> {
     const baseUrl = options?.baseUrl ?? 'http://localhost:11434';
 
-    const response = await requestCompletion(
-      this.name,
-      `${baseUrl}/api/chat`,
-      {
-        headers: { 'Content-Type': 'application/json' },
-        payload: this.buildPayload(model, messages, options, true),
-        validateUrl: true,
-        stream: true,
-        signal: options?.signal,
-      },
-    );
+    const response = await requestCompletion(this.name, `${baseUrl}/api/chat`, {
+      headers: { 'Content-Type': 'application/json' },
+      payload: this.buildPayload(model, messages, options, true),
+      validateUrl: true,
+      stream: true,
+      signal: options?.signal,
+    });
 
     if (!response.ok) {
       throw await this.parseError(response);
