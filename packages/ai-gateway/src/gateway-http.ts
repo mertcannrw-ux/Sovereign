@@ -12,25 +12,7 @@ import type { AIProvider, AICompletionResponse } from '@app-builder/shared';
 import { ProviderError } from './types';
 import { SsrfError, validateOutboundUrl } from './ssrf';
 import type { Dispatcher } from 'undici';
-
-// ─── Helpers ──────────────────────────────────────────────
-// All type-guarded to comply with the no-inline-cast-access rule.
-
-export function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-export function isString(value: unknown): value is string {
-  return typeof value === 'string';
-}
-
-export function safeString(value: unknown, fallback = ''): string {
-  return isString(value) ? value : fallback;
-}
-
-export function safeNumber(value: unknown, fallback = 0): number {
-  return typeof value === 'number' && !Number.isNaN(value) ? value : fallback;
-}
+import { isObject, safeNumber } from './guards';
 
 // ─── Usage dialects ───────────────────────────────────────
 
@@ -299,8 +281,11 @@ export async function* readAnthropicSSE(
     }
     if (trimmed.startsWith('data:')) {
       const payload = trimmed.slice(5).trim();
+      const event = currentEvent;
+      // Cleared for every `data:` line — empty keep-alives included — so a
+      // data line without its own `event:` never inherits a stale name.
+      currentEvent = '';
       if (payload !== '') {
-        const event = currentEvent;
         return { event, data: payload };
       }
     }

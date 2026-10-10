@@ -1,4 +1,4 @@
-import { isObject, isString } from './gateway-http';
+import { isObject, isString } from './guards';
 
 export type ToolCall = {
   id: string;

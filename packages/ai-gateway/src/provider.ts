@@ -6,17 +6,14 @@ import {
   mapGatewayMessagesToOpenAI,
   parseOpenAIToolCalls,
 } from './tool-calls';
+import { isObject, isString, safeNumber, safeString } from './guards';
 import {
   emptyUsage,
-  isObject,
-  isString,
   opencodeHostname,
   parseStreamFrame,
   parseUpstreamError,
   parseUsage,
   requestCompletion,
-  safeNumber,
-  safeString,
   ssrfFetch,
   streamingBody,
   toUsage,
