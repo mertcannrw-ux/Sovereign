@@ -291,6 +291,25 @@ describe('stream readers', () => {
       expect(events).toEqual([{ event: 'message_delta', data: '{"s":2}' }]);
     });
 
+    it('does not carry an event name onto a data line that has none', async () => {
+      const events = await collect(
+        readAnthropicSSE(byteStream(['event: content_block_delta\ndata: {"i":1}\ndata: {"i":2}'])),
+      );
+
+      expect(events).toEqual([
+        { event: 'content_block_delta', data: '{"i":1}' },
+        { event: '', data: '{"i":2}' },
+      ]);
+    });
+
+    it('clears a pending event name on an empty keep-alive data line', async () => {
+      const events = await collect(
+        readAnthropicSSE(byteStream(['event: ping\ndata:\ndata: {"i":1}'])),
+      );
+
+      expect(events).toEqual([{ event: '', data: '{"i":1}' }]);
+    });
+
     it('aborts a stalled stream instead of waiting on the socket forever', async () => {
       const response = streamedResponse(
         [new TextEncoder().encode('event: content_block_delta\ndata: {"i":1}\n\n')],

@@ -6,263 +6,43 @@ import {
   mapGatewayMessagesToOpenAI,
   parseOpenAIToolCalls,
 } from './tool-calls';
-import { SsrfError, validateOutboundUrl } from './ssrf';
-import type { Dispatcher } from 'undici';
+import { isObject, isString, safeNumber, safeString } from './guards';
+import {
+  emptyUsage,
+  opencodeHostname,
+  parseStreamFrame,
+  parseUpstreamError,
+  parseUsage,
+  requestCompletion,
+  ssrfFetch,
+  streamingBody,
+  toUsage,
+  readAnthropicSSE,
+  readAnthropicUsage,
+  readGeminiUsage,
+  readJSONLines,
+  readJsonResponse,
+  readOllamaUsage,
+  readOpenAIUsage,
+  readSSEStream,
+} from './gateway-http';
+import type { PickedApiError } from './gateway-http';
 
-// ─── Helpers ──────────────────────────────────────────────
-// All type-guarded to comply with the no-inline-cast-access rule.
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function isString(value: unknown): value is string {
-  return typeof value === 'string';
-}
-
-function safeString(value: unknown, fallback = ''): string {
-  return isString(value) ? value : fallback;
-}
-
-function safeNumber(value: unknown, fallback = 0): number {
-  return typeof value === 'number' && !Number.isNaN(value) ? value : fallback;
-}
-
-/**
- * Builds an undici dispatcher that connects to `pinnedIp` while keeping the
- * requested hostname as the TLS SNI (servername). This pins the validated IP
- * to defeat DNS-rebinding TOCTOU without rewriting the URL host — rewriting the
- * host would change the SNI and break SNI-based virtual hosting (regression N-2).
- */
-function createPinnedIpDispatcher(parsed: URL, pinnedIp: string): Dispatcher {
-  // Lazy-load undici so the module works in environments where it is unavailable.
-  // undici ships with Node 18+ and is present in this monorepo's root deps.
-  const undici = require('undici') as typeof import('undici');
-  const { Agent, buildConnector } = undici;
-  const https = parsed.protocol === 'https:';
-  const baseConnector = buildConnector({ timeout: 10_000 });
-  // Route the connection to the validated IP while preserving the original
-  // hostname as the TLS SNI (servername) — this is what defeats DNS-rebinding
-  // TOCTOU without breaking SNI-based virtual hosting (N-2).
-  const connect: typeof baseConnector = (opts, cb) =>
-    baseConnector(
-      {
-        ...opts,
-        host: pinnedIp,
-        hostname: pinnedIp,
-        servername: https ? parsed.hostname : undefined,
-      } as Parameters<typeof baseConnector>[0],
-      cb,
-    );
-  return new Agent({ connect }) as unknown as Dispatcher;
-}
-
-/**
- * Inactivity deadline for one stream read. `ssrfFetch` clears its timer once
- * the response headers arrive, so a peer that stops sending mid-body would
- * otherwise stall the agent run — and hold its project lease — until the
- * platform kills the function. Rejects when no chunk arrives in the window;
- * the caller's `finally` cancels the reader, closing the socket.
- */
-function readStreamChunk(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-  idleTimeoutMs: number,
-): Promise<ReadableStreamReadResult<Uint8Array>> {
-  // Start the read first: `read()` can throw synchronously (released reader),
-  // and arming the timer before that point would leak a promise that rejects
-  // with no handler once it fires.
-  const read = reader.read();
-  // The deadline can win the race; mark the losing read as handled so the
-  // cancellation in the caller's `finally` cannot surface as an unhandled
-  // rejection.
-  read.catch(() => {});
-  // Timer handle captured through a closure so the type never has to be named.
-  let clearTimer = () => {};
-  const expired = new Promise<never>((_, reject) => {
-    const timerId = setTimeout(
-      () => reject(new Error(`Stream idle for ${idleTimeoutMs}ms without data`)),
-      idleTimeoutMs,
-    );
-    clearTimer = () => clearTimeout(timerId);
-  });
-  return Promise.race([read, expired]).finally(clearTimer);
-}
-
-/**
- * Reads a `ReadableStream<Uint8Array>` and yields each `data:` line
- * as a decoded string, stripping the prefix. The standard SSE format
- * used by OpenAI, Mistral, Groq, and (with `alt=sse`) Google.
- *
- * Exported so the framing rules (unterminated final event, `data:` with or
- * without a space, split multi-byte characters) can be tested directly.
- */
-export async function* readSSEStream(
-  body: ReadableStream<Uint8Array>,
-  idleTimeoutMs = STREAM_IDLE_TIMEOUT_MS,
-): AsyncGenerator<string> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  // Shared by the read loop and the final flush. The last event of a stream is
-  // frequently not newline-terminated; parsing the residual buffer inline would
-  // duplicate these rules and let the two copies drift apart.
-  function* parseLines(lines: string[]): Generator<string> {
-    for (const line of lines) {
-      const trimmed = line.trim();
-      // The SSE spec allows `data:` with or without a space after the colon.
-      if (trimmed.startsWith('data:')) {
-        const payload = trimmed.slice(5).trim();
-        if (payload === '' || payload === '[DONE]') {
-          continue;
-        }
-        yield payload;
-      }
-    }
-  }
-
-  try {
-    while (true) {
-      const { done, value } = await readStreamChunk(reader, idleTimeoutMs);
-      if (done) {
-        break;
-      }
-      buffer += decoder.decode(value, { stream: true });
-
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-
-      yield* parseLines(lines);
-    }
-
-    // Flush the decoder (a trailing multi-byte UTF-8 sequence may still be
-    // pending) and the residual buffer. Without this the final event — usually
-    // the usage or finish frame — is silently dropped when the stream does not
-    // end with a newline.
-    buffer += decoder.decode();
-    yield* parseLines(buffer.split('\n'));
-  } finally {
-    try {
-      await reader.cancel();
-    } catch {}
-    reader.releaseLock();
-  }
-}
-
-/**
- * Reads a `ReadableStream<Uint8Array>` where each line is a standalone
- * JSON object (no `data:` prefix). Used by Ollama.
- *
- * Exported so the unterminated-final-line and split-character handling can be
- * tested directly.
- */
-export async function* readJSONLines(
-  body: ReadableStream<Uint8Array>,
-  idleTimeoutMs = STREAM_IDLE_TIMEOUT_MS,
-): AsyncGenerator<string> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  // Shared by the read loop and the final flush (same pattern as readSSEStream).
-  function* parseLines(lines: string[]): Generator<string> {
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed === '') {
-        continue;
-      }
-      yield trimmed;
-    }
-  }
-
-  try {
-    while (true) {
-      const { done, value } = await readStreamChunk(reader, idleTimeoutMs);
-      if (done) {
-        break;
-      }
-      buffer += decoder.decode(value, { stream: true });
-
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-
-      yield* parseLines(lines);
-    }
-
-    // Flush the decoder and the residual buffer so a final JSON line that is
-    // not newline-terminated (typically the `done` frame carrying usage) is
-    // still parsed.
-    buffer += decoder.decode();
-    yield* parseLines(buffer.split('\n'));
-  } finally {
-    try {
-      await reader.cancel();
-    } catch {}
-    reader.releaseLock();
-  }
-}
-
-/**
- * Reads a `ReadableStream<Uint8Array>` for Anthropic's event-based SSE.
- * Each event consists of an `event: …` line followed by `data: …`.
- * Yields `{ event, data }` tuples.
- *
- * Exported so the unterminated-final-event and `event:`/`data:` spacing rules
- * can be tested directly.
- */
-export async function* readAnthropicSSE(
-  body: ReadableStream<Uint8Array>,
-  idleTimeoutMs = STREAM_IDLE_TIMEOUT_MS,
-): AsyncGenerator<{ event: string; data: string }> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let currentEvent = '';
-
-  // Shared by the read loop and the final flush (same pattern as readSSEStream).
-  // `currentEvent` lives in the enclosing scope so an `event:` line read in one
-  // chunk still applies to the `data:` line in the next.
-  function* parseLines(lines: string[]): Generator<{ event: string; data: string }> {
-    for (const line of lines) {
-      const trimmed = line.trim();
-      // The SSE spec allows `event:`/`data:` with or without a space.
-      if (trimmed.startsWith('event:')) {
-        currentEvent = trimmed.slice(6).trim();
-      } else if (trimmed.startsWith('data:')) {
-        const payload = trimmed.slice(5).trim();
-        if (payload !== '') {
-          yield { event: currentEvent, data: payload };
-        }
-        currentEvent = '';
-      }
-    }
-  }
-
-  try {
-    while (true) {
-      const { done, value } = await readStreamChunk(reader, idleTimeoutMs);
-      if (done) {
-        break;
-      }
-      buffer += decoder.decode(value, { stream: true });
-
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-
-      yield* parseLines(lines);
-    }
-
-    // Flush the decoder and the residual buffer: the final `message_delta`
-    // (usage/stop reason) often arrives without a trailing newline.
-    buffer += decoder.decode();
-    yield* parseLines(buffer.split('\n'));
-  } finally {
-    try {
-      await reader.cancel();
-    } catch {}
-    reader.releaseLock();
-  }
-}
+// ─── Gateway HTTP layer ───────────────────────────────────
+// Fetch/reader/size-limit infrastructure lives in `./gateway-http`, shared by
+// every provider. The public surface of this module is unchanged — the
+// re-exports below keep the original symbols and signatures for callers
+// (image-client, tests, index.ts) importing from './provider'.
+export { ssrfFetch } from './gateway-http';
+export {
+  readSSEStream,
+  readJSONLines,
+  readAnthropicSSE,
+  readResponseBytes,
+  readResponseText,
+  readJsonResponse,
+} from './gateway-http';
+export type { ReadResponseOptions } from './gateway-http';
 
 // ─── Provider Interface ───────────────────────────────────
 
@@ -292,287 +72,6 @@ export interface Provider {
   /** Fetch available models from the provider's API. */
   listModels(apiKey: string, baseUrl?: string, signal?: AbortSignal): Promise<string[]>;
 }
-
-// ─── SSRF protection helpers ──────────────────────────────
-
-const MAX_BODY_BYTES = 10 * 1024 * 1024; // 10 MB
-const MAX_ERROR_BODY_BYTES = 64 * 1024; // 64 KB — error payloads only need the message
-const DEFAULT_TIMEOUT_MS = 60_000; // 60s for non-streaming requests
-const STREAM_TIMEOUT_MS = 120_000; // 120s timeout for streaming connection/headers
-/** Max gap between body chunks once a stream is open (see readStreamChunk). */
-const STREAM_IDLE_TIMEOUT_MS = 120_000;
-
-/**
- * Sent on every outbound provider request. Upstream gateways fingerprint
- * generic SDK/HTTP-library user agents and expect a named client, so undici's
- * default is replaced with this app's own identifier.
- */
-const CLIENT_USER_AGENT = 'sovereign/1.0';
-
-/** OpenCode's Zen/Go gateway (see https://opencode.ai/docs/go). */
-const OPENCODE_HOST_RE = /(^|\.)opencode\.ai$/i;
-
-/**
- * `x-opencode-session` carries a stable id per conversation so the gateway can
- * optimize routing and prompt caching; it rejects chat requests without one.
- * Returns the hostname when `url` targets that gateway, null otherwise (or when
- * the URL is unparseable, which `ssrfFetch` reports properly further down).
- */
-function opencodeHostname(url: string): string | null {
-  try {
-    const hostname = new URL(url).hostname;
-    return OPENCODE_HOST_RE.test(hostname) ? hostname : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * SSRF-safe fetch wrapper with URL validation, timeouts, and redirect capping.
- *
- * When `validateUrl` is true, performs DNS resolution and blocks requests
- * targeting private/loopback/link-local/ULA/multicast/metadata addresses.
- *
- * All responses are capped at 0 redirects (`redirect: 'error'`).
- * Timeout errors and SSRF rejections are converted to `ProviderError`.
- */
-export async function ssrfFetch(
-  providerName: AIProvider,
-  url: string,
-  init?: RequestInit,
-  options?: { validateUrl?: boolean; timeout?: number; signal?: AbortSignal },
-): Promise<Response> {
-  // Full SSRF validation + IP pinning (F-11 TOCTOU): DNS is resolved in
-  // validateOutboundUrl and bound private IPs are rejected. To avoid a DNS
-  // rebinding TOCTOU between validation and fetch, the validated IP is pinned
-  // at the *connection* layer via an undici dispatcher. This keeps the original
-  // hostname in the URL so the TLS SNI (and thus virtual-host cert selection)
-  // is preserved (regression N-2). Local/loopback hosts skip pinning entirely
-  // (N-1) and use the normal resolver. Redirects are blocked (redirect: 'error').
-  let fetchUrl = url;
-  let dispatcher: unknown;
-  if (options?.validateUrl) {
-    try {
-      const { url: parsed, addresses } = await validateOutboundUrl(url);
-      fetchUrl = parsed.href;
-      if (addresses.length > 0) {
-        dispatcher = createPinnedIpDispatcher(parsed, addresses[0]!);
-      }
-    } catch (e) {
-      if (e instanceof SsrfError) {
-        throw new ProviderError(providerName, 0, e.reason, e.message);
-      }
-      throw e;
-    }
-  }
-
-  const controller = new AbortController();
-  const timeoutMs = options?.timeout ?? DEFAULT_TIMEOUT_MS;
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-  // The caller's signal must stay wired for the WHOLE request, including the
-  // response body — which is still in flight when `fetch()` resolves. A
-  // hand-rolled listener removed in the `finally` below detached it at header
-  // time, so a client disconnect (Stop) after the first byte left the provider
-  // call running, and billing, to completion.
-  //
-  // The link is not free. Node pins an `AbortSignal.any` composite in a
-  // process-global strong set until it aborts, loses its last abort listener,
-  // or its sources are collected — and undici never removes its abort listener
-  // on a normally-completing request. So each call keeps its request graph
-  // reachable from `options.signal`, which one agent run reuses for every
-  // provider call, for the life of that run. Measured: dropping the run signal
-  // released 99.9% of it once the event loop turned (FinalizationRegistry
-  // callbacks are not synchronous with gc()), so this is run-bounded retention,
-  // not a process-lifetime leak. Releasing at body-settle time instead would
-  // cost a per-request stream wrapper on the streaming hot path to save a few
-  // KB per call.
-  const signal = options?.signal
-    ? AbortSignal.any([controller.signal, options.signal])
-    : controller.signal;
-  try {
-    // validateOutboundUrl ensures the domain resolves strictly to public IPs.
-    // We fetch the original URL (hostname intact for SNI) with redirect: 'error'
-    // to block all redirects. When an IP was pinned, a custom dispatcher routes
-    // the connection to that IP without altering the SNI.
-
-    const mergedHeaders: Record<string, string> = {
-      ...((init?.headers as Record<string, string> | undefined) ?? {}),
-    };
-    if (!Object.keys(mergedHeaders).some((name) => name.toLowerCase() === 'user-agent')) {
-      mergedHeaders['User-Agent'] = CLIENT_USER_AGENT;
-    }
-    const response = await fetch(fetchUrl, {
-      ...init,
-      ...(Object.keys(mergedHeaders).length ? { headers: mergedHeaders } : {}),
-      ...(dispatcher !== undefined ? { dispatcher } : {}),
-      signal,
-      redirect: 'error', // Zero redirects — block all redirects
-    } as RequestInit & { dispatcher?: unknown });
-    return response;
-  } catch (e) {
-    // Convert abort (timeout) into structured error
-    if (e instanceof DOMException && e.name === 'AbortError') {
-      // Keep a deliberate cancellation apart from a deadline: callers retry
-      // `request_timeout`, and a request the user stopped must not be retried.
-      const cancelled = options?.signal?.aborted === true;
-      throw new ProviderError(
-        providerName,
-        0,
-        cancelled ? 'cancelled' : 'request_timeout',
-        cancelled ? 'Request cancelled' : 'Request timed out',
-      );
-    }
-    throw e;
-  } finally {
-    // The deadline bounds time-to-headers only. Streaming bodies are governed
-    // by the per-chunk idle timeout in the readers above; letting a 60s wall
-    // clock cover the body as well would kill legitimate long generations.
-    clearTimeout(timeout);
-  }
-}
-
-/**
- * Creates a `TransformStream` that caps the number of bytes read.
- * Once the limit is exceeded, the stream errors to prevent memory exhaustion.
- */
-function createBodySizeLimit(maxBytes: number): TransformStream<Uint8Array, Uint8Array> {
-  let total = 0;
-  return new TransformStream({
-    transform(chunk, controller) {
-      total += chunk.byteLength;
-      if (total > maxBytes) {
-        controller.error(new Error(`Response body exceeded ${maxBytes} bytes`));
-      } else {
-        controller.enqueue(chunk);
-      }
-    },
-  });
-}
-
-/**
- * Limits applied while reading a response body.
- *
- * `ssrfFetch` clears its abort timer as soon as the headers arrive, so without
- * these a stalled endpoint can dribble a body forever (holding the caller's
- * generation lease) and a large one is buffered in full before any size check.
- */
-export interface ReadResponseOptions {
-  /** Byte cap for the body. Defaults to {@link MAX_BODY_BYTES}. */
-  maxBytes?: number;
-  /** Wall-clock budget for the whole body. Defaults to {@link DEFAULT_TIMEOUT_MS}. */
-  timeoutMs?: number;
-  /** Status reported on the size-limit error — non-streaming reads report 0. */
-  tooLargeStatus?: number;
-  /** Message reported on the size-limit error. */
-  tooLargeMessage?: string;
-}
-
-/**
- * Reads a response body, aborting once it exceeds `maxBytes` or outlives
- * `timeoutMs`. This replaces `response.text()` / `response.arrayBuffer()` /
- * `response.json()` on non-streaming responses, which buffer an unbounded body
- * before any check and inherit no deadline from `ssrfFetch`.
- */
-export async function readResponseBytes(
-  providerName: AIProvider,
-  response: Response,
-  options?: ReadResponseOptions,
-): Promise<Uint8Array> {
-  const maxBytes = options?.maxBytes ?? MAX_BODY_BYTES;
-  const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const body = response.body;
-  if (!body) return new Uint8Array(0);
-
-  const reader = body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const expired = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () =>
-        reject(new ProviderError(providerName, 0, 'request_timeout', 'Response body timed out')),
-      timeoutMs,
-    );
-  });
-
-  try {
-    for (;;) {
-      const read = reader.read();
-      // The deadline can win the race; mark the losing read as handled so the
-      // cancellation below cannot surface as an unhandled rejection.
-      read.catch(() => {});
-      const { done, value } = await Promise.race([read, expired]);
-      if (done) break;
-      total += value.byteLength;
-      if (total > maxBytes) {
-        throw new ProviderError(
-          providerName,
-          options?.tooLargeStatus ?? 0,
-          'response_too_large',
-          options?.tooLargeMessage ??
-            `Response body exceeds ${Math.round(maxBytes / (1024 * 1024))} MB limit`,
-        );
-      }
-      chunks.push(value);
-    }
-  } finally {
-    clearTimeout(timer);
-    try {
-      await reader.cancel();
-      reader.releaseLock();
-    } catch {
-      // The reader is discarded either way — the body is never read again.
-    }
-  }
-
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes;
-}
-
-/** UTF-8 text form of {@link readResponseBytes} — the safe `response.text()`. */
-export async function readResponseText(
-  providerName: AIProvider,
-  response: Response,
-  options?: ReadResponseOptions,
-): Promise<string> {
-  return new TextDecoder().decode(await readResponseBytes(providerName, response, options));
-}
-
-/**
- * Safe `response.json()`.
- *
- * `readResponseText` runs *outside* the parse guard deliberately: it is where
- * `request_timeout` and `response_too_large` originate, and callers key retry
- * behaviour off those codes. Letting them fall into the `invalid_json` branch
- * would relabel an infrastructure failure as a malformed payload — with
- * `response.status === 200`, since this runs only after the `!response.ok`
- * check — and silently make timeouts non-retryable.
- */
-export async function readJsonResponse(
-  providerName: AIProvider,
-  response: Response,
-  options?: ReadResponseOptions,
-): Promise<unknown> {
-  const text = await readResponseText(providerName, response, options);
-  try {
-    return JSON.parse(text) as unknown;
-  } catch (e) {
-    throw new ProviderError(
-      providerName,
-      response.status,
-      'invalid_json',
-      `Failed to parse response: ${e instanceof Error ? e.message : 'Unknown error'}`,
-    );
-  }
-}
-
-// ─── Provider Interface ───────────────────────────────────
 
 // ─── OpenAI-compatible providers (OpenAI, Mistral, Groq) ──
 
@@ -610,16 +109,13 @@ abstract class OpenAICompatibleProvider implements Provider {
     // constant, so validating it buys no SSRF protection while adding a DNS
     // lookup and an undestroyed per-request IP-pinning Agent on every call.
     const hasCustomEndpoint = options?.baseUrl !== undefined;
-    const response = await ssrfFetch(
-      this.name,
-      url,
-      {
-        method: 'POST',
-        headers: this.authHeaders(apiKey, { url, sessionId: options?.sessionId }),
-        body: JSON.stringify(this.buildPayload(model, messages, options, false)),
-      },
-      { validateUrl: hasCustomEndpoint, signal: options?.signal },
-    );
+    const response = await requestCompletion(this.name, url, {
+      headers: this.authHeaders(apiKey, { url, sessionId: options?.sessionId }),
+      payload: this.buildPayload(model, messages, options, false),
+      validateUrl: hasCustomEndpoint,
+      stream: false,
+      signal: options?.signal,
+    });
 
     if (!response.ok) {
       throw await this.parseError(response);
@@ -642,56 +138,35 @@ abstract class OpenAICompatibleProvider implements Provider {
     const baseUrl = this.normalizeBaseUrl(rawBase);
     const url = `${baseUrl}/chat/completions`;
     const hasCustomEndpoint = options?.baseUrl !== undefined;
-    const response = await ssrfFetch(
-      this.name,
-      url,
-      {
-        method: 'POST',
-        headers: this.authHeaders(apiKey, { url, sessionId: options?.sessionId }),
-        body: JSON.stringify(this.buildPayload(model, messages, options, true)),
-      },
-      { validateUrl: hasCustomEndpoint, timeout: STREAM_TIMEOUT_MS, signal: options?.signal },
-    );
+    const response = await requestCompletion(this.name, url, {
+      headers: this.authHeaders(apiKey, { url, sessionId: options?.sessionId }),
+      payload: this.buildPayload(model, messages, options, true),
+      validateUrl: hasCustomEndpoint,
+      stream: true,
+      signal: options?.signal,
+    });
 
     if (!response.ok) {
       throw await this.parseError(response);
     }
 
-    const rawBody = response.body;
-    if (!rawBody) {
-      throw new Error('Response body is null — cannot stream');
-    }
-
     // Cap streaming response body size to prevent resource exhaustion
-    const body = rawBody.pipeThrough(createBodySizeLimit(MAX_BODY_BYTES));
+    const body = streamingBody(response);
 
     let accumulatedContent = '';
     let accumulatedReasoning = '';
     let accumulatedToolCalls: ToolCall[] = [];
     let finishReason: string = 'stop';
-    let finalUsage: AICompletionResponse['usage'] = {
-      promptTokens: 0,
-      completionTokens: 0,
-      totalTokens: 0,
-    };
+    let finalUsage = emptyUsage();
 
     for await (const raw of readSSEStream(body)) {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(raw);
-      } catch {
-        continue;
-      }
-      if (!isObject(parsed)) continue;
+      const parsed = parseStreamFrame(raw);
+      if (parsed === null) continue;
 
       // usage in final chunk (OpenAI with stream_options.include_usage)
       const usageRaw = parsed['usage'];
       if (isObject(usageRaw)) {
-        finalUsage = {
-          promptTokens: safeNumber(usageRaw['prompt_tokens']),
-          completionTokens: safeNumber(usageRaw['completion_tokens']),
-          totalTokens: safeNumber(usageRaw['total_tokens']),
-        };
+        finalUsage = toUsage(readOpenAIUsage(usageRaw));
       }
 
       const choices = parsed['choices'];
@@ -808,24 +283,7 @@ abstract class OpenAICompatibleProvider implements Provider {
   }
 
   protected async parseError(response: Response): Promise<ProviderError> {
-    let message = `HTTP ${response.status}: ${response.statusText}`;
-    let code = 'unknown';
-    try {
-      const body: unknown = JSON.parse(
-        await readResponseText(this.name, response, { maxBytes: MAX_ERROR_BODY_BYTES }),
-      );
-      if (isObject(body)) {
-        const error = body['error'];
-        if (isObject(error)) {
-          if (isString(error['message'])) message = error['message'];
-          if (isString(error['code'])) code = error['code'];
-          if (isString(error['type'])) code = error['type'];
-        }
-      }
-    } catch {
-      // ignore JSON parse errors, fall back to status text
-    }
-    return new ProviderError(this.name, response.status, code, message);
+    return parseUpstreamError(this.name, response, openAIErrorBody);
   }
 
   protected parseNonStreamingResponse(data: unknown): AICompletionResponse {
@@ -859,13 +317,7 @@ abstract class OpenAICompatibleProvider implements Provider {
     const toolCalls = parseOpenAIToolCalls(message['tool_calls']);
 
     const rawUsage = data['usage'];
-    const usage: AICompletionResponse['usage'] = isObject(rawUsage)
-      ? {
-          promptTokens: safeNumber(rawUsage['prompt_tokens']),
-          completionTokens: safeNumber(rawUsage['completion_tokens']),
-          totalTokens: safeNumber(rawUsage['total_tokens']),
-        }
-      : { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    const usage = parseUsage(rawUsage, readOpenAIUsage);
 
     return {
       content,
@@ -949,16 +401,13 @@ export class AnthropicProvider implements Provider {
     const baseUrl = options?.baseUrl ?? 'https://api.anthropic.com/v1';
     const url = `${baseUrl}/messages`;
     const hasCustomEndpoint = options?.baseUrl !== undefined;
-    const response = await ssrfFetch(
-      this.name,
-      url,
-      {
-        method: 'POST',
-        headers: this.headers(apiKey),
-        body: JSON.stringify(this.buildPayload(model, messages, options, false)),
-      },
-      { validateUrl: hasCustomEndpoint, signal: options?.signal },
-    );
+    const response = await requestCompletion(this.name, url, {
+      headers: this.headers(apiKey),
+      payload: this.buildPayload(model, messages, options, false),
+      validateUrl: hasCustomEndpoint,
+      stream: false,
+      signal: options?.signal,
+    });
 
     if (!response.ok) {
       throw await this.parseError(response);
@@ -979,45 +428,28 @@ export class AnthropicProvider implements Provider {
     const baseUrl = options?.baseUrl ?? 'https://api.anthropic.com/v1';
     const url = `${baseUrl}/messages`;
     const hasCustomEndpoint = options?.baseUrl !== undefined;
-    const response = await ssrfFetch(
-      this.name,
-      url,
-      {
-        method: 'POST',
-        headers: this.headers(apiKey),
-        body: JSON.stringify(this.buildPayload(model, messages, options, true)),
-      },
-      { validateUrl: hasCustomEndpoint, timeout: STREAM_TIMEOUT_MS, signal: options?.signal },
-    );
+    const response = await requestCompletion(this.name, url, {
+      headers: this.headers(apiKey),
+      payload: this.buildPayload(model, messages, options, true),
+      validateUrl: hasCustomEndpoint,
+      stream: true,
+      signal: options?.signal,
+    });
 
     if (!response.ok) {
       throw await this.parseError(response);
     }
 
-    const rawBody = response.body;
-    if (!rawBody) {
-      throw new Error('Response body is null — cannot stream');
-    }
-
     // Cap streaming body size for SSRF/memory protection
-    const body = rawBody.pipeThrough(createBodySizeLimit(MAX_BODY_BYTES));
+    const body = streamingBody(response);
     let accumulatedContent = '';
     let accumulatedReasoning = '';
-    let finalUsage: AICompletionResponse['usage'] = {
-      promptTokens: 0,
-      completionTokens: 0,
-      totalTokens: 0,
-    };
+    let finalUsage = emptyUsage();
     let finishReason: AIStreamChunk['finishReason'];
 
     for await (const { event, data: raw } of readAnthropicSSE(body)) {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(raw);
-      } catch {
-        continue;
-      }
-      if (!isObject(parsed)) continue;
+      const parsed = parseStreamFrame(raw);
+      if (parsed === null) continue;
 
       switch (event) {
         case 'message_start': {
@@ -1025,12 +457,7 @@ export class AnthropicProvider implements Provider {
           if (isObject(msg)) {
             const usageRaw = msg['usage'];
             if (isObject(usageRaw)) {
-              finalUsage = {
-                promptTokens: safeNumber(usageRaw['input_tokens']),
-                completionTokens: safeNumber(usageRaw['output_tokens']),
-                totalTokens:
-                  safeNumber(usageRaw['input_tokens']) + safeNumber(usageRaw['output_tokens']),
-              };
+              finalUsage = toUsage(readAnthropicUsage(usageRaw));
             }
           }
           break;
@@ -1137,23 +564,7 @@ export class AnthropicProvider implements Provider {
   }
 
   private async parseError(response: Response): Promise<ProviderError> {
-    let message = `HTTP ${response.status}: ${response.statusText}`;
-    let code = 'unknown';
-    try {
-      const body: unknown = JSON.parse(
-        await readResponseText(this.name, response, { maxBytes: MAX_ERROR_BODY_BYTES }),
-      );
-      if (isObject(body)) {
-        const error = body['error'];
-        if (isObject(error)) {
-          if (isString(error['message'])) message = error['message'];
-          if (isString(error['type'])) code = error['type'];
-        }
-      }
-    } catch {
-      // ignore
-    }
-    return new ProviderError(this.name, response.status, code, message);
+    return parseUpstreamError(this.name, response, anthropicErrorBody);
   }
 
   private parseNonStreamingResponse(data: unknown): AICompletionResponse {
@@ -1168,13 +579,7 @@ export class AnthropicProvider implements Provider {
       : '';
 
     const rawUsage = data['usage'];
-    const usage: AICompletionResponse['usage'] = isObject(rawUsage)
-      ? {
-          promptTokens: safeNumber(rawUsage['input_tokens']),
-          completionTokens: safeNumber(rawUsage['output_tokens']),
-          totalTokens: safeNumber(rawUsage['input_tokens']) + safeNumber(rawUsage['output_tokens']),
-        }
-      : { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    const usage = parseUsage(rawUsage, readAnthropicUsage);
 
     return { content, finishReason: 'stop', usage };
   }
@@ -1224,16 +629,13 @@ export class GoogleProvider implements Provider {
     const url = `${baseUrl}/models/${model}:generateContent`;
     const hasCustomEndpoint = options?.baseUrl !== undefined;
 
-    const response = await ssrfFetch(
-      this.name,
-      url,
-      {
-        method: 'POST',
-        headers: this.headers(apiKey),
-        body: JSON.stringify(this.buildPayload(messages, options)),
-      },
-      { validateUrl: hasCustomEndpoint, signal: options?.signal },
-    );
+    const response = await requestCompletion(this.name, url, {
+      headers: this.headers(apiKey),
+      payload: this.buildPayload(messages, options),
+      validateUrl: hasCustomEndpoint,
+      stream: false,
+      signal: options?.signal,
+    });
 
     if (!response.ok) {
       throw await this.parseError(response);
@@ -1255,54 +657,33 @@ export class GoogleProvider implements Provider {
     const url = `${baseUrl}/models/${model}:streamGenerateContent?alt=sse`;
     const hasCustomEndpoint = options?.baseUrl !== undefined;
 
-    const response = await ssrfFetch(
-      this.name,
-      url,
-      {
-        method: 'POST',
-        headers: this.headers(apiKey),
-        body: JSON.stringify(this.buildPayload(messages, options)),
-      },
-      { validateUrl: hasCustomEndpoint, timeout: STREAM_TIMEOUT_MS, signal: options?.signal },
-    );
+    const response = await requestCompletion(this.name, url, {
+      headers: this.headers(apiKey),
+      payload: this.buildPayload(messages, options),
+      validateUrl: hasCustomEndpoint,
+      stream: true,
+      signal: options?.signal,
+    });
 
     if (!response.ok) {
       throw await this.parseError(response);
     }
 
-    const rawBody = response.body;
-    if (!rawBody) {
-      throw new Error('Response body is null — cannot stream');
-    }
-
     // Cap streaming body size for SSRF/memory protection
-    const body = rawBody.pipeThrough(createBodySizeLimit(MAX_BODY_BYTES));
+    const body = streamingBody(response);
 
     let accumulatedContent = '';
     let finishReason: AIStreamChunk['finishReason'] = 'stop';
-    let finalUsage: AICompletionResponse['usage'] = {
-      promptTokens: 0,
-      completionTokens: 0,
-      totalTokens: 0,
-    };
+    let finalUsage = emptyUsage();
 
     for await (const raw of readSSEStream(body)) {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(raw);
-      } catch {
-        continue;
-      }
-      if (!isObject(parsed)) continue;
+      const parsed = parseStreamFrame(raw);
+      if (parsed === null) continue;
 
       // usage metadata
       const usageRaw = parsed['usageMetadata'];
       if (isObject(usageRaw)) {
-        finalUsage = {
-          promptTokens: safeNumber(usageRaw['promptTokenCount']),
-          completionTokens: safeNumber(usageRaw['candidatesTokenCount']),
-          totalTokens: safeNumber(usageRaw['totalTokenCount']),
-        };
+        finalUsage = toUsage(readGeminiUsage(usageRaw));
       }
 
       const candidates = parsed['candidates'];
@@ -1390,24 +771,7 @@ export class GoogleProvider implements Provider {
   }
 
   private async parseError(response: Response): Promise<ProviderError> {
-    let message = `HTTP ${response.status}: ${response.statusText}`;
-    let code = 'unknown';
-    try {
-      const body: unknown = JSON.parse(
-        await readResponseText(this.name, response, { maxBytes: MAX_ERROR_BODY_BYTES }),
-      );
-      if (isObject(body)) {
-        const error = body['error'];
-        if (isObject(error)) {
-          if (isString(error['message'])) message = error['message'];
-          if (isString(error['status'])) code = error['status'];
-          if (typeof error['code'] === 'number') code = String(error['code']);
-        }
-      }
-    } catch {
-      // ignore
-    }
-    return new ProviderError(this.name, response.status, code, message);
+    return parseUpstreamError(this.name, response, googleErrorBody);
   }
 
   private parseResponse(data: unknown): AICompletionResponse {
@@ -1416,14 +780,7 @@ export class GoogleProvider implements Provider {
     const candidates = data['candidates'];
     if (!Array.isArray(candidates) || candidates.length === 0) {
       // blocked / empty response — return empty content
-      const usageRaw = data['usageMetadata'];
-      const usage: AICompletionResponse['usage'] = isObject(usageRaw)
-        ? {
-            promptTokens: safeNumber(usageRaw['promptTokenCount']),
-            completionTokens: safeNumber(usageRaw['candidatesTokenCount']),
-            totalTokens: safeNumber(usageRaw['totalTokenCount']),
-          }
-        : { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+      const usage = parseUsage(data['usageMetadata'], readGeminiUsage);
       return { content: '', finishReason: 'stop', usage };
     }
 
@@ -1442,13 +799,7 @@ export class GoogleProvider implements Provider {
       : '';
 
     const rawUsage = data['usageMetadata'];
-    const usage: AICompletionResponse['usage'] = isObject(rawUsage)
-      ? {
-          promptTokens: safeNumber(rawUsage['promptTokenCount']),
-          completionTokens: safeNumber(rawUsage['candidatesTokenCount']),
-          totalTokens: safeNumber(rawUsage['totalTokenCount']),
-        }
-      : { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    const usage = parseUsage(rawUsage, readGeminiUsage);
 
     return { content, finishReason: 'stop', usage };
   }
@@ -1505,16 +856,13 @@ export class OllamaProvider implements Provider {
     // silently bypass that policy.
     const baseUrl = options?.baseUrl ?? 'http://localhost:11434';
 
-    const response = await ssrfFetch(
-      this.name,
-      `${baseUrl}/api/chat`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(this.buildPayload(model, messages, options, false)),
-      },
-      { validateUrl: true, signal: options?.signal },
-    );
+    const response = await requestCompletion(this.name, `${baseUrl}/api/chat`, {
+      headers: { 'Content-Type': 'application/json' },
+      payload: this.buildPayload(model, messages, options, false),
+      validateUrl: true,
+      stream: false,
+      signal: options?.signal,
+    });
 
     if (!response.ok) {
       throw await this.parseError(response);
@@ -1532,43 +880,27 @@ export class OllamaProvider implements Provider {
   ): AsyncGenerator<AIStreamChunk, AICompletionResponse> {
     const baseUrl = options?.baseUrl ?? 'http://localhost:11434';
 
-    const response = await ssrfFetch(
-      this.name,
-      `${baseUrl}/api/chat`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(this.buildPayload(model, messages, options, true)),
-      },
-      { validateUrl: true, timeout: STREAM_TIMEOUT_MS, signal: options?.signal },
-    );
+    const response = await requestCompletion(this.name, `${baseUrl}/api/chat`, {
+      headers: { 'Content-Type': 'application/json' },
+      payload: this.buildPayload(model, messages, options, true),
+      validateUrl: true,
+      stream: true,
+      signal: options?.signal,
+    });
 
     if (!response.ok) {
       throw await this.parseError(response);
     }
 
-    const rawBody = response.body;
-    if (!rawBody) {
-      throw new Error('Response body is null — cannot stream');
-    }
-    const body = rawBody.pipeThrough(createBodySizeLimit(MAX_BODY_BYTES));
+    const body = streamingBody(response);
 
     let accumulatedContent = '';
     let finishReason: AIStreamChunk['finishReason'] = 'stop';
-    let finalUsage: AICompletionResponse['usage'] = {
-      promptTokens: 0,
-      completionTokens: 0,
-      totalTokens: 0,
-    };
+    let finalUsage = emptyUsage();
 
     for await (const raw of readJSONLines(body)) {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(raw);
-      } catch {
-        continue;
-      }
-      if (!isObject(parsed)) continue;
+      const parsed = parseStreamFrame(raw);
+      if (parsed === null) continue;
 
       const msg = parsed['message'];
       if (isObject(msg)) {
@@ -1580,11 +912,7 @@ export class OllamaProvider implements Provider {
       }
 
       if (parsed['done'] === true) {
-        finalUsage = {
-          promptTokens: safeNumber(parsed['prompt_eval_count']),
-          completionTokens: safeNumber(parsed['eval_count']),
-          totalTokens: safeNumber(parsed['prompt_eval_count']) + safeNumber(parsed['eval_count']),
-        };
+        finalUsage = toUsage(readOllamaUsage(parsed));
         const doneReason = safeString(parsed['done_reason']);
         if (doneReason === 'length' || doneReason === 'max_tokens') {
           finishReason = 'length';
@@ -1618,21 +946,7 @@ export class OllamaProvider implements Provider {
   }
 
   private async parseError(response: Response): Promise<ProviderError> {
-    let message = `HTTP ${response.status}: ${response.statusText}`;
-    let code = 'unknown';
-    try {
-      const body: unknown = JSON.parse(
-        await readResponseText(this.name, response, { maxBytes: MAX_ERROR_BODY_BYTES }),
-      );
-      if (isObject(body)) {
-        if (isString(body['error'])) {
-          message = body['error'];
-        }
-      }
-    } catch {
-      // ignore
-    }
-    return new ProviderError(this.name, response.status, code, message);
+    return parseUpstreamError(this.name, response, ollamaErrorBody);
   }
 
   private parseResponse(data: unknown): AICompletionResponse {
@@ -1641,11 +955,7 @@ export class OllamaProvider implements Provider {
     const msg = data['message'];
     const content = isObject(msg) ? safeString(msg['content']) : '';
 
-    const usage: AICompletionResponse['usage'] = {
-      promptTokens: safeNumber(data['prompt_eval_count']),
-      completionTokens: safeNumber(data['eval_count']),
-      totalTokens: safeNumber(data['prompt_eval_count']) + safeNumber(data['eval_count']),
-    };
+    const usage = toUsage(readOllamaUsage(data));
 
     return { content, finishReason: 'stop', usage };
   }
@@ -1691,6 +1001,57 @@ export class CustomProvider extends OpenAICompatibleProvider {
       'Custom providers require a base URL.',
     );
   }
+}
+
+// ─── Error-body dialects ──────────────────────────────────
+
+/**
+ * OpenAI-compatible envelopes carry `error.message`; the code comes from
+ * `error.code` or — the assignment after it wins — `error.type`.
+ */
+function openAIErrorBody(body: Record<string, unknown>): PickedApiError | undefined {
+  const error = body['error'];
+  if (!isObject(error)) return undefined;
+  const picked: PickedApiError = {};
+  if (isString(error['message'])) picked.message = error['message'];
+  if (isString(error['code'])) picked.code = error['code'];
+  if (isString(error['type'])) picked.code = error['type'];
+  return picked;
+}
+
+/** Anthropic errors carry `error.message` and a bare `error.type` code. */
+function anthropicErrorBody(body: Record<string, unknown>): PickedApiError | undefined {
+  const error = body['error'];
+  if (!isObject(error)) return undefined;
+  const picked: PickedApiError = {};
+  if (isString(error['message'])) picked.message = error['message'];
+  if (isString(error['type'])) picked.code = error['type'];
+  return picked;
+}
+
+/**
+ * Gemini errors carry `error.message`, optionally a string `error.status`
+ * and/or a numeric `error.code`; both assignments run independently, so a
+ * numeric code wins when both are present.
+ */
+function googleErrorBody(body: Record<string, unknown>): PickedApiError | undefined {
+  const error = body['error'];
+  if (!isObject(error)) return undefined;
+  const picked: PickedApiError = {};
+  if (isString(error['message'])) picked.message = error['message'];
+  if (isString(error['status'])) picked.code = error['status'];
+  if (typeof error['code'] === 'number') picked.code = String(error['code']);
+  return picked;
+}
+
+/**
+ * Ollama returns its error message as a bare string field rather than an
+ * envelope; the code stays the shared parser's `'unknown'` default.
+ */
+function ollamaErrorBody(body: Record<string, unknown>): PickedApiError | undefined {
+  const picked: PickedApiError = {};
+  if (isString(body['error'])) picked.message = body['error'];
+  return picked;
 }
 
 // ─── Registry ──────────────────────────────────────────────

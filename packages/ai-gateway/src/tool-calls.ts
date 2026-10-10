@@ -1,3 +1,5 @@
+import { isObject, isString } from './guards';
+
 export type ToolCall = {
   id: string;
   type: 'function';
@@ -11,14 +13,6 @@ export type GatewayMessage =
   | { role: 'system' | 'user'; content: string }
   | { role: 'assistant'; content: string; toolCalls?: ToolCall[] }
   | { role: 'tool'; toolCallId: string; content: string };
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function isString(value: unknown): value is string {
-  return typeof value === 'string';
-}
 
 function emptyToolCall(): ToolCall {
   return { id: '', type: 'function', function: { name: '', arguments: '' } };
