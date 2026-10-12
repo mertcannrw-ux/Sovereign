@@ -6,10 +6,7 @@ import {
   type StackContractChange,
 } from '@app-builder/codegen';
 import { TRPCError } from '@trpc/server';
-import {
-  resolveNoProgressGuard,
-  resolveOptionalLimit,
-} from '@/lib/agent-limits';
+import { resolveNoProgressGuard, resolveOptionalLimit } from '@/lib/agent-limits';
 import { uploadProjectAsset } from '@/server/assets/project-assets';
 import { getR2ConfigStatus } from '@/server/assets/r2';
 import type { AIProvider } from '@app-builder/shared';
@@ -37,10 +34,7 @@ import {
   getStreamingFileFromToolCalls,
   nativeToolsEnabled,
 } from '@/lib/agent-tools';
-import type {
-  DesignDirectionRecord,
-  GenerationEventSink,
-} from '@/lib/generation-stream';
+import type { DesignDirectionRecord, GenerationEventSink } from '@/lib/generation-stream';
 import {
   RUNTIME_COMMAND_NAMES,
   formatRuntimeObservation,
@@ -68,11 +62,7 @@ import {
 import { isSovereignOverlayPath } from '@/lib/preview-startup';
 import type { AgentExecutionParams, AgentStreamResult } from './types';
 import { parseProvider, MAX_ATTACHMENT_BYTES } from './validation';
-import {
-  buildAgentSystemPrompt,
-  formatReadObservation,
-  MAX_READ_RESULT_CHARS,
-} from './prompts';
+import { buildAgentSystemPrompt, formatReadObservation, MAX_READ_RESULT_CHARS } from './prompts';
 import { encodeEvent, messageRecord, createAsyncQueue } from './events';
 
 const IMAGE_GENERATION_CONCURRENCY = 3;
@@ -108,9 +98,7 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-export async function createAgentStream(
-  params: AgentExecutionParams,
-): Promise<AgentStreamResult> {
+export async function createAgentStream(params: AgentExecutionParams): Promise<AgentStreamResult> {
   const { user, body, runtimeEnabled, signal: externalSignal } = params;
   const projectId = body.projectId?.trim();
   if (!projectId) {
@@ -199,8 +187,7 @@ export async function createAgentStream(
       where: { userId: user.id, enabled: true },
     });
     const r2Status = getR2ConfigStatus();
-    const isAssetStorageDurable =
-      r2Status.isConfigured || process.env.NODE_ENV !== 'production';
+    const isAssetStorageDurable = r2Status.isConfigured || process.env.NODE_ENV !== 'production';
     const isImageGenReady = Boolean(imageConfig && isAssetStorageDurable);
 
     const attachmentParts: string[] = [];
@@ -234,10 +221,7 @@ export async function createAgentStream(
           return await failWithLeaseReleased({ error: 'Missing directionId' }, 400);
         }
         if (directionSet.status === 'selected') {
-          return await failWithLeaseReleased(
-            { error: 'Design direction already selected' },
-            400,
-          );
+          return await failWithLeaseReleased({ error: 'Design direction already selected' }, 400);
         }
         const selected = directionSet.directions.find((d) => d.id === directionId);
         if (!selected) {
@@ -731,8 +715,7 @@ export async function createAgentStream(
                 }
                 finalUsage = {
                   promptTokens: finalUsage.promptTokens + next.value.usage.promptTokens,
-                  completionTokens:
-                    finalUsage.completionTokens + next.value.usage.completionTokens,
+                  completionTokens: finalUsage.completionTokens + next.value.usage.completionTokens,
                   totalTokens: finalUsage.totalTokens + next.value.usage.totalTokens,
                 };
                 break;

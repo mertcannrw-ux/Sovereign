@@ -48,5 +48,4 @@ export type AgentStreamResult =
     };
 
 export type GeneratePayloadValidation =
-  | { ok: true; data: GenerateBody }
-  | { ok: false; error: string };
+  { ok: true; data: GenerateBody } | { ok: false; error: string };

@@ -76,7 +76,6 @@ describe('agent service validation', () => {
         files: [{ path: 'file.txt', content: hugeContent }],
       }),
     ).toEqual({
-      ok: false,
       // Single file > 100 KB is ignored in count, but 6 files of 90 KB exceed 512 KB
       ok: true,
       data: expect.any(Object),
@@ -125,7 +124,12 @@ describe('prompts & formatting', () => {
 
   it('formats read observations with line bounds and headers', () => {
     const content = 'line 1\nline 2\nline 3\nline 4';
-    const obs = formatReadObservation('src/App.tsx', content, { path: 'src/App.tsx', startLine: 2, endLine: 3 }, 1000);
+    const obs = formatReadObservation(
+      'src/App.tsx',
+      content,
+      { path: 'src/App.tsx', startLine: 2, endLine: 3 },
+      1000,
+    );
     expect(obs).toContain('--- src/App.tsx (lines 2-3) ---');
     expect(obs).toContain('2: line 2');
     expect(obs).toContain('3: line 3');
@@ -133,7 +137,12 @@ describe('prompts & formatting', () => {
   });
 
   it('handles read observation when file is not found', () => {
-    const obs = formatReadObservation('src/missing.tsx', undefined, { path: 'src/missing.tsx' }, 1000);
+    const obs = formatReadObservation(
+      'src/missing.tsx',
+      undefined,
+      { path: 'src/missing.tsx' },
+      1000,
+    );
     expect(obs).toBe('--- src/missing.tsx ---\n[not found]');
   });
 });
