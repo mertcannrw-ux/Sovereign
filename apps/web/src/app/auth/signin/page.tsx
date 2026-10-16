@@ -5,10 +5,27 @@ import { Suspense, useState, type FormEvent } from 'react';
 import { signIn } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Check, Command, GitBranch, Loader2, ShieldCheck, Sparkles } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Loader2 } from 'lucide-react';
+import { cn } from '@app-builder/ui/utils';
+import {
+  AuthShell,
+  AuthShellFallback,
+  FormError,
+  fieldInput,
+  fieldLabel,
+  oauthButton,
+  submitButton,
+} from '@/components/auth/auth-shell';
+import { primaryButton } from '@/components/landing/primitives';
+import { ProviderMark } from '@/components/landing/provider-logos';
 import { Input } from '@/components/ui/input';
 import { trpc } from '@/lib/trpc/client';
+
+/** Monochrome sign-in marks from simple-icons (CC0), on the same 24x24 grid as `PROVIDER_LOGOS`. */
+const GOOGLE_MARK =
+  'M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z';
+const GITHUB_MARK =
+  'M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12';
 
 /**
  * NextAuth redirects OAuth failures back to the sign-in page with `?error=`.
@@ -67,185 +84,125 @@ function SignInForm() {
   }
 
   return (
-    <main className="grid min-h-screen bg-background lg:grid-cols-[1.08fr_.92fr]">
-      <section className="relative hidden overflow-hidden border-r border-border p-12 lg:flex lg:flex-col">
-        <div className="landing-grid absolute inset-0 opacity-40" />
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_80%,rgba(184,255,90,.13),transparent_35%)]" />
-        <Link href="/" className="relative z-10 flex items-center gap-3.5">
-          <span className="grid h-10 w-10 place-items-center rounded-xl bg-primary text-primary-foreground shadow-md shadow-primary/20 ring-1 ring-primary/30">
-            <Command className="h-5 w-5" strokeWidth={2.5} />
-          </span>
-          <span className="text-base font-bold uppercase tracking-[0.22em] text-foreground">
-            Sovereign
-          </span>
-        </Link>
-        <div className="relative z-10 my-auto max-w-xl">
-          <p className="mb-5 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-primary">
-            <Sparkles className="h-4 w-4" />
-            Independent by design
-          </p>
-          <h1 className="text-balance text-5xl font-semibold leading-[1.02] tracking-[-0.055em] xl:text-6xl">
-            Build with AI.
-            <br />
-            <span className="text-white/35">Own every line.</span>
-          </h1>
-          <p className="mt-6 max-w-lg text-lg leading-8 text-foreground-muted">
-            Your models, your credentials, and a production-ready codebase you can take anywhere.
-          </p>
-          <ul className="mt-10 space-y-4 text-sm text-foreground-secondary">
-            {[
-              'Use any supported AI provider',
-              'Export or sync your complete codebase',
-              'No credits, markups, or platform lock-in',
-            ].map((item) => (
-              <li key={item} className="flex items-center gap-3">
-                <span className="grid h-6 w-6 place-items-center rounded-full bg-primary/10 text-primary">
-                  <Check className="h-3.5 w-3.5" />
-                </span>
-                {item}
-              </li>
-            ))}
-          </ul>
+    <AuthShell
+      eyebrow="Welcome back"
+      title="Sign in to continue"
+      copy="Access your projects, providers, and deployment workspace."
+      aside={{ href: '/auth/signup', label: 'Create account' }}
+    >
+      <form onSubmit={handleSubmit} className="space-y-5">
+        <div className="space-y-2">
+          <label htmlFor="email" className={fieldLabel}>
+            Email address
+          </label>
+          <Input
+            id="email"
+            type="email"
+            placeholder="you@company.com"
+            value={email}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              setError('');
+            }}
+            error={!!error}
+            autoComplete="email"
+            className={fieldInput}
+            required
+          />
         </div>
-        <div className="relative z-10 flex items-center gap-2 text-xs text-foreground-muted">
-          <ShieldCheck className="h-4 w-4 text-primary" />
-          Credentials are encrypted at rest
-        </div>
-      </section>
-
-      <section className="flex min-h-screen items-center justify-center px-5 py-10 sm:px-10">
-        <div className="w-full max-w-[430px]">
-          <Link
-            href="/"
-            className="mb-12 flex items-center gap-2 text-sm text-foreground-muted transition-colors hover:text-foreground lg:hidden"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Back to Sovereign
-          </Link>
-          <div className="mb-9">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">
-              Welcome back
-            </p>
-            <h2 className="mt-3 text-4xl font-semibold tracking-[-0.045em]">Sign in to continue</h2>
-            <p className="mt-3 text-sm leading-6 text-foreground-muted">
-              Access your projects, providers, and deployment workspace.
-            </p>
-          </div>
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <div className="space-y-2">
-              <label htmlFor="email" className="text-sm font-medium">
-                Email address
-              </label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="you@company.com"
-                value={email}
-                onChange={(e) => {
-                  setEmail(e.target.value);
-                  setError('');
-                }}
-                error={!!error}
-                autoComplete="email"
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <label htmlFor="password" className="text-sm font-medium">
-                  Password
-                </label>
-                <Link
-                  href="/auth/forgot-password"
-                  className="text-xs text-foreground-muted hover:text-primary"
-                >
-                  Forgot password?
-                </Link>
-              </div>
-              <Input
-                id="password"
-                type="password"
-                placeholder="Enter your password"
-                value={password}
-                onChange={(e) => {
-                  setPassword(e.target.value);
-                  setError('');
-                }}
-                error={!!error}
-                autoComplete="current-password"
-                required
-              />
-            </div>
-            {error && (
-              <div
-                role="alert"
-                className="rounded-lg border border-error/20 bg-error/10 px-3.5 py-3 text-sm text-error"
-              >
-                {error}
-              </div>
-            )}
-            <Button type="submit" size="lg" className="w-full" disabled={isLoading}>
-              {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {isLoading ? 'Signing in…' : 'Sign in'}
-            </Button>
-          </form>
-          {(oauth.data?.google || oauth.data?.github) && (
-            <>
-              <div className="my-7 flex items-center gap-4">
-                <span className="h-px flex-1 bg-border" />
-                <span className="text-[11px] uppercase tracking-[0.14em] text-foreground-muted">
-                  or continue with
-                </span>
-                <span className="h-px flex-1 bg-border" />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                {oauth.data.google && (
-                  <Button
-                    variant="outline"
-                    onClick={() => handleOAuthSignIn('google')}
-                    disabled={isGoogleLoading || isGithubLoading}
-                  >
-                    <span className="mr-2 font-semibold">G</span>Google
-                  </Button>
-                )}
-                {oauth.data.github && (
-                  <Button
-                    variant="outline"
-                    onClick={() => handleOAuthSignIn('github')}
-                    disabled={isGoogleLoading || isGithubLoading}
-                  >
-                    <GitBranch className="mr-2 h-4 w-4" />
-                    GitHub
-                  </Button>
-                )}
-              </div>
-            </>
-          )}
-          <p className="mt-8 text-center text-sm text-foreground-muted">
-            New to Sovereign?{' '}
-            <Link href="/auth/signup" className="font-semibold text-foreground hover:text-primary">
-              Create an account
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <label htmlFor="password" className={fieldLabel}>
+              Password
+            </label>
+            <Link
+              href="/auth/forgot-password"
+              className="rounded-sm text-xs text-foreground-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40"
+            >
+              Forgot password?
             </Link>
-          </p>
+          </div>
+          <Input
+            id="password"
+            type="password"
+            placeholder="Enter your password"
+            value={password}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              setError('');
+            }}
+            error={!!error}
+            autoComplete="current-password"
+            className={fieldInput}
+            required
+          />
         </div>
-      </section>
-    </main>
+        {error && <FormError>{error}</FormError>}
+        <button type="submit" className={cn(primaryButton, submitButton)} disabled={isLoading}>
+          {isLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+          {isLoading ? 'Signing in…' : 'Sign in'}
+        </button>
+      </form>
+      {(oauth.data?.google || oauth.data?.github) && (
+        <>
+          <div className="my-8 flex items-center gap-4">
+            <span className="h-px flex-1 bg-border" />
+            <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-foreground-muted">
+              or continue with
+            </span>
+            <span className="h-px flex-1 bg-border" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            {oauth.data.google && (
+              <button
+                type="button"
+                className={oauthButton}
+                onClick={() => handleOAuthSignIn('google')}
+                disabled={isGoogleLoading || isGithubLoading}
+              >
+                {isGoogleLoading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <ProviderMark d={GOOGLE_MARK} className="h-4 w-4" />
+                )}
+                Google
+              </button>
+            )}
+            {oauth.data.github && (
+              <button
+                type="button"
+                className={oauthButton}
+                onClick={() => handleOAuthSignIn('github')}
+                disabled={isGoogleLoading || isGithubLoading}
+              >
+                {isGithubLoading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <ProviderMark d={GITHUB_MARK} className="h-4 w-4" />
+                )}
+                GitHub
+              </button>
+            )}
+          </div>
+        </>
+      )}
+      <p className="mt-10 border-t border-border pt-6 text-sm text-foreground-muted">
+        New to Sovereign?{' '}
+        <Link href="/auth/signup" className="font-medium text-foreground hover:text-primary">
+          Create an account
+        </Link>
+      </p>
+    </AuthShell>
   );
 }
 
 /** Show a loading fallback while the sign-in form waits for search parameters. */
 export default function SignInPage() {
   return (
-    <Suspense
-      // Without a fallback this page prerenders as an empty shell — it is the
-      // only boundary in the app without one, and `useSearchParams` forces the
-      // static-render bailout on every build.
-      fallback={
-        <div className="grid min-h-screen place-items-center bg-background">
-          <div className="h-7 w-7 animate-spin rounded-full border-2 border-border border-t-primary" />
-        </div>
-      }
-    >
+    // Without a fallback this page prerenders as an empty shell — it is the
+    // only boundary in the app without one, and `useSearchParams` forces the
+    // static-render bailout on every build.
+    <Suspense fallback={<AuthShellFallback />}>
       <SignInForm />
     </Suspense>
   );

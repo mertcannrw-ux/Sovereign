@@ -29,7 +29,7 @@ export function SiteHeader() {
 
   return (
     <header className="fixed inset-x-0 top-0 z-50 border-b border-border bg-background/85 backdrop-blur-md">
-      <div className={cn(COLUMN, GUTTER, 'flex h-14 items-center justify-between')}>
+      <div className={cn(COLUMN, GUTTER, 'flex h-16 items-center justify-between')}>
         <div className="flex items-center gap-10">
           <Link
             href="/"
@@ -44,7 +44,7 @@ export function SiteHeader() {
               <a
                 key={item.href}
                 href={item.href}
-                className="rounded-md px-3 py-1.5 text-[13px] text-foreground-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40"
+                className="rounded-md px-3 py-2.5 text-[15px] text-foreground-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40"
               >
                 {item.label}
               </a>
@@ -55,13 +55,13 @@ export function SiteHeader() {
         <div className="flex items-center gap-2">
           <Link
             href="/auth/signin"
-            className="hidden rounded-md px-3 py-1.5 text-[13px] text-foreground-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40 sm:block"
+            className="hidden rounded-md px-3 py-2.5 text-[15px] text-foreground-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40 sm:block"
           >
             Sign in
           </Link>
           <Link
             href="/auth/signin"
-            className="hidden h-8 items-center rounded-md bg-primary px-3.5 text-[13px] font-medium text-primary-foreground transition-colors hover:bg-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:flex"
+            className="hidden h-10 items-center rounded-md bg-primary px-4 text-[15px] font-medium text-primary-foreground transition-colors hover:bg-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:flex"
           >
             Start building
           </Link>
@@ -71,9 +71,9 @@ export function SiteHeader() {
             aria-label={open ? 'Close menu' : 'Open menu'}
             aria-expanded={open}
             aria-controls="mobile-nav"
-            className="grid h-9 w-9 place-items-center rounded-md border border-border-strong text-foreground-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40 lg:hidden"
+            className="grid h-11 w-11 place-items-center rounded-md border border-border-strong text-foreground-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40 lg:hidden"
           >
-            {open ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+            {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>
         </div>
       </div>
@@ -86,7 +86,7 @@ export function SiteHeader() {
                 key={item.href}
                 href={item.href}
                 onClick={() => setOpen(false)}
-                className="border-b border-border py-3 text-sm text-foreground-secondary transition-colors last:border-b-0 hover:text-foreground"
+                className="border-b border-border py-3.5 text-base text-foreground-secondary transition-colors last:border-b-0 hover:text-foreground"
               >
                 {item.label}
               </a>
@@ -95,14 +95,14 @@ export function SiteHeader() {
               <Link
                 href="/auth/signin"
                 onClick={() => setOpen(false)}
-                className="flex h-10 items-center justify-center rounded-md border border-border-strong text-sm text-foreground"
+                className="flex h-11 items-center justify-center rounded-md border border-border-strong text-base text-foreground"
               >
                 Sign in
               </Link>
               <Link
                 href="/auth/signin"
                 onClick={() => setOpen(false)}
-                className="flex h-10 items-center justify-center rounded-md bg-primary text-sm font-medium text-primary-foreground"
+                className="flex h-11 items-center justify-center rounded-md bg-primary text-base font-medium text-primary-foreground"
               >
                 Start building
               </Link>
