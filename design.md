@@ -169,3 +169,13 @@ components/landing/
 **Every pixel of UI in `demo/` is a transcription of shipped components**, not an illustration: the sidebar, the 68px editor header, the version timeline, the chat transcript and tool-step list, the prompt composer, the Preview/Code tabs, the code pane, the settings provider roster and the injected visual-editor overlay all copy their labels, metrics and colours from the files in `apps/web/src/{app,components,lib}/`. When the real UI changes, the demo has to change with it.
 
 `demo-player.tsx` autoplays when the player scrolls into view, pauses when it leaves, loops, and — when `prefers-reduced-motion` is set — holds a poster frame until the viewer presses Play.
+
+---
+
+## 8. Auth screens
+
+`/auth/signin`, `/auth/signup`, `/auth/forgot-password` and `/auth/reset-password` share `components/auth/auth-shell.tsx`, which reuses the marketing primitives so the flow reads as a continuation of `/`:
+
+- Same frame: hairline header with the `Logo`, `FrameRails` on `xl`, a footer rule with `RuleMarks`. No background grid, gradient or glow.
+- A two-cell `COLUMN` split by a hairline on `lg`: a fixed context panel (mono `Eyebrow`, display line and one line of copy) and the form. Below `lg` only the form shows.
+- Submit is `primaryButton`, OAuth is `secondaryButton` with monochrome provider marks. Inputs and alerts take the 8px control radius.
