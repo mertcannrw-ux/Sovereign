@@ -90,9 +90,7 @@ export function SettingsWindow({
                   key={provider.id}
                   className={cn(
                     'rounded-xl border bg-background-subtle p-3 transition-all duration-500',
-                    masked || isTyping
-                      ? 'border-primary/35 shadow-[0_0_0_1px_rgba(184,255,90,0.12)]'
-                      : 'border-border',
+                    masked || isTyping ? 'border-primary/35' : 'border-border',
                   )}
                 >
                   <div className="flex items-center gap-2.5">
@@ -118,9 +116,7 @@ export function SettingsWindow({
                             : 'Not configured'}
                       </p>
                     </div>
-                    {masked && (
-                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success shadow-[0_0_8px_rgba(115,216,108,0.7)]" />
-                    )}
+                    {masked && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" />}
                   </div>
 
                   {provider.docs && (

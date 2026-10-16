@@ -1,11 +1,11 @@
 'use client';
 
 import Link from 'next/link';
-import { motion, useScroll, useSpring } from 'framer-motion';
-import { ArrowRight, Menu, X } from 'lucide-react';
+import { Menu, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { cn } from '@app-builder/ui/utils';
 import { Logo } from './logo';
+import { COLUMN, GUTTER } from './primitives';
 
 const NAV = [
   { href: '#product', label: 'Product' },
@@ -16,17 +16,7 @@ const NAV = [
 ];
 
 export function SiteHeader() {
-  const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
-  const { scrollYProgress } = useScroll();
-  const progress = useSpring(scrollYProgress, { stiffness: 140, damping: 26, mass: 0.3 });
-
-  useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 24);
-    onScroll();
-    window.addEventListener('scroll', onScroll, { passive: true });
-    return () => window.removeEventListener('scroll', onScroll);
-  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -38,51 +28,50 @@ export function SiteHeader() {
   }, [open]);
 
   return (
-    <header
-      className={cn(
-        'fixed inset-x-0 top-0 z-50 transition-colors duration-300',
-        scrolled
-          ? 'border-b border-white/[0.07] bg-background/80 backdrop-blur-xl'
-          : 'bg-gradient-to-b from-background/85 via-background/45 to-transparent',
-      )}
-    >
-      <div className="mx-auto flex h-[72px] max-w-[1320px] items-center justify-between px-5 sm:px-8">
-        <Link href="/" aria-label="Sovereign home">
-          <Logo />
-        </Link>
+    <header className="fixed inset-x-0 top-0 z-50 border-b border-border bg-background/85 backdrop-blur-md">
+      <div className={cn(COLUMN, GUTTER, 'flex h-14 items-center justify-between')}>
+        <div className="flex items-center gap-10">
+          <Link
+            href="/"
+            aria-label="Sovereign home"
+            className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40"
+          >
+            <Logo />
+          </Link>
 
-        <nav className="hidden items-center gap-1 lg:flex">
-          {NAV.map((item) => (
-            <a
-              key={item.href}
-              href={item.href}
-              className="rounded-lg px-3 py-2 text-sm text-foreground-muted transition-colors hover:bg-white/[0.04] hover:text-foreground"
-            >
-              {item.label}
-            </a>
-          ))}
-        </nav>
+          <nav aria-label="Primary" className="hidden items-center gap-1 lg:flex">
+            {NAV.map((item) => (
+              <a
+                key={item.href}
+                href={item.href}
+                className="rounded-md px-3 py-1.5 text-[13px] text-foreground-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40"
+              >
+                {item.label}
+              </a>
+            ))}
+          </nav>
+        </div>
 
-        <div className="flex items-center gap-2 sm:gap-3">
+        <div className="flex items-center gap-2">
           <Link
             href="/auth/signin"
-            className="hidden px-3 py-2 text-sm text-foreground-muted transition-colors hover:text-foreground sm:block"
+            className="hidden rounded-md px-3 py-1.5 text-[13px] text-foreground-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40 sm:block"
           >
             Sign in
           </Link>
           <Link
             href="/auth/signin"
-            className="group hidden h-10 items-center gap-2 rounded-full bg-primary px-5 text-sm font-semibold text-primary-foreground transition-transform hover:scale-[1.02] sm:flex"
+            className="hidden h-8 items-center rounded-md bg-primary px-3.5 text-[13px] font-medium text-primary-foreground transition-colors hover:bg-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:flex"
           >
             Start building
-            <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
           </Link>
           <button
             type="button"
             onClick={() => setOpen((value) => !value)}
             aria-label={open ? 'Close menu' : 'Open menu'}
             aria-expanded={open}
-            className="grid h-10 w-10 place-items-center rounded-lg border border-border text-foreground-secondary lg:hidden"
+            aria-controls="mobile-nav"
+            className="grid h-9 w-9 place-items-center rounded-md border border-border-strong text-foreground-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40 lg:hidden"
           >
             {open ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
           </button>
@@ -90,109 +79,37 @@ export function SiteHeader() {
       </div>
 
       {open && (
-        <div className="border-t border-white/[0.07] bg-background/95 backdrop-blur-xl lg:hidden">
-          <nav className="mx-auto flex max-w-[1320px] flex-col gap-1 px-5 py-4">
+        <div id="mobile-nav" className="border-t border-border bg-background lg:hidden">
+          <nav aria-label="Mobile" className={cn(COLUMN, GUTTER, 'flex flex-col py-3')}>
             {NAV.map((item) => (
               <a
                 key={item.href}
                 href={item.href}
                 onClick={() => setOpen(false)}
-                className="rounded-lg px-3 py-2.5 text-sm text-foreground-secondary transition-colors hover:bg-white/[0.04] hover:text-foreground"
+                className="border-b border-border py-3 text-sm text-foreground-secondary transition-colors last:border-b-0 hover:text-foreground"
               >
                 {item.label}
               </a>
             ))}
-            <Link
-              href="/auth/signin"
-              onClick={() => setOpen(false)}
-              className="mt-2 flex h-11 items-center justify-center gap-2 rounded-full bg-primary px-5 text-sm font-semibold text-primary-foreground"
-            >
-              Start building
-              <ArrowRight className="h-4 w-4" />
-            </Link>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <Link
+                href="/auth/signin"
+                onClick={() => setOpen(false)}
+                className="flex h-10 items-center justify-center rounded-md border border-border-strong text-sm text-foreground"
+              >
+                Sign in
+              </Link>
+              <Link
+                href="/auth/signin"
+                onClick={() => setOpen(false)}
+                className="flex h-10 items-center justify-center rounded-md bg-primary text-sm font-medium text-primary-foreground"
+              >
+                Start building
+              </Link>
+            </div>
           </nav>
         </div>
       )}
-
-      <motion.div
-        aria-hidden
-        style={{ scaleX: progress }}
-        className="h-px origin-left bg-gradient-to-r from-primary via-primary to-[#8BC7FF]"
-      />
     </header>
-  );
-}
-
-const FOOTER_COLUMNS = [
-  {
-    title: 'Product',
-    links: [
-      { label: 'Workspace', href: '#product' },
-      { label: 'Visual editor', href: '#editor' },
-      { label: 'Templates', href: '#templates' },
-      { label: 'Pricing', href: '#pricing' },
-    ],
-  },
-  {
-    title: 'Under the hood',
-    links: [
-      { label: 'Providers', href: '#byok' },
-      { label: 'Security', href: '#security' },
-      { label: 'Workflow', href: '#workflow' },
-    ],
-  },
-  {
-    title: 'Access',
-    links: [
-      { label: 'Sign in', href: '/auth/signin' },
-      { label: 'Create account', href: '/auth/signup' },
-    ],
-  },
-];
-
-export function SiteFooter() {
-  return (
-    <footer className="relative border-t border-white/[0.08]">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent"
-      />
-      <div className="mx-auto max-w-[1320px] px-5 py-14 sm:px-8">
-        <div className="grid gap-10 lg:grid-cols-[1.4fr_2fr]">
-          <div>
-            <Logo />
-            <p className="mt-4 max-w-xs text-sm leading-6 text-foreground-muted">
-              The independent AI workspace for designing, building, and shipping real software.
-            </p>
-          </div>
-          <div className="grid grid-cols-2 gap-8 sm:grid-cols-3">
-            {FOOTER_COLUMNS.map((column) => (
-              <div key={column.title}>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-muted">
-                  {column.title}
-                </p>
-                <ul className="mt-4 space-y-2.5">
-                  {column.links.map((link) => (
-                    <li key={link.label}>
-                      <Link
-                        href={link.href}
-                        className="text-sm text-foreground-secondary transition-colors hover:text-primary"
-                      >
-                        {link.label}
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="mt-12 flex flex-col justify-between gap-3 border-t border-white/10 pt-6 text-xs text-foreground-muted sm:flex-row">
-          <p>© {new Date().getFullYear()} Sovereign</p>
-          <p>Built for independent software.</p>
-        </div>
-      </div>
-    </footer>
   );
 }

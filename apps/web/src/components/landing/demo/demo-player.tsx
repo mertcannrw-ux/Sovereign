@@ -1,6 +1,6 @@
 'use client';
 
-import { AnimatePresence, motion, useInView, useReducedMotion } from 'framer-motion';
+import { AnimatePresence, MotionConfig, motion, useInView, useReducedMotion } from 'framer-motion';
 import { Pause, Play, RotateCcw } from 'lucide-react';
 import {
   useCallback,
@@ -171,18 +171,20 @@ export function DemoPlayer({
           surfaceClassName,
         )}
       >
-        <AnimatePresence initial={false} mode="sync">
-          <motion.div
-            key={scene?.id}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.22, ease }}
-            className="absolute inset-0"
-          >
-            {scene?.render({ t: sceneTime, p: progress })}
-          </motion.div>
-        </AnimatePresence>
+        <MotionConfig reducedMotion="user">
+          <AnimatePresence initial={false} mode="sync">
+            <motion.div
+              key={scene?.id}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.22, ease }}
+              className="absolute inset-0"
+            >
+              {scene?.render({ t: sceneTime, p: progress })}
+            </motion.div>
+          </AnimatePresence>
+        </MotionConfig>
       </div>
 
       <Transport

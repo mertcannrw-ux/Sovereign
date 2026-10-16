@@ -142,7 +142,7 @@ export const buildScenes: DemoScene[] = [
     id: 'brief',
     label: 'Brief',
     duration: 5,
-    caption: 'A fresh project — the composer is ready for its first sentence.',
+    caption: 'A fresh project. The composer is ready for its first sentence.',
     render: ({ p }) => (
       <Window>
         <EditorHeader projectName={PROJECT} />
@@ -224,7 +224,7 @@ export const buildScenes: DemoScene[] = [
     id: 'build',
     label: 'Build',
     duration: 6,
-    caption: 'Files stream in one by one — every write, edit and read lands in front of you.',
+    caption: 'Files stream in one by one. Every write, edit and read lands in front of you.',
     render: ({ p }) => {
       const visibleSteps = Math.max(1, Math.ceil(stage(p, 0.12, 0.82) * STEPS.length));
       return (
@@ -273,7 +273,7 @@ export const buildScenes: DemoScene[] = [
     id: 'preview',
     label: 'Preview',
     duration: 4.5,
-    caption: 'The generated app runs in a sandboxed browser runtime — Preview or Code, one click.',
+    caption: 'The generated app runs in a sandboxed browser runtime. Preview or Code, one click.',
     render: ({ p }) => (
       <Window>
         <EditorHeader projectName={PROJECT} />
@@ -293,7 +293,7 @@ export const buildScenes: DemoScene[] = [
                 />
                 {p > 0.45 && (
                   <AssistantMessage model="Opus 5.5" tokens="1,842 tokens">
-                    It is live. Try the visual editor — click any element and change it in plain
+                    It is live. Try the visual editor: click any element and change it in plain
                     English.
                   </AssistantMessage>
                 )}
@@ -337,7 +337,7 @@ export const buildScenes: DemoScene[] = [
                   {sent && <UserMessage text={HERO_WIRE_PROMPT} />}
                   {restyled && (
                     <AssistantMessage model="Opus 5.5" tokens="268 tokens">
-                      Updated <span className="font-mono text-primary">src/index.css</span> —
+                      Updated <span className="font-mono text-primary">src/index.css</span>:
                       palette, headline colour and accent fill are now dark and lime. Saved as v4.
                     </AssistantMessage>
                   )}
@@ -379,7 +379,7 @@ export const buildScenes: DemoScene[] = [
     id: 'code',
     label: 'Code',
     duration: 4,
-    caption: 'The Code tab is the same project as real TypeScript — never a black box.',
+    caption: 'The Code tab is the same project as real TypeScript. Never a black box.',
     render: ({ p }) => (
       <Window>
         <EditorHeader projectName={PROJECT} />
@@ -429,7 +429,7 @@ export const buildScenes: DemoScene[] = [
                   <UserMessage text={PROMPT} />
                   <ToolSteps steps={STEPS} changes={12} reads={4} activeIndex={-1} />
                   {viewingOlder && (
-                    <AssistantMessage model="Opus 5.5" tokens="—">
+                    <AssistantMessage model="Opus 5.5" tokens="0 tokens">
                       Viewing version {selected}. Restoring brings the workspace back to this exact
                       snapshot.
                     </AssistantMessage>
