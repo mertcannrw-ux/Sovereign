@@ -2,18 +2,18 @@ import { Command } from 'lucide-react';
 import { cn } from '@app-builder/ui/utils';
 
 /**
- * The Sovereign mark. Mirrors `components/layout/sidebar.tsx` — rounded-xl
- * accent tile, Command glyph, uppercase wordmark at 0.22em tracking — so the
- * marketing header and the signed-in app read as one product.
+ * The Sovereign mark. Mirrors `components/layout/sidebar.tsx` (accent tile,
+ * Command glyph, uppercase wordmark) so the marketing header and the
+ * signed-in app read as one product. Flat: no glow.
  */
 export function Logo({ className, compact = false }: { className?: string; compact?: boolean }) {
   return (
-    <span className={cn('flex items-center gap-3', className)}>
-      <span className="grid h-10 w-10 place-items-center rounded-xl bg-primary text-primary-foreground shadow-[0_0_0_1px_rgba(184,255,90,0.35),0_10px_30px_-8px_rgba(184,255,90,0.55)]">
-        <Command className="h-5 w-5" strokeWidth={2.5} />
+    <span className={cn('flex items-center gap-2.5', className)}>
+      <span className="grid h-7 w-7 place-items-center rounded-md bg-primary text-primary-foreground">
+        <Command className="h-4 w-4" strokeWidth={2.5} />
       </span>
       {!compact && (
-        <span className="text-base font-bold uppercase tracking-[0.22em] text-foreground">
+        <span className="text-[13px] font-semibold uppercase tracking-[0.2em] text-foreground">
           Sovereign
         </span>
       )}

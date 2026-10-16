@@ -215,9 +215,7 @@ export function VisualEditorOverlay({
           aria-label="Send element edit"
           className={cn(
             'grid h-8 w-8 shrink-0 place-items-center rounded-lg text-[15px] font-bold transition-colors',
-            sent
-              ? 'text-primary/50'
-              : 'bg-[#B8FF5A] text-[#10130c] shadow-[0_0_12px_rgba(184,255,90,0.35)]',
+            sent ? 'text-primary/50' : 'bg-[#B8FF5A] text-[#10130c]',
           )}
           style={!sent ? undefined : { background: 'rgba(184,255,90,0.2)' }}
         >

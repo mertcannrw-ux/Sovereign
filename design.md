@@ -13,7 +13,7 @@
 - **Monochrome base, one accent.** Near-black surfaces and off-white text carry the interface; a single lime accent marks actions and status. Colour is never used decoratively.
 - **Editorial, typography-first.** Large negative space, tight tracking on display sizes, flat surfaces, no glassmorphism or neumorphism.
 - **Restraint in motion.** Short transitions (150–300ms) on colour, border and opacity. No looping
-  background gradients in the app. The marketing surface is the one documented exception — see §7.
+  background gradients anywhere, the marketing page included (§7).
 - **8px spatial rhythm.** All spacing derives from the 8px step (see §4).
 
 ---
@@ -126,9 +126,6 @@ Historically tracked in `docs/design-accessibility-review.md` (removed from the 
    - the landing page's light "generated site" mock (`components/landing/demo/generated-app.tsx`) — it
      depicts a _different_ website inside the dark chrome, and the visual-editor clip recolours it in
      place to show what an element edit does;
-   - the landing backdrop and its gradient washes (`components/landing/backdrop.tsx`, the `.landing-*`
-     utilities in `globals.css`) — they reuse the templates catalog' per-category accent set below, so
-     the marketing art stays inside the product palette while using much more of it;
    - the settings provider roster in `components/landing/demo/settings-window.tsx` — a transcription of
      the real `PROVIDERS` table in `app/settings/page.tsx`;
    - the code-sample syntax colours in `components/landing/demo/workspace-panes.tsx` and `apps/web/src/components/code-editor/code-editor.tsx`;
@@ -142,17 +139,27 @@ Historically tracked in `docs/design-accessibility-review.md` (removed from the 
 
 ## 7. Marketing page
 
-`/` is a server component (`app/page.tsx`) that owns only metadata; everything visual lives under `components/landing/`.
+`/` is a server component (`app/page.tsx`) that owns only metadata; everything visual lives under `components/landing/`. The composition is server-rendered too: only the header, the FAQ accordion and the three demo films hydrate.
+
+**Visual rules.** The marketing page follows the same rules as the app, with no exception:
+
+- **Flat and monochrome.** No gradients, glows, blurs-as-decoration, grain or ambient animation. The accent fills primary buttons and marks the small square in section labels; everything else is the neutral ramp.
+- **Structure from hairlines.** The page column (`COLUMN`, 1240px) is framed by vertical rails on `xl` screens. Every `Section` opens on a full-bleed `border` rule, with registration crosshairs where it crosses the rails. Grids of cells share borders (`gap-px` over `bg-border`) instead of floating as separate cards.
+- **Type.** Display sizes are semibold (600) with `-0.035em` to `-0.045em` tracking. Labels, indices and metadata are mono uppercase at 11px, `0.08em` tracking. Sections are numbered `01`–`08`.
+- **Controls.** `primaryButton` and `secondaryButton` in `primitives.tsx` are the only two button styles: 8px radius, 44px tall.
+- **No em dashes** in visible copy.
+- **Nothing is hidden until JS runs.** There are no scroll reveals; the hero headline is the largest paint and renders visible from the server.
 
 ```
 components/landing/
-├── landing-page.tsx        # composition, wrapped in <MotionConfig reducedMotion="user">
-├── backdrop.tsx           # the aurora
-├── primitives.tsx         # Reveal / Stagger / SectionHeading / Eyebrow / Chip
-├── chrome.tsx             # header + footer
-├── hero.tsx               # hero, provider marquee, proof strip
-├── sections/              # product, visual, trust, convert
+├── landing-page.tsx        # server composition: frame rails, header, sections, footer
+├── primitives.tsx         # COLUMN / GUTTER, Section, RuleMarks, FrameRails, Eyebrow, SectionHeading, buttons
+├── chrome.tsx             # header (client: mobile menu)
+├── footer.tsx             # footer
+├── hero.tsx               # hero and provider row
+├── sections/              # product, visual, trust, convert, faq-item (client)
 └── demo/                  # the three scripted product films
+    ├── films.tsx          # client wrappers binding each scene script to the player
     ├── demo-player.tsx    # the rAF timeline engine + transport
     ├── build-walkthrough.tsx  # hero film: brief → plan → build → preview → visual → code → history
     ├── closeup-videos.tsx      # element-editor close-up and the BYOK provider panel

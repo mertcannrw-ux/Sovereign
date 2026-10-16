@@ -144,7 +144,7 @@ export const byokScenes: DemoScene[] = [
     id: 'add',
     label: 'Add a key',
     duration: 5,
-    caption: 'Paste a key — it is encrypted with AES-256-GCM and validated with the provider.',
+    caption: 'Paste a key. It is encrypted with AES-256-GCM and validated with the provider.',
     render: ({ p }) => (
       <SettingsWindow
         tab="providers"

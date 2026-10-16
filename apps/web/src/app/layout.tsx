@@ -17,7 +17,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: 'Sovereign — Build anything with AI. Bring your own key.',
+  title: 'Sovereign · Build anything with AI. Bring your own key.',
   description:
     'The BYOK AI app builder. Combine the power of AI with your own API keys. No credits, no lock-in. Build, edit, and deploy full-stack applications.',
 };
