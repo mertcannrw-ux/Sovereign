@@ -5,6 +5,19 @@ import type { Context } from '../context';
 import type { ProjectRole } from '@app-builder/shared';
 import { requireProjectRole } from '@/server/authz';
 import { checkRateLimit } from '@/server/rate-limit';
+import {
+  DeployRejectedError,
+  MAX_DEPLOYS_PER_DAY,
+  MAX_FILES,
+  MAX_LIVE_APPS,
+  MAX_LIVE_APPS_PER_USER,
+  deploySubdomain,
+  deployUrl,
+  isDeployConfigured,
+  publishBundle,
+  unpublishBundle,
+  validateBundle,
+} from '@/server/deploy/user-apps';
 import { Prisma } from '@prisma-generated/prisma/client';
 
 async function assertProjectAccess(
@@ -13,6 +26,53 @@ async function assertProjectAccess(
   minimumRole: ProjectRole = 'VIEWER',
 ): Promise<void> {
   await requireProjectRole(ctx, projectId, minimumRole);
+}
+
+function assertDeployConfigured(): void {
+  if (!isDeployConfigured()) {
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'App hosting is not configured (DEPLOY_DOMAIN, DEPLOY_R2_BUCKET and R2_* keys).',
+    });
+  }
+}
+
+async function loadProject(ctx: Context, projectId: string) {
+  const project = await ctx.db.project.findUnique({ where: { id: projectId } });
+  if (!project) throw new TRPCError({ code: 'NOT_FOUND', message: 'Project not found' });
+  return project;
+}
+
+/**
+ * Refuse a deploy that would push R2 past its free tier. Checked before any
+ * write; see the budget in src/server/deploy/user-apps.ts.
+ */
+async function assertWithinCaps(ctx: Context, project: { id: string; ownerId: string }) {
+  const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const otherLive = { publishedAt: { not: null }, id: { not: project.id } } as const;
+  const [deploysToday, liveApps, ownerLiveApps] = await Promise.all([
+    ctx.db.deployment.count({ where: { createdAt: { gte: dayAgo } } }),
+    ctx.db.project.count({ where: otherLive }),
+    ctx.db.project.count({ where: { ...otherLive, ownerId: project.ownerId } }),
+  ]);
+  if (deploysToday >= MAX_DEPLOYS_PER_DAY) {
+    throw new TRPCError({
+      code: 'TOO_MANY_REQUESTS',
+      message: 'Deploys are paused for today. Please try again tomorrow.',
+    });
+  }
+  if (ownerLiveApps >= MAX_LIVE_APPS_PER_USER) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: `You can have ${MAX_LIVE_APPS_PER_USER} live apps. Unpublish one to deploy this one.`,
+    });
+  }
+  if (liveApps >= MAX_LIVE_APPS) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'App hosting is full right now. Please try again later.',
+    });
+  }
 }
 
 export const deploymentsRouter = router({
@@ -33,14 +93,19 @@ export const deploymentsRouter = router({
     }),
 
   /**
-   * Trigger a new deployment for a project.
-   * Until Vercel is wired, this records a FAILED stub so list/getStatus
-   * cannot look like a live host.
+   * Publish a build the browser produced (see `buildForDeploy`) to
+   * `https://<subdomain>.<DEPLOY_DOMAIN>`, replacing the live version.
    */
   deploy: protectedProcedure
-    .input(z.object({ projectId: z.string() }))
+    .input(
+      z.object({
+        projectId: z.string(),
+        files: z.array(z.object({ path: z.string().max(300), data: z.string() })).max(MAX_FILES),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
       await assertProjectAccess(ctx, input.projectId, 'EDITOR');
+      assertDeployConfigured();
 
       const rate = await checkRateLimit('deploy', ctx.user.id);
       if (!rate.allowed) {
@@ -51,55 +116,45 @@ export const deploymentsRouter = router({
         });
       }
 
-      const project = await ctx.db.project.findUnique({
-        where: { id: input.projectId },
-      });
-
-      if (!project) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Project not found' });
+      let files;
+      try {
+        files = validateBundle(input.files);
+      } catch (error) {
+        if (error instanceof DeployRejectedError) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: error.message });
+        }
+        throw error;
       }
 
-      // Retry loop for concurrent P2002 version race
-      let attempts = 0;
-      const maxAttempts = 3;
+      const project = await loadProject(ctx, input.projectId);
+      await assertWithinCaps(ctx, project);
 
-      while (attempts < maxAttempts) {
-        attempts++;
+      const subdomain = deploySubdomain(project);
+      const url = deployUrl(subdomain);
+
+      // Retry loop for concurrent P2002 version race
+      let deployment;
+      for (let attempt = 1; !deployment; attempt++) {
         try {
-          return await ctx.db.$transaction(async (tx) => {
-            const latestDeployment = await tx.deployment.findFirst({
-              where: { projectId: input.projectId },
+          deployment = await ctx.db.$transaction(async (tx) => {
+            const latest = await tx.deployment.findFirst({
+              where: { projectId: project.id },
               orderBy: { version: 'desc' },
             });
-
-            const nextVersion = (latestDeployment?.version ?? 0) + 1;
-            const deploymentUrl = `https://stub.localhost/${project.slug}/v${nextVersion}`;
-            const now = new Date();
-
-            const buildSteps = [
-              `[${now.toISOString()}] Local stub - Vercel deploy is not connected.`,
-              `[${now.toISOString()}] Recorded placeholder deployment v${nextVersion}.`,
-              `[${now.toISOString()}] URL ${deploymentUrl} is not a live host.`,
-            ];
-
-            const deployment = await tx.deployment.create({
+            return tx.deployment.create({
               data: {
-                projectId: input.projectId,
-                version: nextVersion,
-                status: 'FAILED',
-                url: deploymentUrl,
-                buildLogs: buildSteps.join('\n') + '\n',
-                deployedAt: null,
+                projectId: project.id,
+                version: (latest?.version ?? 0) + 1,
+                status: 'DEPLOYING',
+                url,
               },
             });
-
-            return { ...deployment, stub: true as const };
           });
         } catch (err) {
           if (
             err instanceof Prisma.PrismaClientKnownRequestError &&
             err.code === 'P2002' &&
-            attempts < maxAttempts
+            attempt < 3
           ) {
             continue;
           }
@@ -107,10 +162,60 @@ export const deploymentsRouter = router({
         }
       }
 
-      throw new TRPCError({
-        code: 'INTERNAL_SERVER_ERROR',
-        message: 'Failed to create deployment due to high concurrency. Please try again.',
-      });
+      try {
+        await publishBundle(subdomain, files);
+      } catch (error) {
+        console.error('[deploy] publish failed', error);
+        await ctx.db.deployment.update({
+          where: { id: deployment.id },
+          data: { status: 'FAILED', buildLogs: 'Upload to hosting failed.\n' },
+        });
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'Upload to hosting failed. Please try again.',
+        });
+      }
+
+      const now = new Date();
+      const [live] = await ctx.db.$transaction([
+        ctx.db.deployment.update({
+          where: { id: deployment.id },
+          data: {
+            status: 'LIVE',
+            deployedAt: now,
+            buildLogs: `[${now.toISOString()}] Published ${files.length} files to ${url}\n`,
+          },
+        }),
+        ctx.db.project.update({
+          where: { id: project.id },
+          data: { status: 'PUBLISHED', publishedAt: now },
+        }),
+      ]);
+      return live;
+    }),
+
+  /**
+   * Take the project's app offline and free its live-app slot.
+   */
+  unpublish: protectedProcedure
+    .input(z.object({ projectId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      await assertProjectAccess(ctx, input.projectId, 'EDITOR');
+      assertDeployConfigured();
+
+      const project = await loadProject(ctx, input.projectId);
+      await unpublishBundle(deploySubdomain(project));
+      await ctx.db.$transaction([
+        ctx.db.deployment.updateMany({
+          where: { projectId: project.id, status: 'LIVE' },
+          data: { status: 'CANCELED' },
+        }),
+        ctx.db.project.update({
+          where: { id: project.id },
+          data: { status: 'DRAFT', publishedAt: null },
+        }),
+      ]);
+      return { ok: true as const };
     }),
 
   /**

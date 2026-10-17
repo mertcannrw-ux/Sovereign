@@ -25,6 +25,8 @@ import { CodePane } from '@/components/project/code-pane';
 import type { SelectedPreviewElement } from '@/components/project/types';
 import {
   ArrowLeft,
+  CloudOff,
+  ExternalLink,
   Settings,
   Rocket,
   Code,
@@ -74,7 +76,18 @@ function ProjectWorkspace() {
   const filesQuery = trpc.projects.files.useQuery({ id: projectId });
   const restoreMutation = trpc.chat.restoreVersion.useMutation();
   const updateProjectMutation = trpc.projects.update.useMutation();
-  const deployMutation = trpc.deployments.deploy.useMutation();
+  const deploymentsQuery = trpc.deployments.list.useQuery({ projectId });
+  const deployMutation = trpc.deployments.deploy.useMutation({
+    onSettled: () => utils.deployments.list.invalidate({ projectId }),
+  });
+  const unpublishMutation = trpc.deployments.unpublish.useMutation({
+    onError: (error) => setDeployError(error.message),
+    onSettled: () => utils.deployments.list.invalidate({ projectId }),
+  });
+  const [deployPhase, setDeployPhase] = useState<'idle' | 'building' | 'uploading'>('idle');
+  const [deployError, setDeployError] = useState<string | null>(null);
+  const latestDeployment = deploymentsQuery.data?.[0];
+  const liveUrl = latestDeployment?.status === 'LIVE' ? latestDeployment.url : null;
 
   const [projectName, setProjectName] = useState('Untitled Project');
   const [selectedModelKey, setSelectedModelKey] = useState('');
@@ -194,6 +207,24 @@ function ProjectWorkspace() {
     initialFiles: initialFilesMemo,
     enabled: status === 'authenticated' && filesQuery.isSuccess,
   });
+
+  const handleDeploy = useCallback(async () => {
+    setDeployError(null);
+    setDeployPhase('building');
+    try {
+      const build = await preview.buildForDeploy();
+      if (!build.ok) {
+        setDeployError(build.error);
+        return;
+      }
+      setDeployPhase('uploading');
+      await deployMutation.mutateAsync({ projectId, files: build.files });
+    } catch (error) {
+      setDeployError(error instanceof Error ? error.message : 'Deploy failed.');
+    } finally {
+      setDeployPhase('idle');
+    }
+  }, [deployMutation, preview, projectId]);
 
   const selectedProvider = selectedModelKey.split(':', 1)[0] || undefined;
   const selectedModel = selectedProvider ? selectedModelKey.slice(selectedProvider.length + 1) : '';
@@ -458,27 +489,67 @@ function ProjectWorkspace() {
         />
 
         <div className="ml-auto flex items-center gap-3">
+          {deployError && (
+            <span
+              role="alert"
+              className="hidden max-w-[260px] truncate text-xs text-error md:inline"
+              title={deployError}
+            >
+              {deployError}
+            </span>
+          )}
+
+          {liveUrl && (
+            <>
+              <Button
+                asChild
+                variant="ghost"
+                className="h-9 gap-2 rounded-lg px-3 text-xs font-semibold sm:text-sm"
+              >
+                <a href={liveUrl} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink className="h-4 w-4" />
+                  <span className="hidden sm:inline">Live</span>
+                </a>
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 rounded-lg"
+                disabled={unpublishMutation.isPending || deployPhase !== 'idle'}
+                onClick={() => {
+                  if (window.confirm('Take this app offline?')) {
+                    unpublishMutation.mutate({ projectId });
+                  }
+                }}
+                aria-label="Unpublish"
+                title="Unpublish"
+              >
+                <CloudOff className="h-4 w-4" />
+              </Button>
+            </>
+          )}
+
           <TooltipProvider delayDuration={200}>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
                   size="default"
                   className="h-9 gap-2 rounded-lg px-4 text-xs font-semibold shadow-sm sm:text-sm"
-                  disabled={deployMutation.isPending}
-                  onClick={() => deployMutation.mutate({ projectId })}
+                  disabled={deployPhase !== 'idle' || preview.status !== 'ready'}
+                  onClick={() => void handleDeploy()}
                 >
                   <Rocket className="h-4 w-4" />
                   <span className="hidden sm:inline">
-                    {deployMutation.isPending ? 'Deploying…' : 'Deploy'}
+                    {deployPhase === 'building'
+                      ? 'Building…'
+                      : deployPhase === 'uploading'
+                        ? 'Publishing…'
+                        : 'Deploy'}
                   </span>
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
-                {deployMutation.data?.stub
-                  ? 'Vercel is not connected. This recorded a failed placeholder, not a live URL.'
-                  : deployMutation.error
-                    ? deployMutation.error.message
-                    : 'Create a deployment. Live hosting requires Vercel credentials.'}
+                {deployError ?? (liveUrl ? `Live at ${liveUrl}` : 'Publish this app to the web.')}
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>

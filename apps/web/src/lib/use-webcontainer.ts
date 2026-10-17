@@ -21,6 +21,7 @@ import {
 import {
   MAX_PREVIEW_ERRORS,
   MAX_PREVIEW_ERROR_CHARS,
+  RUNTIME_COMMANDS,
   RUNTIME_OUTPUT_MAX_CHARS,
   truncateRuntimeOutput,
   type RuntimeCommandExecution,
@@ -30,6 +31,13 @@ export interface PreviewFile {
   path: string;
   content: string;
 }
+
+export type DeployBuildResult =
+  | { ok: true; files: { path: string; data: string }[] }
+  | { ok: false; error: string; output?: string };
+
+/** Scratch directory for deploy builds; see `buildForDeploy`. */
+const DEPLOY_BUILD_DIR = '.sovereign-deploy';
 
 interface SandboxState {
   status: 'idle' | 'booting' | 'installing' | 'starting' | 'ready' | 'error';
@@ -158,7 +166,27 @@ const VENDOR_DIRECTORIES: ReadonlySet<string> = new Set([
   '.vite',
   '.cache',
   '.npm',
+  DEPLOY_BUILD_DIR,
 ]);
+
+async function listFilesRecursive(container: WebContainer, directory: string): Promise<string[]> {
+  const entries = await container.fs.readdir(directory, { withFileTypes: true });
+  const paths: string[] = [];
+  for (const entry of entries) {
+    const path = `${directory}/${entry.name}`;
+    if (entry.isDirectory()) paths.push(...(await listFilesRecursive(container, path)));
+    else paths.push(path);
+  }
+  return paths;
+}
+
+function toBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
 
 /** Container-owned files that are not part of any project's file set. */
 const CONTAINER_OWNED_FILES: ReadonlySet<string> = new Set([
@@ -634,6 +662,69 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
   );
 
   /**
+   * Build the project for hosting and return the output as base64 files.
+   *
+   * The preview's own tree cannot be built as-is: its index.html carries the
+   * editor overlay scripts. So the clean project files are copied into
+   * {@link DEPLOY_BUILD_DIR} and built there; Node resolution walks up to the
+   * preview's node_modules, so nothing is installed twice. A project without a
+   * package.json is a plain static site and is shipped unbuilt.
+   */
+  const buildForDeploy = useCallback(
+    async (files: PreviewFile[]): Promise<DeployBuildResult> => {
+      const encoder = new TextEncoder();
+      if (!files.some((file) => file.path === 'package.json')) {
+        return {
+          ok: true,
+          files: files.map((file) => ({
+            path: file.path,
+            data: toBase64(encoder.encode(file.content)),
+          })),
+        };
+      }
+
+      const container = await getContainer();
+      await container.fs.rm(DEPLOY_BUILD_DIR, { recursive: true, force: true });
+      try {
+        for (const file of files) {
+          const path = `${DEPLOY_BUILD_DIR}/${file.path}`;
+          await ensureParentDirectories(container, path);
+          await container.fs.writeFile(path, file.content);
+        }
+
+        const rootEntries: string[] = await container.fs.readdir('.');
+        if (!rootEntries.includes('node_modules')) {
+          const install = await runCommand(RUNTIME_COMMANDS['npm install']!.argv, 180_000);
+          if (install.exitCode !== 0) {
+            return { ok: false, error: 'Installing dependencies failed.', output: install.output };
+          }
+        }
+
+        const build = await runCommand(
+          ['npx', 'vite', 'build', DEPLOY_BUILD_DIR, '--outDir', 'dist', '--emptyOutDir'],
+          180_000,
+        );
+        if (build.exitCode !== 0) {
+          return { ok: false, error: build.error ?? 'The build failed.', output: build.output };
+        }
+
+        const distDir = `${DEPLOY_BUILD_DIR}/dist`;
+        const paths = await listFilesRecursive(container, distDir);
+        const output = await Promise.all(
+          paths.map(async (path) => ({
+            path: path.slice(distDir.length + 1),
+            data: toBase64(await container.fs.readFile(path)),
+          })),
+        );
+        return { ok: true, files: output };
+      } finally {
+        await container.fs.rm(DEPLOY_BUILD_DIR, { recursive: true, force: true }).catch(() => {});
+      }
+    },
+    [runCommand],
+  );
+
+  /**
    * Attach this instance's `server-ready` listener to the shared container.
    *
    * The container is a module-level singleton but the listener closes over this
@@ -876,6 +967,7 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
     retry,
     triggerRefresh: doRefresh,
     runCommand,
+    buildForDeploy,
     syncProjectTree,
     getPreviewErrors,
     appendLog,
