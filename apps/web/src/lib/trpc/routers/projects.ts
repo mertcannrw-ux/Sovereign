@@ -10,6 +10,8 @@ import { assertTenantSchemaName, provisionAppDatabase } from '@/server/app-datab
 import { quotePgIdent } from '@/server/db-browser';
 import { persistProjectFiles } from '@/lib/project-files';
 import { lockOrganizationMembership } from '@/server/org-lock';
+import { assertCanCreateProject } from '@/server/plans';
+import { getPlanPrices } from '@/server/stripe';
 
 function generateSlug(name: string): string {
   return (
@@ -195,6 +197,10 @@ export const projectsRouter = router({
                   message: 'Not a member of this organization.',
                 });
               }
+
+              // Counted under the org lock, so concurrent creates cannot both
+              // pass the plan's project limit.
+              await assertCanCreateProject(tx, input.organizationId, getPlanPrices());
 
               // Opportunistic dedupe inside the tx; the P2002 retry below is
               // still the arbiter under read-committed.

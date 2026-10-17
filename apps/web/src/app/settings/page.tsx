@@ -2,7 +2,7 @@
 
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Key,
   User,
@@ -32,6 +32,7 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@app-builder/ui/utils';
 import { trpc } from '@/lib/trpc/client';
+import { BillingPanel } from '@/components/settings/billing-panel';
 
 /* ── Types ───────────────────────────────────────────────── */
 
@@ -110,6 +111,12 @@ export default function SettingsPage() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<SettingsTabId>('providers');
 
+  // Stripe Checkout and the Customer Portal return to `?tab=billing`.
+  useEffect(() => {
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    if (SETTINGS_TABS.some((t) => t.id === tab)) setActiveTab(tab as SettingsTabId);
+  }, []);
+
   if (status === 'loading')
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
@@ -176,9 +183,7 @@ export default function SettingsPage() {
               </CardContent>
             </Card>
           )}
-          {activeTab === 'billing' && (
-            <Placeholder title="Billing" desc="Review your plan, invoices, and payment method." />
-          )}
+          {activeTab === 'billing' && <BillingPanel />}
           {activeTab === 'api-keys' && (
             <Placeholder title="API Keys" desc="Create and revoke platform access credentials." />
           )}
