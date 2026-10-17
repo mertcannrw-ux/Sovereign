@@ -819,7 +819,7 @@ model Subscription {
   stripeCustomerId      String             @unique @map("stripe_customer_id")
   stripeSubscriptionId  String?            @unique @map("stripe_subscription_id")
   priceId               String?            @map("price_id")
-  status                SubscriptionStatus @default(TRIALING)
+  status                SubscriptionStatus @default(INCOMPLETE)
   currentPeriodEnd      DateTime?          @map("current_period_end")
   cancelAtPeriodEnd     Boolean            @default(false) @map("cancel_at_period_end")
   createdAt             DateTime           @default(now()) @map("created_at")

@@ -554,7 +554,7 @@ CREATE TABLE "subscriptions" (
     "stripe_customer_id" TEXT NOT NULL,
     "stripe_subscription_id" TEXT,
     "price_id" TEXT,
-    "status" "subscription_status" NOT NULL DEFAULT 'TRIALING',
+    "status" "subscription_status" NOT NULL DEFAULT 'INCOMPLETE',
     "current_period_end" TIMESTAMP(3),
     "cancel_at_period_end" BOOLEAN NOT NULL DEFAULT false,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,

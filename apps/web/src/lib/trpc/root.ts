@@ -12,6 +12,7 @@ import { organizationsRouter } from './routers/organizations';
 import { assetsRouter } from './routers/assets';
 import { imageProviderRouter } from './routers/imageProvider';
 import { designDirectionsRouter } from './routers/designDirections';
+import { billingRouter } from './routers/billing';
 
 export const appRouter = router({
   auth: authRouter,
@@ -27,6 +28,7 @@ export const appRouter = router({
   assets: assetsRouter,
   imageProvider: imageProviderRouter,
   designDirections: designDirectionsRouter,
+  billing: billingRouter,
 });
 
 export type AppRouter = typeof appRouter;
