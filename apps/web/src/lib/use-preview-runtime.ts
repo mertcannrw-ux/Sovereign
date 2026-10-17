@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useWebContainer, type PreviewFile } from '@/lib/use-webcontainer';
+import { useWebContainer, type DeployBuildResult, type PreviewFile } from '@/lib/use-webcontainer';
 import type { FileOperationEvent, FilePreviewEvent } from '@/lib/generation-stream';
 import {
   isSovereignOverlayPath,
@@ -103,6 +103,8 @@ export interface UsePreviewRuntimeResult {
    * agent can see how the preview is actually failing.
    */
   getPreviewErrors: () => string[];
+  /** Production build of the current project files, ready for `deployments.deploy`. */
+  buildForDeploy: () => Promise<DeployBuildResult>;
 }
 
 /** Canonical display order for project files: entry HTML first, then the rest. */
@@ -399,6 +401,12 @@ export function usePreviewRuntime({
     setPreviewKey((key) => key + 1);
   }, []);
 
+  const { buildForDeploy: buildFiles } = sandbox;
+  const buildForDeploy = useCallback(
+    () => buildFiles(Array.from(filesRef.current, ([path, content]) => ({ path, content }))),
+    [buildFiles],
+  );
+
   const didMountProjectRef = useRef(false);
   useEffect(() => {
     if (!didMountProjectRef.current) {
@@ -456,5 +464,6 @@ export function usePreviewRuntime({
     applyOverlay,
     handleRuntimeRequest,
     getPreviewErrors: sandbox.getPreviewErrors,
+    buildForDeploy,
   };
 }

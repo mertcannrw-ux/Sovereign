@@ -1,0 +1,10 @@
+{
+  // Serves deployed user apps from R2. See src/index.js for the cost guard.
+  // Stay on the Workers FREE plan: its 100k requests/day cap is what bounds R2 reads.
+  "name": "user-apps-host",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": false,
+  "routes": [{ "pattern": "*.edelsteinquest.store/*", "zone_name": "edelsteinquest.store" }],
+  "r2_buckets": [{ "binding": "APPS", "bucket_name": "user-apps" }],
+}

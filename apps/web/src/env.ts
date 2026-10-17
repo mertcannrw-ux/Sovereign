@@ -61,6 +61,10 @@ export const env = createEnv({
     R2_BUCKET_NAME: z.string().optional(),
     R2_PUBLIC_URL: z.string().url().optional(),
 
+    // User-app hosting (src/server/deploy/user-apps.ts). Reuses the R2_* keys above.
+    DEPLOY_DOMAIN: z.string().optional(),
+    DEPLOY_R2_BUCKET: z.string().optional(),
+
     // E2B
     E2B_API_KEY: z.string().optional(),
 
@@ -131,6 +135,9 @@ export const env = createEnv({
     R2_SECRET_ACCESS_KEY: process.env.R2_SECRET_ACCESS_KEY,
     R2_BUCKET_NAME: process.env.R2_BUCKET_NAME,
     R2_PUBLIC_URL: process.env.R2_PUBLIC_URL,
+
+    DEPLOY_DOMAIN: process.env.DEPLOY_DOMAIN,
+    DEPLOY_R2_BUCKET: process.env.DEPLOY_R2_BUCKET,
 
     E2B_API_KEY: process.env.E2B_API_KEY,
 
