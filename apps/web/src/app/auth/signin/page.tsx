@@ -199,7 +199,7 @@ function SignInForm() {
 /** Show a loading fallback while the sign-in form waits for search parameters. */
 export default function SignInPage() {
   return (
-    // Without a fallback this page prerenders as an empty shell — it is the
+    // Without a fallback this page prerenders as an empty shell - it is the
     // only boundary in the app without one, and `useSearchParams` forces the
     // static-render bailout on every build.
     <Suspense fallback={<AuthShellFallback />}>

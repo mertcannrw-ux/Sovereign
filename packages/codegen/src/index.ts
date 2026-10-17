@@ -1,4 +1,4 @@
-// Code generation engine — transforms AI output into valid project files
+// Code generation engine - transforms AI output into valid project files
 // Pure stages: parse → normalize → validate → compute changes → apply via repository
 
 export {

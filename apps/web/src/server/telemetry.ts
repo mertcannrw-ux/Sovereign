@@ -1,5 +1,5 @@
 /**
- * Observability setup — OpenTelemetry, Sentry, structured logging.
+ * Observability setup - OpenTelemetry, Sentry, structured logging.
  *
  * OpenTelemetry and Sentry are optional at compile time.
  * They activate only when their environment variables are set.
@@ -102,12 +102,12 @@ export function initTelemetry(): void {
   if (!endpoint) return;
 
   try {
-    // Dynamic import — only loaded when OTEL is configured
+    // Dynamic import - only loaded when OTEL is configured
     const { trace } = require('@opentelemetry/api');
     tracer = trace.getTracer('app-builder');
     log('info', 'OpenTelemetry initialized', { endpoint });
   } catch {
-    log('warn', 'OpenTelemetry packages not installed — tracing disabled');
+    log('warn', 'OpenTelemetry packages not installed - tracing disabled');
   }
 }
 
@@ -137,7 +137,7 @@ export function captureException(error: unknown, context?: Record<string, unknow
     name: error instanceof Error ? error.name : 'Unknown',
   });
 
-  // Sentry integration — activate when @sentry/nextjs is installed:
+  // Sentry integration - activate when @sentry/nextjs is installed:
   // import * as Sentry from '@sentry/nextjs';
   // Sentry.captureException(error, { extra: context });
 }

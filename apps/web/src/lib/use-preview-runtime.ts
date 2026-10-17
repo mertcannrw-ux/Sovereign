@@ -207,7 +207,7 @@ export function usePreviewRuntime({
     if (pending.size === 0) {
       // Nothing queued *right now*, but a throttled flush that already drained
       // the queue can still be mid-flight. A caller that must observe the bytes
-      // in the container — the `run` tool — has to wait for the write chain
+      // in the container - the `run` tool - has to wait for the write chain
       // itself, not just for an empty queue, or the command compiles the
       // previous revision.
       await writeChainRef.current.catch(() => undefined);
@@ -321,7 +321,7 @@ export function usePreviewRuntime({
     }
     try {
       // The command must compile exactly this project: reconcile the shared
-      // container with the authoritative file set first — that drops another
+      // container with the authoritative file set first - that drops another
       // project's leftovers and files this project has since deleted, which
       // `tsc` (everything under `src`) would otherwise report as errors in
       // files the agent cannot read or delete.
@@ -357,7 +357,7 @@ export function usePreviewRuntime({
       await flushPendingWrites();
       replaceMap(files);
       // Full-sync event (`ready`, seed, restore): the container must equal the
-      // authoritative set. A mirror diff is not enough — paths the project
+      // authoritative set. A mirror diff is not enough - paths the project
       // never knew about (another project's tree in this shared container)
       // would survive and pollute a later `tsc`.
       await enqueueOp(() => sandboxRef.current.syncProjectTree(files));

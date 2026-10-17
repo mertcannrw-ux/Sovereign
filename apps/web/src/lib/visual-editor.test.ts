@@ -111,7 +111,7 @@ describe('visual editor', () => {
 
   // Runs last: each runtime instance installs document/window listeners that
   // outlive the DOM reset above, so the instances left by earlier tests are
-  // parked first — otherwise one of them answers the click below.
+  // parked first - otherwise one of them answers the click below.
   it('ignores an edit-mode toggle that does not come from the workspace frame', () => {
     window.dispatchEvent(
       new MessageEvent('message', {

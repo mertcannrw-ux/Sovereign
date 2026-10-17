@@ -84,7 +84,7 @@ function Window({ children }: { children: React.ReactNode }) {
 /**
  * The shipped split: chat on the left at 38%, workspace on the right. Below
  * `md` the real app shows a single pane with a View Preview / Back to chat
- * toggle, so the demo does the same — a 38% column on a phone is unreadable.
+ * toggle, so the demo does the same - a 38% column on a phone is unreadable.
  */
 function Split({
   chat,

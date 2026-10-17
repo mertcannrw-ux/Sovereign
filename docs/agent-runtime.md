@@ -4,7 +4,7 @@
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Author**       | Architecture (draft for engineering review)                                                                                                                   |
 | **Date**         | 2026-08-30                                                                                                                                                    |
-| **Status**       | **Partially implemented** — see "Implementation status" below before treating any section as current behavior.                                                |
+| **Status**       | **Partially implemented** - see "Implementation status" below before treating any section as current behavior.                                                |
 | **Audience**     | Senior engineers working in `apps/web`, `packages/ai-gateway`, `packages/codegen`                                                                             |
 | **Related code** | `apps/web/src/app/api/generate/route.ts`, `apps/web/src/lib/agent-protocol.ts`, `apps/web/src/lib/use-webcontainer.ts`, `packages/ai-gateway/src/provider.ts` |
 
@@ -26,7 +26,7 @@ against the code after it was written:
 - `applyStackContract` autofix, version snapshots, and the design-direction flow
   (`packages/codegen/src/contract.ts`, `apps/web/src/lib/versioning.ts`).
 - **The `run` tool (Milestone 1, the Step 3/PR 6 bridge):** an allowlisted
-  command (`npm install`, `npx tsc --noEmit`, `npx vite build` —
+  command (`npm install`, `npx tsc --noEmit`, `npx vite build` -
   `apps/web/src/lib/runtime-commands.ts`) executes in the caller's WebContainer
   and its merged stdout/stderr, exit code and duration return to the loop as a
   tool result. The server blocks on a `GenerationToolTrace` row polled by
@@ -42,8 +42,8 @@ against the code after it was written:
   iframe errors (`use-webcontainer.ts`), sends them with each turn
   (`runtimeErrors` in the `POST /api/generate` body) and attaches them to every
   `run` result.
-- **Container reconcile (FS-before-run barrier):** before any `run` — and on
-  every authoritative file-set write (`ready`, seed, restore) — the client makes
+- **Container reconcile (FS-before-run barrier):** before any `run` - and on
+  every authoritative file-set write (`ready`, seed, restore) - the client makes
   the shared WebContainer match the project's file set (`syncProjectTree`):
   another project's leftovers and files this project deleted are removed
   (vendor dirs, `package-lock.json` and the Sovereign overlay files excepted),
@@ -59,7 +59,7 @@ against the code after it was written:
 
 - `VerifyReport` / `AgentPlan` are still unused, and there is no automatic
   verify loop (static jsx-a11y / E2B `tsc` + `vite build`), no auto-fix
-  counter, and no `WAITING_RUNTIME` / `VERIFYING` status transitions — the
+  counter, and no `WAITING_RUNTIME` / `VERIFYING` status transitions - the
   `GenerationRun` row only records RUNNING → SUCCEEDED / FAILED / CANCELED and
   the per-call traces.
 - The E2B verify path, the `filesRevision` digest check on `runtime-request`,
@@ -67,7 +67,7 @@ against the code after it was written:
   **reconciles** the shared container with the authoritative file set before it
   spawns any command: paths the project does not have are deleted first
   (`syncProjectTree` in `use-webcontainer.ts`), because the WebContainer is one
-  instance per browser session and otherwise keeps another project's tree —
+  instance per browser session and otherwise keeps another project's tree -
   which `tsc`, walking all of `src`, reports as errors in files the agent cannot
   read or delete.
 
@@ -98,14 +98,14 @@ The project page (`apps/web/src/app/project/[id]/page.tsx`, 1,843 lines) is the 
 
 1. Authenticates via NextAuth, rate-limits (`checkRateLimit('prompt')`), authorizes OWNER/EDITOR.
 2. Decrypts a BYOK key with AES-256-GCM (`apps/web/src/lib/crypto.ts`).
-3. Loads `ProjectFile` rows into `const files = new Map(project.files.map(...))` — **not a disk workspace**.
+3. Loads `ProjectFile` rows into `const files = new Map(project.files.map(...))` - **not a disk workspace**.
 4. Builds a 10-message history plus a giant user blob (name, description, empty/existing flag, path manifest, optional `editTarget`, attachments, image-gen capability).
 5. Loops until the model finishes. There is **no step cap and no no-progress guard by default**: `MAX_ITERATIONS` and `MAX_NO_PROGRESS_TURNS` are only bounded when an operator opts in with `SOVEREIGN_MAX_ITERATIONS` / `SOVEREIGN_MAX_NO_PROGRESS` (BYOK runs are bounded by the user's budget, the client's Stop button, lease ownership, and provider errors). Each iteration calls `provider.stream(...)` with `trimMessagesForContext` (`CONTEXT_BUDGET_CHARS = 80_000`). `trimMessagesForContext` **always retains** `messages[0]` when it is `role: system`; it skips over-budget _middle_ messages rather than dropping the system prompt.
 6. Parses the entire completion as JSON-in-text (native `tool_calls` are preferred when the provider supports them). Three consecutive parse failures fall back to surfacing the model's own text as the answer; there is **no default** abort on non-mutating turns (`SOVEREIGN_MAX_NO_PROGRESS` opts in).
 7. Executes `think | read_files | write_file | edit_file | delete_file | generate_images | propose_design_directions | ask_questions | respond | finish`.
-8. Batches file mutations into one Prisma transaction + `createVersion` (`apps/web/src/lib/versioning.ts`). Generate currently calls `createVersion(tx, projectId, null, changes)` — `sourceMessageId` is null, and `createVersion` has no `message` argument.
+8. Batches file mutations into one Prisma transaction + `createVersion` (`apps/web/src/lib/versioning.ts`). Generate currently calls `createVersion(tx, projectId, null, changes)` - `sourceMessageId` is null, and `createVersion` has no `message` argument.
 9. Streams SSE: `phase`, `step`, `thinking`, `answer`, `file-preview`, `file-operation`, `image-job`, `design-directions`, `questions`, `ready`, `failed`. `answer` carries a cumulative snapshot of the user-facing answer text (`respond.message` / `finish.summary` / plain prose) while the model writes it, and `content: ""` when a turn settles as a tool call; `ready` remains authoritative. `consumeGenerationStream` **drops unknown event names** (lines 118–138).
-10. The route is `dynamic = 'force-dynamic'` and `maxDuration = 800` (Vercel's GA ceiling for Fluid functions; Hobby caps at 300). The runtime POST route sets `force-dynamic` only — it is a single DB write, not a long-running handler.
+10. The route is `dynamic = 'force-dynamic'` and `maxDuration = 800` (Vercel's GA ceiling for Fluid functions; Hobby caps at 300). The runtime POST route sets `force-dynamic` only - it is a single DB write, not a long-running handler.
 
 The client writes previewed files into WebContainer at a 120 ms throttle and bumps an iframe `revision` at 500 ms (`page.tsx` ~642–648). The agent never sees whether Vite started, whether `npm` failed, or whether the iframe threw. `WebContainer.boot({ forwardPreviewErrors: 'exceptions-only' })` is already set (`use-webcontainer.ts` line 26); nothing consumes those events.
 
@@ -165,7 +165,7 @@ Lovable, Replit Agent, Bolt.new, v0, and Codex all share one loop: **native tool
 
 ## Proposed Design
 
-### 1. Runtime of record: Hybrid (Option C) — WC interactive, E2B CI, no host spawn
+### 1. Runtime of record: Hybrid (Option C) - WC interactive, E2B CI, no host spawn
 
 ```mermaid
 flowchart LR
@@ -177,7 +177,7 @@ flowchart LR
     WC --> IFrame
   end
 
-  subgraph Server["Next.js — orchestration only"]
+  subgraph Server["Next.js - orchestration only"]
     Gen["POST /api/generate"]
     Prisma[(ProjectFile + snapshots)]
     GW[ai-gateway]
@@ -185,11 +185,11 @@ flowchart LR
     Jobs[BackgroundJob + cron worker]
   end
 
-  subgraph Sandbox["E2B / Firecracker — optional CI"]
+  subgraph Sandbox["E2B / Firecracker - optional CI"]
     VF[Verify: tsc + vite build]
   end
 
-  subgraph Hosted["Vercel — deploy sandbox"]
+  subgraph Hosted["Vercel - deploy sandbox"]
     Vercel[Source deploy]
   end
 
@@ -213,7 +213,7 @@ flowchart LR
 
 #### Why not A (WebContainer only)
 
-A is the cheapest loop and is what Bolt.new does (`boltAction file|shell` executed in the same container that previews). We **do** use WebContainer for the interactive loop. It is not sufficient alone as CI: it cannot hold deploy secrets, a closed tab kills `run` (this is the **common** case — `page.tsx` F-01 already aborts on unmount), and a browser origin is not a malware sandbox (see §2 threat model). Production build still needs a VM or Vercel.
+A is the cheapest loop and is what Bolt.new does (`boltAction file|shell` executed in the same container that previews). We **do** use WebContainer for the interactive loop. It is not sufficient alone as CI: it cannot hold deploy secrets, a closed tab kills `run` (this is the **common** case - `page.tsx` F-01 already aborts on unmount), and a browser origin is not a malware sandbox (see §2 threat model). Production build still needs a VM or Vercel.
 
 #### Why not B (server sandbox as the agent's laptop)
 
@@ -223,7 +223,7 @@ B is Lovable/Replit/v0: K8s Agent Sandbox, Repl, or Vercel Sandbox per chat. We 
 
 Allowlisted `npm run build` matches **script names**, not bodies. The agent `write_file`s `package.json`. `"build": "node steal.js"` then `npm run build` is arbitrary JS. `npx vite` / `npx tsc` load agent-authored `vite.config.ts` and TypeScript. `node` on a project path runs whatever the agent just wrote. `--ignore-scripts` blocks **install-time** hooks only. Unsandboxed `vite build` of untrusted generated apps on the Next host is RCE. `E2B_API_KEY` being optional does not make a default-on host path safe. **There is no host execution path in this RFC**, including "just for tests" against user projects.
 
-#### Hybrid mechanics — runtime bridge (implementable protocol)
+#### Hybrid mechanics - runtime bridge (implementable protocol)
 
 **Source of truth remains Prisma `ProjectFile`.** WebContainer and E2B are clones. Do not make WebContainer the canonical FS.
 
@@ -245,7 +245,7 @@ No 60s wait. This is how old `consumeGenerationStream` clients (which **drop** u
 
 **Do not use `UPSTASH_REDIS_REST_*` for the waiter.** Those env vars already power `checkRateLimit` over HTTP (`apps/web/src/server/rate-limit.ts`). Upstash REST cannot `SUBSCRIBE` and is a poor 60–180s `BRPOP`. Equating them would call a dead API.
 
-`GenerationRun.status = WAITING_RUNTIME` while blocked. Pending columns live on `GenerationToolTrace` (`status=pending`, `requestId`, `command`, `timeoutMs`, `expiresAt`, `filesRevision`) — the poll source of truth.
+`GenerationRun.status = WAITING_RUNTIME` while blocked. Pending columns live on `GenerationToolTrace` (`status=pending`, `requestId`, `command`, `timeoutMs`, `expiresAt`, `filesRevision`) - the poll source of truth.
 
 WebSockets add a separate client/server stack, so this RFC keeps the existing SSE+POST flow. Revisit WS only if poll p95 is unacceptable (see Alternatives).
 
@@ -299,11 +299,11 @@ Empty tree → SHA-256 of the empty string (no trailing newline). Unit-test empt
 
 **Regression test (PR 6, required):** one generate turn with `write_file` then `run` must spawn with the new bytes (fake WC `writeFiles` + spawn spy). Also: last `file-preview` skipped by the 120 ms throttle, then `file-operation` still lands.
 
-**Never spawn against a WebContainer that has not acknowledged the revision.** Do not start `run` in the same unflushed batch as FS mutations — flush first, always.
+**Never spawn against a WebContainer that has not acknowledged the revision.** Do not start `run` in the same unflushed batch as FS mutations - flush first, always.
 
 **Tab close / abort:** `request.signal` abort (already F-01) → waiter times out at `timeoutMs` (default 60s, 180s only for rewritten `npm install`) → tool result `{ error: "runtime_unavailable", reason: "timeout" | "aborted" }`. **No host retry.** The model may `run` again (user still there) or finish with a note that preview runtime was lost.
 
-**`export const maxDuration = 800`** on `apps/web/src/app/api/generate/route.ts` only (the runtime POST route is a single DB write and needs no extended timeout). The loop has no step cap, so wall clock — not a step count — is what a long generate runs out of first. 800s is Vercel's generally available maximum for Fluid functions (Pro/Enterprise; Hobby caps at 300s, and 1800s is Pro/Enterprise beta). Combined with `run` waits, the timeout is the ceiling, not a budget to fill: the model should not `npm install` every turn (PR 4 auto-installs on WC boot). Anything that must outlive even that needs durable execution (Vercel Workflows), not a bigger number here. A long idle `run` wait now emits a `runtime-heartbeat` SSE event every 15s (`RUNTIME_HEARTBEAT_MS` in `runtime-bridge.ts`) so idle-timeout-happy proxies cannot cut the stream mid-command. The literal must stay a literal (Next extracts `maxDuration` statically and silently falls back to the platform default for computed values); `assertPlanAllowsMaxDuration` in `agent-limits.ts` turns a Hobby deployment of the 800s literal into a boot-time error naming the exact fix.
+**`export const maxDuration = 800`** on `apps/web/src/app/api/generate/route.ts` only (the runtime POST route is a single DB write and needs no extended timeout). The loop has no step cap, so wall clock - not a step count - is what a long generate runs out of first. 800s is Vercel's generally available maximum for Fluid functions (Pro/Enterprise; Hobby caps at 300s, and 1800s is Pro/Enterprise beta). Combined with `run` waits, the timeout is the ceiling, not a budget to fill: the model should not `npm install` every turn (PR 4 auto-installs on WC boot). Anything that must outlive even that needs durable execution (Vercel Workflows), not a bigger number here. A long idle `run` wait now emits a `runtime-heartbeat` SSE event every 15s (`RUNTIME_HEARTBEAT_MS` in `runtime-bridge.ts`) so idle-timeout-happy proxies cannot cut the stream mid-command. The literal must stay a literal (Next extracts `maxDuration` statically and silently falls back to the platform default for computed values); `assertPlanAllowsMaxDuration` in `agent-limits.ts` turns a Hobby deployment of the 800s literal into a boot-time error naming the exact fix.
 
 #### Verify / CI worker
 
@@ -320,9 +320,9 @@ Otherwise persist `VerifyReport` with `status: skipped`, `reason: verify_not_con
 
 | Piece    | Spec                                                                                                                                                                                                                                                                          |
 | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Handler  | `apps/web/src/server/workers/verify-project.ts` — the **only** process that talks to E2B                                                                                                                                                                                      |
+| Handler  | `apps/web/src/server/workers/verify-project.ts` - the **only** process that talks to E2B                                                                                                                                                                                      |
 | Dequeue  | `GET/POST /api/cron/jobs` protected by `CRON_SECRET` (Vercel cron every minute), **or** a `while` loop in a long-lived Node process. Same handler.                                                                                                                            |
-| Claim    | Raw SQL `FOR UPDATE SKIP LOCKED`: pick `status = QUEUED AND runAfter <= now()` (or `RUNNING` with `lockedAt` older than 3 minutes — lock steal), set `lockedAt = now()`, `status = RUNNING`, `attempts = attempts + 1`. Existing columns already support this.                |
+| Claim    | Raw SQL `FOR UPDATE SKIP LOCKED`: pick `status = QUEUED AND runAfter <= now()` (or `RUNNING` with `lockedAt` older than 3 minutes - lock steal), set `lockedAt = now()`, `status = RUNNING`, `attempts = attempts + 1`. Existing columns already support this.                |
 | Payload  | `{ projectId, runId, reportId }`                                                                                                                                                                                                                                              |
 | Work     | Checkout `ProjectFile` rows into an E2B sandbox via `@e2b/code-interpreter` (add to `apps/web/package.json` in PR 7). `npm install --ignore-scripts`, pinned `tsc --noEmit`, Sovereign **seeded** eslint (ignore project `eslint.config.js`), `vite build`. Timeout **120s**. |
 | Complete | Patch the **one** `VerifyReport` for `runId` (`channels.tsc` / `channels.build`); `status` `passed`/`failed`; `rawLogsR2Key`. Job `SUCCEEDED`/`FAILED`.                                                                                                                       |
@@ -346,7 +346,7 @@ Generate does **not** block the SSE on E2B. After the assistant message it upser
 | Tokens                                           | See §7                   | Do **not** claim −20–40%. Native `write_file` still ships file bodies (up to `MAX_FILE_BYTES` = 1 MB). Savings: no JSON-DSL in the tools-on prompt, no 3×32k parse retries. Cost: 8–20 tool rounds of history, mitigated by stubs. |
 | Extra infra $                                    | ~$0 interactive loop     | E2B only when worker+key are on; `run` waiter polls Postgres by default                                                                                                                                                            |
 
-**Risk (High): dual-runtime drift.** Prisma canonical; WC re-hydrates from unthrottled `file-operation` + overlay + revision ACK; E2B always checks out Prisma. **Risk (Medium): SharedArrayBuffer/COEP failures.** Banner; `run` returns `runtime_unavailable` — no host fallback. **Risk (High): waiter deadlock.** Capability handshake; poll/`expiresAt`; no host fallback. **Risk (accepted): generated `npm install` is third-party JS in the user's browser.** Disclose in product copy (see §2).
+**Risk (High): dual-runtime drift.** Prisma canonical; WC re-hydrates from unthrottled `file-operation` + overlay + revision ACK; E2B always checks out Prisma. **Risk (Medium): SharedArrayBuffer/COEP failures.** Banner; `run` returns `runtime_unavailable` - no host fallback. **Risk (High): waiter deadlock.** Capability handshake; poll/`expiresAt`; no host fallback. **Risk (accepted): generated `npm install` is third-party JS in the user's browser.** Disclose in product copy (see §2).
 
 ---
 
@@ -427,7 +427,7 @@ PR **1a** (OpenAI, Groq, Mistral, custom, Ollama-compatible): parse + mapper + `
 
 Unchanged from Revision 1 for `read_files`, `write_file`, `edit_file`, `delete_file`, `update_plan`, `generate_images`, `propose_design_directions`, `ask_questions`. `run.command` remains a string the harness **parses and rewrites**; the model never supplies raw argv that is exec’d.
 
-#### `run` allowlist — grammar and harness rewrite
+#### `run` allowlist - grammar and harness rewrite
 
 v1 parser: POSIX-like argv split with single and double quotes, **no** escapes beyond `\'` inside single quotes and `\"` `\\` inside double quotes. Reject the command (tool error, do not exec) if it contains unquoted `|`, `&`, `;`, `\n`, `` ` ``, `$`, `(`, `)`, `<`, `>`, `#`, or a glob metacharacter we do not explicitly allow.
 
@@ -437,7 +437,7 @@ After split, the command must match this grammar. The harness **rewrites** argv;
 | ---------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `npm install` / `npm i` / `npm ci` | `npm install --ignore-scripts` (ci → `npm ci --ignore-scripts`) | Always inject `--ignore-scripts`. Drop user-supplied `--prefix`, `--userconfig`, `--global`, `-g`, `--script-shell`                                       |
 | `npm install lodash`               | `npm install --ignore-scripts lodash`                           | Package names must match `^[a-zA-Z0-9_@/.=-]+$`. **Reject** `git+`, `github:`, `http://`, `https://`, `file:`, `npm install ./`, tarball URLs             |
-| `npm run build`                    | `npm run build --ignore-scripts`                                | Script name ∈ `{dev, build, preview, lint, typecheck, test}` **only**. Still executes whatever the agent wrote in `package.json` — **WC only**, disclosed |
+| `npm run build`                    | `npm run build --ignore-scripts`                                | Script name ∈ `{dev, build, preview, lint, typecheck, test}` **only**. Still executes whatever the agent wrote in `package.json` - **WC only**, disclosed |
 | `npm ls` / `npm list`              | `npm ls --depth=0`                                              | Read-only                                                                                                                                                 |
 | `npx tsc --noEmit`                 | `npx --no-install tsc --noEmit`                                 | Binary ∈ `{tsc, vite, eslint, vitest}`. Reject `npx --yes`, `npx -y`, `npm exec`, extra npx packages                                                      |
 | `npx vite build`                   | `npx --no-install vite build`                                   |                                                                                                                                                           |
@@ -446,7 +446,7 @@ After split, the command must match this grammar. The harness **rewrites** argv;
 
 Forbidden binaries: `curl`, `wget`, `ssh`, `rm`, `chmod`, `sudo`, `bash`, `sh`, `cmd`, `powershell`. No `node -e`. Network in WebContainer is **not** constrainable to the npm registry (`@webcontainer/api` 1.6.x has no argv-level egress allowlist; parent CSP `connect-src` does not constrain WC’s proxy). Treat WC as **origin isolation** (COEP/COOP), not a malware sandbox.
 
-**Product copy (required in the preview pane, first Vite boot):** "Preview runs project JavaScript — including `npm` packages — on this machine, inside an isolated iframe. Do not open projects you do not trust."
+**Product copy (required in the preview pane, first Vite boot):** "Preview runs project JavaScript - including `npm` packages - on this machine, inside an isolated iframe. Do not open projects you do not trust."
 
 #### Parallelism
 
@@ -531,7 +531,7 @@ v1 **soft** (client axe via postMessage): contrast, live landmarks that jsx-a11y
 
 1. Write builder-owned files **into the WC filesystem only** (never `ProjectFile`): `.sovereign-edit.js`, `.sovereign/axe.js` (vendored axe-core min).
 2. Patch the **WC copy** of `index.html` to include `<script src="/.sovereign-edit.js">` and `<script src="/.sovereign/axe.js">` before `</body>`. Prisma’s `index.html` stays clean.
-3. Re-run that patch after every WC write to `index.html` (agent `file-operation` / overlay would otherwise clobber the tags). Helper: `instrumentPreviewHtml` already exists in `apps/web/src/lib/visual-editor.ts` — extend it for axe, call it from `use-preview-runtime` after boot and after each `index.html` apply.
+3. Re-run that patch after every WC write to `index.html` (agent `file-operation` / overlay would otherwise clobber the tags). Helper: `instrumentPreviewHtml` already exists in `apps/web/src/lib/visual-editor.ts` - extend it for axe, call it from `use-preview-runtime` after boot and after each `index.html` apply.
 4. The iframe `postMessage`s `{ source: 'sovereign-a11y', violations }` to the parent after load + idle (1.5s or `requestIdleCallback`). Cap 25 issues / 4k chars to the model; full set on `VerifyReport` via `appendChannels`.
 
 **Persisting client axe after `ready`:** the generate SSE is closed. Parent React state is not enough for reload / Try to fix. PR 7 adds `trpc.verify.appendChannels`:
@@ -544,13 +544,13 @@ verify.appendChannels
 
 Auth: session + `requireProjectRole(EDITOR)` on `report.projectId`. Idempotent merge into `channels.a11y` with the same de-dupe key `{ kind, file, line, ruleId }`. 404 if report missing. If `ready` had no `reportId` (`skipped` with no row), the parent **skips persist** and keeps violations in memory only.
 
-**Do not** use Playwright in the verify worker. `@playwright/test` is a **root** devDependency for `apps/web` e2e, not a production browser install. jsdom of Vite’s `dist/index.html` (`<div id="root">`) false-passes almost every rule — do not call that an a11y gate.
+**Do not** use Playwright in the verify worker. `@playwright/test` is a **root** devDependency for `apps/web` e2e, not a production browser install. jsdom of Vite’s `dist/index.html` (`<div id="root">`) false-passes almost every rule - do not call that an a11y gate.
 
 Keyboard for generated apps: `:focus-visible` in seeded CSS; `prefers-reduced-motion` **reduces**, never `animation-duration: 0.01ms !important` on `*`.
 
 #### Auto-repair policy
 
-1. Cheap autofixers first (§4) — no model.
+1. Cheap autofixers first (§4) - no model.
 2. If static errors remain and `GenerationRun.autoFixCount < 2`, append a structured user message and continue the **same** generate loop.
 3. Otherwise `ready` with `verifyStatus: 'failed' | 'passed' | 'skipped' | 'pending'` and Try to fix when a `VerifyReport` id exists.
 
@@ -569,7 +569,7 @@ Call this **"shippable static Vite"**, not "production-ready full-stack."
 | Path                    | Why                                                                                                                                                                                      |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `package.json`          | `react@19`, `react-dom@19`, `vite`, `@vitejs/plugin-react`, `typescript`. Scripts: `dev`, `build`, `preview`, `lint`, `typecheck`. Versions from `packages/codegen/src/stack-lock.json`. |
-| `vite.config.ts`        | React plugin only. **Not** `@app-builder/visual-editor` — that package is private and will not resolve inside WC `npm install`.                                                          |
+| `vite.config.ts`        | React plugin only. **Not** `@app-builder/visual-editor` - that package is private and will not resolve inside WC `npm install`.                                                          |
 | `tsconfig.json`         | `"jsx": "react-jsx"` (already required by today’s prompt and `getPreviewSupportFiles`).                                                                                                  |
 | `index.html`            | `<html lang="en">`, viewport, title, meta description, script module to `/src/main.tsx`.                                                                                                 |
 | `src/main.tsx`          | `createRoot`, error boundary wrap.                                                                                                                                                       |
@@ -609,7 +609,7 @@ Target:
 2. If `VERCEL_TOKEN` is missing: return `{ configured: false }` (no `LIVE` row, no fake URL). UI: **Deploy is not connected.**
 3. If configured: create/reuse **`Project.vercelProjectId`**. This is **not** `env.VERCEL_PROJECT_ID` (that is the _builder’s_ Vercel project). Mixing them would deploy customer apps onto Sovereign’s own project.
 4. Upload **source files** from the chosen snapshot via `deployToVercel({ files })` (`apps/web/src/server/vercel.ts`). Vercel builds with `framework: "vite"`. We do **not** upload verify-worker `dist/` (different secret-baking model; `VITE_*` would already be baked if we shipped dist).
-5. `Deployment.snapshotId` = the snapshot id returned by the latest generate `createVersion` for that project, **or** a new snapshot taken at deploy click if the tree is dirty. PR 11 threads `createVersion`’s `{ id, versionNumber }` — generate must persist that id (today only `versionNumber` is streamed).
+5. `Deployment.snapshotId` = the snapshot id returned by the latest generate `createVersion` for that project, **or** a new snapshot taken at deploy click if the tree is dirty. PR 11 threads `createVersion`’s `{ id, versionNumber }` - generate must persist that id (today only `versionNumber` is streamed).
 6. Map Vercel BUILDING/ERROR/READY/CANCELED onto `DeploymentStatus`. Poll or webhook.
 
 Custom domains stay behind `addDomain`; out of the first deploy PR. Setting Vercel env vars is out of scope; document that `.env.example` is not applied.
@@ -689,11 +689,11 @@ flowchart TB
 
 **Freeze (do not delete in the first PRs):**
 
-- `trpc.chat.send` — unused by `page.tsx` (`getHistory` / `getVersions` / `restoreVersion` only). `@deprecated`, throws `BAD_REQUEST` `"Use /api/generate"`.
-- `packages/codegen` `parseResponse` / `buildSystemPrompt` — stop being a generation protocol. Reuse the package for autofixers + contract checker + `stack-lock.json`. This is **not** the same dialect as `<<<PATCH:>>>`.
-- `generation-protocol.ts` FILE/PATCH parsers — generate does not parse them. Types (`ClarifyingQuestion`, `GeneratedFile`) stay imported by `agent-protocol.ts`. Freeze parsers; do not extend.
+- `trpc.chat.send` - unused by `page.tsx` (`getHistory` / `getVersions` / `restoreVersion` only). `@deprecated`, throws `BAD_REQUEST` `"Use /api/generate"`.
+- `packages/codegen` `parseResponse` / `buildSystemPrompt` - stop being a generation protocol. Reuse the package for autofixers + contract checker + `stack-lock.json`. This is **not** the same dialect as `<<<PATCH:>>>`.
+- `generation-protocol.ts` FILE/PATCH parsers - generate does not parse them. Types (`ClarifyingQuestion`, `GeneratedFile`) stay imported by `agent-protocol.ts`. Freeze parsers; do not extend.
 
-**Keep:** `agent-protocol.ts` execution helpers; `generation-stream.ts` SSE vocabulary (`runtime-request`, `verify`, `plan` added; **unknown events must not be dropped once PR 6 lands** — parse allowlist grows, or unknown events are forwarded as `{ type: event, data }`).
+**Keep:** `agent-protocol.ts` execution helpers; `generation-stream.ts` SSE vocabulary (`runtime-request`, `verify`, `plan` added; **unknown events must not be dropped once PR 6 lands** - parse allowlist grows, or unknown events are forwarded as `{ type: event, data }`).
 
 ---
 
@@ -701,15 +701,15 @@ flowchart TB
 
 Codex ([Unrolling the Codex agent loop](https://openai.com/index/unrolling-the-codex-agent-loop/), 2026-01-23): **keep the prompt prefix stable**. Sovereign currently puts a changing file manifest in the first user blob, which busts caches. `trimMessagesForContext` already keeps the system message; the problem is **old tool-result bodies**, not dropped system text.
 
-1. **Stable system prompt** — two variants via `buildAgentSystemPrompt({ toolsOffered })`, each byte-identical across turns for a given flag.
-2. **Semi-stable developer prefix** — `SOVEREIGN.md` + image-gen flag + Plan vs Build.
-3. **User message** — request, `editTarget`, attachments.
-4. **Tool-result stubs** — conversation stores `wrote src/App.tsx (1842 chars, sha256:abcd…)`, not the file. Same-run `read_files` still hits the Map.
-5. **Deterministic compaction** — when over 80k chars or 6 tool-result bodies, replace oldest tool results with the **same stub template** (path, byte length, sha256, tool name). No LLM summary. Always keep system + latest user + last 2 tool rounds. If still over budget, skip middle messages as today (`continue`), never the system prompt.
-6. **Do not send the whole repo each turn** — already true (path manifest). Keep `read_files` (max 12, 60k observation budget).
-7. **Prompt cache** — optional `prompt_cache_key = projectId` for OpenAI-compatible APIs. Anthropic `cache_control` only after PR 1b puts text in top-level `system`. Not an efficiency guarantee in v1.
+1. **Stable system prompt** - two variants via `buildAgentSystemPrompt({ toolsOffered })`, each byte-identical across turns for a given flag.
+2. **Semi-stable developer prefix** - `SOVEREIGN.md` + image-gen flag + Plan vs Build.
+3. **User message** - request, `editTarget`, attachments.
+4. **Tool-result stubs** - conversation stores `wrote src/App.tsx (1842 chars, sha256:abcd…)`, not the file. Same-run `read_files` still hits the Map.
+5. **Deterministic compaction** - when over 80k chars or 6 tool-result bodies, replace oldest tool results with the **same stub template** (path, byte length, sha256, tool name). No LLM summary. Always keep system + latest user + last 2 tool rounds. If still over budget, skip middle messages as today (`continue`), never the system prompt.
+6. **Do not send the whole repo each turn** - already true (path manifest). Keep `read_files` (max 12, 60k observation budget).
+7. **Prompt cache** - optional `prompt_cache_key = projectId` for OpenAI-compatible APIs. Anthropic `cache_control` only after PR 1b puts text in top-level `system`. Not an efficiency guarantee in v1.
 8. **`run` is rare.** PR 4 auto-installs on boot. The model should `run` `tsc` / `vite build` / tests, not `npm install` every turn. Harness may no-op a redundant `npm install` if WC already installed that `filesRevision`.
-9. **Subagents** — later.
+9. **Subagents** - later.
 
 **Hosting:** `maxDuration = 800` on generate. E2B verify is a `BackgroundJob` plus a **real worker** (`/api/cron/jobs` or long-lived loop), not in-process and not enqueue-and-pray. Interactive `run` waits by polling `GenerationToolTrace` (optional TCP Redis `BRPOP`).
 
@@ -780,7 +780,7 @@ Auth: session + `GenerationRun.userId === session.user.id` + `requireProjectRole
 > `{ requestId: string; toolCallId?: string; command: string; timeoutMs: number }`
 > (`RuntimeRequestEventData` in `apps/web/src/lib/generation-stream.ts`). The
 > client re-resolves `command` against the allowlist itself and ignores `argv`;
-> `filesRevision` and `overlay` are **not** sent — the client drains its own
+> `filesRevision` and `overlay` are **not** sent - the client drains its own
 > write chain before spawning instead. The reply is a POST to
 > `/api/generate/runtime/[requestId]`. `plan` / `verify` events and
 > `ready.verifyStatus` are **not** implemented.
@@ -802,8 +802,8 @@ See §2. `toolChoice` added to `ProviderCompleteOptions`. Anthropic mapper extra
 - `chat.send`: deprecated, throws.
 - `deployments.deploy`: real Vercel or `{ configured: false }`. Never `stub.localhost`.
 - `verify.getLatest { projectId }` → latest run’s single `VerifyReport` (1:1 on `runId`).
-- `verify.appendChannels { reportId, source: 'axe', violations }` — OWNER/EDITOR, idempotent merge into `channels.a11y`. Skip client-side if no `reportId`.
-- `createVersion(db, projectId, sourceMessageId, files, { message?: string })` — additive optional 5th arg or options object.
+- `verify.appendChannels { reportId, source: 'axe', violations }` - OWNER/EDITOR, idempotent merge into `channels.a11y`. Skip client-side if no `reportId`.
+- `createVersion(db, projectId, sourceMessageId, files, { message?: string })` - additive optional 5th arg or options object.
 
 ---
 
@@ -869,7 +869,7 @@ model GenerationToolTrace {
   runId         String    @map("run_id")
   toolCallId    String    @map("tool_call_id")
   name          String
-  /// FS tools store { path, contentSha256 } only — never file bodies.
+  /// FS tools store { path, contentSha256 } only - never file bodies.
   arguments     Json?
   result        Json?
   status        String    // pending | complete | failed | timeout
@@ -928,11 +928,11 @@ Additive on existing models:
 
 - `User.generationRuns GenerationRun[]`
 - `Project.generationRuns`, `Project.agentPlans`, `Project.verifyReports`
-- `Project.vercelProjectId String?` — **never** copy `env.VERCEL_PROJECT_ID` into it
+- `Project.vercelProjectId String?` - **never** copy `env.VERCEL_PROJECT_ID` into it
 - `ChatMessage.toolCalls` remains `AgentStep[]` for the timeline
 - `Deployment.snapshotId` **must** be set on create
 
-No `A11yReport` table — a11y lives in `VerifyReport.channels.a11y`. **`autoFixCount` lives only on `GenerationRun`**, not on the report. No sandbox-session table in v1. `VerifyReport.runId` is `@unique` (1:1).
+No `A11yReport` table - a11y lives in `VerifyReport.channels.a11y`. **`autoFixCount` lives only on `GenerationRun`**, not on the report. No sandbox-session table in v1. `VerifyReport.runId` is `@unique` (1:1).
 
 **Migration:** additive. `createVersion` options `{ message?: string }` in the same PR as schema (PR 5) so autofix snapshots work.
 
@@ -940,11 +940,11 @@ No `A11yReport` table — a11y lives in `VerifyReport.channels.a11y`. **`autoFix
 
 ## Alternatives Considered
 
-### 1. Option A — Agent drives only the browser WebContainer (Bolt.new)
+### 1. Option A - Agent drives only the browser WebContainer (Bolt.new)
 
 Accepted as the **interactive** half. Rejected as the sole computer (no CI, tab close is common, not a malware sandbox).
 
-### 2. Option B — Server-side sandbox as the agent's laptop (Replit / Lovable / v0)
+### 2. Option B - Server-side sandbox as the agent's laptop (Replit / Lovable / v0)
 
 Rejected as primary (cost, cold start, ops). Accepted as **E2B CI only**, optional.
 
@@ -1016,7 +1016,7 @@ Reuse `apps/web/src/server/telemetry.ts`. Add `encryptedKey` to `REDACTED_FIELDS
 | `generate.runtime_unavailable_rate` | tab close / no capability             |
 | `deploy.live_rate`                  | stub vs real                          |
 
-**Alerts:** E2B job timeout > 5%; `runtime_unavailable` > 15% (tab close is common — tune after baseline); deploy webhook signature failures.
+**Alerts:** E2B job timeout > 5%; `runtime_unavailable` > 15% (tab close is common - tune after baseline); deploy webhook signature failures.
 
 PR 2 also ships `maxDuration = 800`. Runtime-bridge integration tests (fake WC spawn + write-then-run same turn + poll waiter) live in PR 6.
 
@@ -1036,12 +1036,12 @@ Flags default **off** in production; **on** in development. CI for each PR runs 
 | `SOVEREIGN_PLAN_MODE`    | Build-only                                                                                                            |
 | `SOVEREIGN_REAL_DEPLOY`  | Honest `{ configured: false }` if token missing; **never** restore `stub.localhost` LIVE even when off                |
 
-**Stage 0** — native tools, Map FS, two prompts.  
-**Stage 1** — split page (empty runtime hook).  
-**Stage 2** — flagged Vite-in-WC preview; subscribe to WC `error` / preview exceptions.  
-**Stage 3** — schema + contract/autofix.  
-**Stage 4** — `run` bridge (poll waiter; optional TCP Redis).  
-**Stage 5** — verify (cron worker + E2B, or honest skip) + Plan + real deploy.
+**Stage 0** - native tools, Map FS, two prompts.  
+**Stage 1** - split page (empty runtime hook).  
+**Stage 2** - flagged Vite-in-WC preview; subscribe to WC `error` / preview exceptions.  
+**Stage 3** - schema + contract/autofix.  
+**Stage 4** - `run` bridge (poll waiter; optional TCP Redis).  
+**Stage 5** - verify (cron worker + E2B, or honest skip) + Plan + real deploy.
 
 **Rollback:** flags. Vite boot failure falls back to static server **inside** the Vite-preview flag path as a runtime fallback, plus the flag itself.
 
@@ -1061,17 +1061,17 @@ Flags default **off** in production; **on** in development. CI for each PR runs 
 
 None blocking this RFC. Prior questions are closed as Key Decisions 13–19.
 
-Residual (non-blocking, can wait until after PR 6 telemetry): poll waiter p95 may justify TCP Redis or WS; E2B vs other VM vendors if `E2B_API_KEY` is never set in production — product then lives on static jsx-a11y + Vercel build only, which is an accepted degraded mode.
+Residual (non-blocking, can wait until after PR 6 telemetry): poll waiter p95 may justify TCP Redis or WS; E2B vs other VM vendors if `E2B_API_KEY` is never set in production - product then lives on static jsx-a11y + Vercel build only, which is an accepted degraded mode.
 
 ---
 
 ## References
 
-- Codex agent loop — [https://openai.com/index/unrolling-the-codex-agent-loop/](https://openai.com/index/unrolling-the-codex-agent-loop/)
-- v0 coding agent — [https://vercel.com/blog/how-we-made-v0-an-effective-coding-agent](https://vercel.com/blog/how-we-made-v0-an-effective-coding-agent)
-- Lovable chat — [https://docs.lovable.dev/features/projects/chat](https://docs.lovable.dev/features/projects/chat); subagents — [https://lovable.dev/blog/subagents-in-lovable](https://lovable.dev/blog/subagents-in-lovable)
-- Replit Agent — [https://docs.replit.com/features/agent/overview](https://docs.replit.com/features/agent/overview); Snapshot Engine — [https://replit.com/blog/inside-replits-snapshot-engine](https://replit.com/blog/inside-replits-snapshot-engine)
-- Bolt.new — [https://github.com/stackblitz/bolt.new](https://github.com/stackblitz/bolt.new)
+- Codex agent loop - [https://openai.com/index/unrolling-the-codex-agent-loop/](https://openai.com/index/unrolling-the-codex-agent-loop/)
+- v0 coding agent - [https://vercel.com/blog/how-we-made-v0-an-effective-coding-agent](https://vercel.com/blog/how-we-made-v0-an-effective-coding-agent)
+- Lovable chat - [https://docs.lovable.dev/features/projects/chat](https://docs.lovable.dev/features/projects/chat); subagents - [https://lovable.dev/blog/subagents-in-lovable](https://lovable.dev/blog/subagents-in-lovable)
+- Replit Agent - [https://docs.replit.com/features/agent/overview](https://docs.replit.com/features/agent/overview); Snapshot Engine - [https://replit.com/blog/inside-replits-snapshot-engine](https://replit.com/blog/inside-replits-snapshot-engine)
+- Bolt.new - [https://github.com/stackblitz/bolt.new](https://github.com/stackblitz/bolt.new)
 - In-repo: `apps/web/src/app/api/generate/route.ts`, `apps/web/src/lib/agent-protocol.ts`, `apps/web/src/lib/use-webcontainer.ts`, `apps/web/src/lib/preview-startup.ts`, `apps/web/src/lib/context-window.ts`, `apps/web/src/lib/versioning.ts`, `apps/web/src/lib/generation-stream.ts`, `apps/web/src/lib/generation-protocol.ts`, `apps/web/src/lib/trpc/routers/chat.ts`, `apps/web/src/lib/trpc/routers/deployments.ts`, `apps/web/src/lib/trpc/routers/github.ts`, `apps/web/src/server/vercel.ts`, `apps/web/src/server/telemetry.ts`, `apps/web/src/middleware.ts`, `packages/ai-gateway/src/provider.ts`, `packages/ai-gateway/src/types.ts`, `packages/codegen/package.json`, `packages/visual-editor/package.json`, `prisma/schema.prisma`, `apps/web/src/app/project/[id]/page.tsx`
 
 ---
@@ -1106,7 +1106,7 @@ Residual (non-blocking, can wait until after PR 6 telemetry): poll waiter p95 ma
 
 14. **Plan mode does not get `run`.** (Former open Q1.)
 
-15. **Pinned `stack-lock.json` versions**, then autofix — not "whatever the model wrote." (Former open Q3.)
+15. **Pinned `stack-lock.json` versions**, then autofix - not "whatever the model wrote." (Former open Q3.)
 
 16. **Do not seed `@app-builder/visual-editor` into generated `vite.config.ts`.** Do not run `transformIndexHtml` in the parent React hook. Inject `.sovereign-edit.js` / `.sovereign/axe.js` by writing them into WC and patching the **WC copy** of `index.html` (not Prisma). Re-patch after every `index.html` write. Never persist `.sovereign*` as `ProjectFile`. `data-ve-id` is a follow-up PR, not PR 4. (Former open Q4.)
 
@@ -1125,105 +1125,105 @@ Each PR is independently reviewable and mergeable behind a flag. Flags default o
 **Critical path:** 1a → 2 → **10 (split)** → 4 (flagged Vite) → 5 (schema + `createVersion` message) → 8a → 6 (`run`) → 7 → 11.  
 **Parallel:** 3, 1b, 1c, 8b, 9.
 
-### PR 1a — OpenAI-compatible native tool_calls in the gateway
+### PR 1a - OpenAI-compatible native tool_calls in the gateway
 
 - **Title:** `feat(ai-gateway): parse OpenAI-compatible tool_calls and GatewayMessage mapper`
 - **Files/components:** `packages/ai-gateway/src/provider.ts` (OpenAICompatibleProvider), `packages/ai-gateway/src/types.ts`, `packages/ai-gateway/src/gateway.ts`, `packages/shared/src/index.ts`, recorded SSE fixtures
 - **Dependencies:** none
 - **Changes:** `GatewayMessage` union; `toolChoice`; assemble `delta.tool_calls` by `index`; map `role: tool`. Tests from fixtures. No generate behavior change. Anthropic/Google still drop tools.
 
-### PR 1b — Anthropic system + tool_use
+### PR 1b - Anthropic system + tool_use
 
 - **Title:** `feat(ai-gateway): Anthropic top-level system and tool_use streaming`
 - **Files/components:** `packages/ai-gateway/src/provider.ts` (`AnthropicProvider.buildPayload` / stream)
 - **Dependencies:** PR 1a types
 - **Changes:** Extract `role: system` out of `messages` onto top-level `system` (**this is a 400 today if left in messages**). Send `tools` as `input_schema`. Parse `content_block_start` / `input_json_delta`. Map tool results to `tool_result` blocks. Fixtures.
 
-### PR 1c — Google functionDeclarations
+### PR 1c - Google functionDeclarations
 
 - **Title:** `feat(ai-gateway): Google function calling`
 - **Files/components:** `packages/ai-gateway/src/provider.ts` (`GoogleProvider`)
 - **Dependencies:** PR 1a types
 - **Changes:** `functionDeclarations` + `functionResponse` mapper; complete `functionCall` parse. Fixtures.
 
-### PR 2 — Generate loop speaks native tools (FS still in-memory Map)
+### PR 2 - Generate loop speaks native tools (FS still in-memory Map)
 
 - **Title:** `feat(generate): execute native tools instead of JSON-in-text`
 - **Files/components:** `apps/web/src/app/api/generate/route.ts` (`maxDuration = 800`), `apps/web/src/lib/agent-protocol.ts`, `buildAgentSystemPrompt` (new helper, both prompts tested), `apps/web/src/server/telemetry.ts` (log counters only). **Not** compaction in this PR.
 - **Dependencies:** PR 1a (Anthropic/Google keep JSON until 1b/1c)
 - **Changes:** Pass `SOVEREIGN_TOOLS` without `run`/`update_plan` when `SOVEREIGN_NATIVE_TOOLS=1`. Map tool_calls onto existing executors. Assistant message with no tool calls ends the loop. Incremental parse of `write_file`/`edit_file` argument buffers → existing `file-preview`. Fallback parser when tools not offered or one-shot JSON. Flag-off → **current prompt verbatim**.
 
-### PR 3 — Freeze the dead generation path
+### PR 3 - Freeze the dead generation path
 
 - **Title:** `chore: deprecate chat.send and freeze codegen parseResponse / FILE protocol`
 - **Files/components:** `apps/web/src/lib/trpc/routers/chat.ts`, `packages/codegen/src/engine.ts`, `apps/web/src/lib/generation-protocol.ts` (parser freeze banner; types stay)
 - **Dependencies:** none
 - **Changes:** `chat.send` throws `BAD_REQUEST`. Document that this is `{ message, changes[] }`, not `<<<PATCH:>>>`.
 
-### PR 10 — Split project page + builder a11y (before `run`)
+### PR 10 - Split project page + builder a11y (before `run`)
 
 - **Title:** `refactor(project): split 1843-line page and meet WCAG on the builder chrome`
 - **Files/components:** `page.tsx` → `components/project/*`, `lib/use-generation.ts`, `lib/use-preview-runtime.ts` (stub: WC + `Map<path,content>`), move inner `ToolStepsDisplay`; live region; listbox; keyboard resize; `aria-hidden` on offscreen iframe
 - **Dependencies:** none
 - **Changes:** Behavior-preserving split so PR 4/6/7/9 do not collide in the god file. Move the 120 ms throttle into the hook so PR 6 can apply `file-operation` unthrottled without fighting `page.tsx`.
 
-### PR 4 — Vite-in-WebContainer preview (flagged; agent still does not `run`)
+### PR 4 - Vite-in-WebContainer preview (flagged; agent still does not `run`)
 
 - **Title:** `feat(preview): boot Vite in WebContainer instead of the static file server`
 - **Files/components:** `apps/web/src/lib/use-webcontainer.ts`, `apps/web/src/lib/preview-startup.ts`, `apps/web/src/lib/visual-editor.ts` (`instrumentPreviewHtml` + axe tag), tests. Subscribe to WC `error` and `forwardPreviewErrors` into `sandbox.logs`.
 - **Dependencies:** PR 10 preferred (hook lives in `use-preview-runtime.ts`)
 - **Changes:** If `package.json` exists and `SOVEREIGN_VITE_PREVIEW=1`: `npm install --ignore-scripts` then `npx vite --host`. **Before Vite:** write `.sovereign-edit.js` and `.sovereign/axe.js` into WC only; patch the WC copy of `index.html` (Prisma unchanged); re-patch after later `index.html` writes. Keep `.sovereign-preview.mjs` as fallback when flag off **or** boot fails. Product disclosure about third-party JS. **Do not** import `@app-builder/visual-editor`. **Do not** register `transformIndexHtml` in the parent React hook.
 
-### PR 5 — Prisma: runs, traces, plans, VerifyReport, createVersion message
+### PR 5 - Prisma: runs, traces, plans, VerifyReport, createVersion message
 
 - **Title:** `feat(db): GenerationRun, tool traces, AgentPlan, VerifyReport`
 - **Files/components:** `prisma/schema.prisma`, migration, `apps/web/src/lib/versioning.ts` (`message` option), `User`/`Project` reverse fields, `telemetry.ts` add `encryptedKey` to `REDACTED_FIELDS`
 - **Dependencies:** none
 - **Changes:** Schema as specified. `Project.vercelProjectId`. Pending-request columns on traces. `VerifyReport.runId` `@unique` (1:1). `autoFixCount` only on `GenerationRun`. Hash-only FS arguments (enforced in generate later).
 
-### PR 8a — Contract checker + package.json/lucide/JSON autofix
+### PR 8a - Contract checker + package.json/lucide/JSON autofix
 
 - **Title:** `feat(codegen): stack contract, dependency completion, lucide map, JSON repair`
 - **Files/components:** `packages/codegen/src/*`, `stack-lock.json`, generate post-batch hook, tests
 - **Dependencies:** PR 2, PR 5 (for snapshot `message: "autofix"`)
 - **Changes:** Required files; lockfile pins; lucide static map; JSON repair. Seed `SOVEREIGN.md`, `ErrorBoundary`, `.env.example`. No TypeScript AST yet.
 
-### PR 8b — TS import/JSX autofix
+### PR 8b - TS import/JSX autofix
 
 - **Title:** `feat(codegen): TypeScript AST autofixers`
 - **Files/components:** `packages/codegen` (add `typescript` **runtime** dependency), tests
 - **Dependencies:** PR 8a
 - **Changes:** Missing imports / React import / small JSX repairs. < 250ms.
 
-### PR 6 — Runtime tool: agent drives WebContainer via SSE+POST waiter
+### PR 6 - Runtime tool: agent drives WebContainer via SSE+POST waiter
 
 - **Title:** `feat(generate): allowlisted run tool in WebContainer with poll waiter`
 - **Files/components:** generate route, `apps/web/src/app/api/generate/runtime/[runId]/route.ts`, `generation-stream.ts` (parse `runtime-request` including `overlay`; stop dropping it), `use-preview-runtime.ts` (unthrottled `file-operation` apply, `files-revision.ts`), argv grammar + tests, optional TCP Redis `BRPOP`, **required** same-turn write+`run` regression test
 - **Dependencies:** PR 2, PR 4, PR 5, PR 10. **Not blocked on Redis** (Postgres poll is default).
 - **Changes:** `run` tool; capability handshake; flush + unthrottled `file-operation` + overlay + full-tree digest ACK; 120 ms throttle only on `file-preview`; no host fallback; flag `SOVEREIGN_RUNTIME_RUN`. Waiter polls `GenerationToolTrace` every 250 ms. Do not use `UPSTASH_REDIS_REST_*`.
 
-### PR 7 — Verify loop + Try to fix + axe postMessage
+### PR 7 - Verify loop + Try to fix + axe postMessage
 
 - **Title:** `feat(verify): static jsx-a11y gate, client axe persist, optional E2B worker, Try to fix`
 - **Files/components:** `apps/web/src/server/verify/*` (orchestrator, enqueue-or-skip), `apps/web/src/server/workers/verify-project.ts`, `apps/web/src/app/api/cron/jobs/route.ts` (`CRON_SECRET`), `@e2b/code-interpreter` in `apps/web/package.json`, `verify.getLatest` + **`verify.appendChannels`**, preview pane banner, generate static pass
 - **Dependencies:** PR 5, PR 8a. **Does not depend on PR 6**.
 - **Changes:** 1:1 `VerifyReport` upsert; `repair.reportId`; axe `postMessage` → `appendChannels`; enqueue `verify_project` **only** if `E2B_API_KEY` and `SOVEREIGN_JOB_WORKER=1`; otherwise skip with no queued row. Worker claims with `FOR UPDATE SKIP LOCKED`. Flag `SOVEREIGN_VERIFY`. No Playwright. No Next-host spawn.
 
-### PR 9 — Plan vs Build mode
+### PR 9 - Plan vs Build mode
 
 - **Title:** `feat(ux): Plan vs Build with update_plan tool`
 - **Files/components:** generate route (tool subset), `AgentPlan`, prompt bar (already split), `plan` SSE
 - **Dependencies:** PR 2, PR 5, PR 10
 - **Changes:** `update_plan`. Plan mode omits FS/`run`. Flag `SOVEREIGN_PLAN_MODE`.
 
-### PR 11 — Real Vercel deploy (kill stub.localhost)
+### PR 11 - Real Vercel deploy (kill stub.localhost)
 
 - **Title:** `feat(deploy): ship Vite source to Vercel or show an honest disabled state`
 - **Files/components:** `deployments.ts`, `vercel.ts`, Deploy button, Settings copy
 - **Dependencies:** PR 5 (snapshot id + `Project.vercelProjectId`), PR 8a (Vite contract). Verify (PR 7) is a **soft** banner if skipped; Vercel still builds.
 - **Changes:** `{ configured: false }` when no token. Source upload, not dist. Thread `createVersion` snapshot **id**. Do not use `env.VERCEL_PROJECT_ID`. Never write `https://stub.localhost/...`. Flag `SOVEREIGN_REAL_DEPLOY`.
 
-### PR 12 (later, not this RFC) — grep, git export, read-only subagents, vendored visual-editor plugin
+### PR 12 (later, not this RFC) - grep, git export, read-only subagents, vendored visual-editor plugin
 
 - **Title:** `feat(agent): grep tool, GitHub repo sync, optional read-only subagent`
 - **Files/components:** generate tools, `apps/web/src/server/github.ts`, `github-settings.tsx`, optional plain-JS visual-editor vendor

@@ -55,7 +55,7 @@ describe('trimMessagesForContext', () => {
         ],
       },
       // The assistant message alone is ~97 chars (it serializes toolCalls) and
-      // this tool result is 212 chars, so the run is ~309 chars — dwarfing the
+      // this tool result is 212 chars, so the run is ~309 chars - dwarfing the
       // 240-char budget even though each piece would fit on its own.
       { role: 'tool' as const, toolCallId: 'call_1', content: `wrote ${'x'.repeat(200)}` },
       { role: 'user' as const, content: 'next' },

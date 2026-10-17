@@ -50,7 +50,7 @@ function clock(seconds: number): string {
 /**
  * Clamp a scene's progress into a sub-window of the scene: `stage(p, 0.2, 0.6)`
  * is 0 before 20% of the scene has played and 1 after 60%. Shared by every
- * scripted film — it is the one timing primitive the scene scripts use.
+ * scripted film - it is the one timing primitive the scene scripts use.
  */
 export function stage(p: number, from: number, to: number): number {
   if (to <= from) return p >= to ? 1 : 0;
@@ -62,7 +62,7 @@ export function stage(p: number, from: number, to: number): number {
  *
  * There is no video file: a single `requestAnimationFrame` clock walks a list
  * of scenes and each scene re-renders itself from `t`/`p`. That is what lets
- * the demo stay pixel-accurate to the shipped UI — every label below is copied
+ * the demo stay pixel-accurate to the shipped UI - every label below is copied
  * from the running app rather than re-drawn from a screen recording.
  *
  * Behaviour: starts when the player scrolls into view, pauses when it leaves,

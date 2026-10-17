@@ -43,7 +43,7 @@ function buildTree(paths: string[]): TreeNode[] {
           children: [],
         });
       } else {
-        // Directory node — find or create
+        // Directory node - find or create
         const existing = currentLevel.find((n) => n.type === 'directory' && n.name === part);
         if (existing) {
           currentLevel = existing.children;

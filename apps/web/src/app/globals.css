@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 /*
- * Sovereign design tokens — the single source of truth for colour.
+ * Sovereign design tokens - the single source of truth for colour.
  * Values mirror `tailwind.config.ts` (`theme.extend.colors`) so plain CSS and
  * utility classes can never drift apart. Do not add a second palette here.
  */
@@ -43,7 +43,7 @@
       'calt' 1;
   }
 
-  /* Scrollbar styling for dark theme — uses the border/foreground ramp. */
+  /* Scrollbar styling for dark theme - uses the border/foreground ramp. */
   ::-webkit-scrollbar {
     width: 6px;
     height: 6px;

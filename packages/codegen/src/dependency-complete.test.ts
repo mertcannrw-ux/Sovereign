@@ -57,7 +57,7 @@ describe('completePackageJson', () => {
   it('pins the React type packages so tsc can resolve JSX and react imports', () => {
     // Regression: a TSX project whose package.json lacks @types/react makes
     // every file fail with TS7016/TS7026 ("no interface JSX.IntrinsicElements"),
-    // which no source edit can fix — the agent burns its whole step budget.
+    // which no source edit can fix - the agent burns its whole step budget.
     const result = completePackageJson(
       JSON.stringify({
         name: 'shop',

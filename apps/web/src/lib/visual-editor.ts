@@ -8,7 +8,7 @@ function overlayScriptTag(src: string): string {
   return `<script src="${src}"></script>`;
 }
 
-/** Patches the WC copy of index.html only — never persist the result as a ProjectFile. */
+/** Patches the WC copy of index.html only - never persist the result as a ProjectFile. */
 export function instrumentPreviewHtml(content: string): string {
   let tags = '';
   if (!content.includes(EDITOR_SCRIPT_PATH)) tags += overlayScriptTag(EDITOR_SCRIPT_PATH);

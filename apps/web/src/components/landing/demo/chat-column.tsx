@@ -17,11 +17,11 @@ import { cn } from '@app-builder/ui/utils';
 
 /* ---------------------------------------------------------------------------
  * Every string in this file is copied from the shipped components:
- *   components/project/chat-panel.tsx   — "Ready to build", "You"/"Assistant",
+ *   components/project/chat-panel.tsx   - "Ready to build", "You"/"Assistant",
  *                                         model badge, tool-step summary
- *   components/project/prompt-bar.tsx   — composer placeholder, model trigger,
+ *   components/project/prompt-bar.tsx   - composer placeholder, model trigger,
  *                                         reasoning level, send/stop buttons
- *   components/design-direction-cards.tsx — the 3-concept chooser
+ *   components/design-direction-cards.tsx - the 3-concept chooser
  * ------------------------------------------------------------------------- */
 
 export function ChatEmptyState() {
@@ -90,7 +90,7 @@ export interface DemoStep {
   ms: number;
 }
 
-/** `ToolStepsDisplay` — collapsed summary plus the expanded per-file rows. */
+/** `ToolStepsDisplay` - collapsed summary plus the expanded per-file rows. */
 export function ToolSteps({
   steps,
   changes,
@@ -147,7 +147,7 @@ export function ToolSteps({
   );
 }
 
-/** `components/design-direction-cards.tsx` — the 3-concept chooser. */
+/** `components/design-direction-cards.tsx` - the 3-concept chooser. */
 export function DesignDirectionPicker({ revealed }: { revealed: number }) {
   const concepts = [
     { name: 'Warm editorial', tone: 'bg-[#F2EEE4]', ink: 'bg-[#2A2721]' },

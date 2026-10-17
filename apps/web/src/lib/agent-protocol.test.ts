@@ -120,10 +120,10 @@ describe('agent protocol', () => {
   });
 
   it('treats normal text as a direct conversational reply', () => {
-    expect(parseAgentAction('Yes — the preview updates after every completed file write.')).toEqual(
+    expect(parseAgentAction('Yes - the preview updates after every completed file write.')).toEqual(
       {
         type: 'respond',
-        message: 'Yes — the preview updates after every completed file write.',
+        message: 'Yes - the preview updates after every completed file write.',
       },
     );
   });
@@ -179,8 +179,8 @@ describe('agent protocol', () => {
   });
 
   it('streams plain prose as the answer but never a tool payload or a build plan', () => {
-    expect(getStreamingAnswer('Yes — the preview updates after every completed file')).toBe(
-      'Yes — the preview updates after every completed file',
+    expect(getStreamingAnswer('Yes - the preview updates after every completed file')).toBe(
+      'Yes - the preview updates after every completed file',
     );
     // Tool calls and thinking are not answers; the tolerated prose prefix in
     // front of a tool action stops streaming the moment the action appears.

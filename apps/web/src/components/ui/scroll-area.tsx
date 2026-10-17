@@ -1,4 +1,4 @@
-// ScrollArea component — scrollable container with custom scrollbar
+// ScrollArea component - scrollable container with custom scrollbar
 'use client';
 
 import { forwardRef } from 'react';

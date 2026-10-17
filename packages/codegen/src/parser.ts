@@ -1,4 +1,4 @@
-// Response Parser — legacy markdown parser (kept for backward compatibility)
+// Response Parser - legacy markdown parser (kept for backward compatibility)
 // The new engine uses parseResponse() in engine.ts for structured JSON output.
 
 import type { FileChange, FileOperation } from './types';

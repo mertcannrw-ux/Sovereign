@@ -250,8 +250,8 @@ export const authRouter = router({
       // meaningful identity. Under a trusted proxy we can additionally separate
       // callers by IP; without one every request is seen as 127.0.0.1, so the
       // key must stay a single shared bucket (never per-request, which would
-      // let a caller reset the limiter at will). Using the token hash prefix —
-      // not the raw token — also keeps tokens out of rate-limit keys/logs, and
+      // let a caller reset the limiter at will). Using the token hash prefix -
+      // not the raw token - also keeps tokens out of rate-limit keys/logs, and
       // the 20/15min budget is unchanged in both modes.
       const identity = env.TRUSTED_PROXY ? `${ctx.ipHash}:${tokenHash.slice(0, 16)}` : 'global';
       const rate = await checkRateLimit('passwordResetSubmit', identity);

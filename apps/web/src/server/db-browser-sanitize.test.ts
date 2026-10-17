@@ -9,7 +9,7 @@ import {
 
 const TENANT = 'p_0123456789abcdef0123456789abcdef';
 
-describe('sanitizeSqlForTenant — allowed statements', () => {
+describe('sanitizeSqlForTenant - allowed statements', () => {
   it('accepts a plain SELECT against the tenant schema', () => {
     expect(sanitizeSqlForTenant('SELECT * FROM users', TENANT)).toBe('SELECT * FROM users');
   });
@@ -35,7 +35,7 @@ describe('sanitizeSqlForTenant — allowed statements', () => {
   });
 });
 
-describe('sanitizeSqlForTenant — blocked statements', () => {
+describe('sanitizeSqlForTenant - blocked statements', () => {
   const blocked: Array<[string, string]> = [
     ['INSERT', 'INSERT INTO users (id) VALUES (1)'],
     ['UPDATE', 'UPDATE users SET admin = true'],
@@ -98,7 +98,7 @@ describe('sanitizeSqlForTenant — blocked statements', () => {
 
   it('still allows read-only XML predicates on values (no relation access)', () => {
     // xpath/xml_is_well_formed* operate only on values already in the
-    // statement — they cannot execute SQL or reach another schema, so they
+    // statement - they cannot execute SQL or reach another schema, so they
     // are allowed for tenant queries over xml-typed columns.
     expect(sanitizeSqlForTenant("SELECT xpath('/a/b', doc) FROM docs", TENANT)).not.toBeNull();
     expect(sanitizeSqlForTenant("SELECT xml_is_well_formed('')", TENANT)).not.toBeNull();
@@ -111,7 +111,7 @@ describe('sanitizeSqlForTenant — blocked statements', () => {
   });
 
   it('accepts the UUID default the Database panel prefills', () => {
-    // Regression: database-panel.tsx prefills `gen_random_uuid()` — the
+    // Regression: database-panel.tsx prefills `gen_random_uuid()` - the
     // allowlist must accept what the UI advertises (and what Postgres natively
     // provides) or every default table creation 400s.
     expect(isSafeDefault('gen_random_uuid()')).toBe(true);
@@ -169,7 +169,7 @@ describe('sanitizeSqlForTenant — blocked statements', () => {
   });
 });
 
-describe('sanitizeSqlForTenant — table-reference bypass regressions', () => {
+describe('sanitizeSqlForTenant - table-reference bypass regressions', () => {
   const OTHER = 'p_fedcba9876543210fedcba9876543210';
 
   const blocked: Array<[string, string]> = [
@@ -225,12 +225,12 @@ describe('sanitizeSqlForTenant — table-reference bypass regressions', () => {
   }
 });
 
-describe('sanitizeSqlForTenant — dollar quotes and unterminated constructs', () => {
+describe('sanitizeSqlForTenant - dollar quotes and unterminated constructs', () => {
   const OTHER = 'p_fedcba9876543210fedcba9876543210';
   const blocked: Array<[string, string]> = [
     // Regression: `$$` is the EMPTY dollar-quote tag. The stripper used to
     // copy the first `$` literally, then derive the bogus tag `$a$` from the
-    // second, fail to find its close, and discard the rest of the statement —
+    // second, fail to find its close, and discard the rest of the statement -
     // so every guard below saw only `SELECT $` while PostgreSQL executed the
     // whole query. Any project VIEWER could read platform tables this way.
     [
@@ -245,7 +245,7 @@ describe('sanitizeSqlForTenant — dollar quotes and unterminated constructs', (
     ['unterminated single-quoted literal', "SELECT 'abc, x FROM public.users"],
     // Regression: the old `"` branch copied an unterminated identifier body
     // verbatim, so `FROM users` survived as one quoted word and the table
-    // scanner found no schema introducer — the statement was ALLOWED.
+    // scanner found no schema introducer - the statement was ALLOWED.
     // (`SELECT "abc FROM public.users` is NOT this case: `public` was already
     // caught by the platform pattern before the unterminated-identifier fix.)
     ['unterminated quoted identifier swallowing the FROM', 'SELECT "abc, x FROM users'],
@@ -254,7 +254,7 @@ describe('sanitizeSqlForTenant — dollar quotes and unterminated constructs', (
     // Regression: PostgreSQL block comments NEST, so the first `*/` does not
     // end the comment. The old scan stopped there and the apostrophe in `it's`
     // then opened a phantom literal that swallowed the platform reference to
-    // end of input — ALLOWED, and the remainder `SELECT 1 , (SELECT …)` is
+    // end of input - ALLOWED, and the remainder `SELECT 1 , (SELECT …)` is
     // executable (a leading comma would be a syntax error, so the exploit
     // needs a select item before it). Depth tracking exposes `public.users`.
     [
@@ -266,7 +266,7 @@ describe('sanitizeSqlForTenant — dollar quotes and unterminated constructs', (
     // scanner had no E-string rule: it ended the literal at the `\'` quote and
     // desynchronized the scan. On these inputs the true terminator follows
     // immediately, so the old extent accidentally matched the server's and the
-    // reference stayed exposed — both pass against the old code. They are
+    // reference stayed exposed - both pass against the old code. They are
     // behavior locks, not regression proofs: the reference between two
     // complete E-strings is live SQL to PostgreSQL and must stay blocked.
     [
@@ -279,7 +279,7 @@ describe('sanitizeSqlForTenant — dollar quotes and unterminated constructs', (
     ],
     // Regression: `scan.l` defines `comment ("--"{non_newline}*)` with
     // `non_newline [^\n\r]`, so a bare CR ends the comment on the server while
-    // the scanner blanked everything after it — ALLOWED, and the wrapping
+    // the scanner blanked everything after it - ALLOWED, and the wrapping
     // `SELECT * FROM (…) AS _q` then read the platform table.
     ['CR-terminated line comment hiding a platform schema', 'SELECT 1 -- x\rFROM public.sessions'],
     ['CR-terminated line comment hiding another tenant', `SELECT 1 -- x\rFROM ${OTHER}.users`],
@@ -304,23 +304,23 @@ describe('sanitizeSqlForTenant — dollar quotes and unterminated constructs', (
     ['nested block comment that does close', 'SELECT /* a /* b */ c */ 1 FROM users'],
     ['E-string with a backslash escape', "SELECT E'a\\tb' AS label, id FROM users"],
     // `U&'…'` (`<xus>`) and `U&"…"` (`<xui>`) have NO backslash rule in
-    // `scan.l` — the lexer ends them at the first unpaired quote like any other
-    // literal — so the scanner must not treat them as escape strings.
+    // `scan.l` - the lexer ends them at the first unpaired quote like any other
+    // literal - so the scanner must not treat them as escape strings.
     ['unicode-escape string literal', "SELECT U&'d!0061t!+000061' UESCAPE '+' AS label FROM users"],
     // `dolq_start`/`dolq_cont` admit every byte >= 0x80, so `$té$` is a real
     // tag. An ASCII-only match left the BODY unstripped and scanned it as live
     // SQL, which rejected valid queries two ways: an apostrophe inside the body
     // opened a phantom literal running to EOF, and a keyword inside it tripped
     // the forbidden-keyword check. (The tag itself must stay quote-free:
-    // `dolq_cont` excludes `'`, so `$t'é$` is `{dolqfailed}` — a bare `$`
-    // followed by an identifier — and PostgreSQL parses it as ordinary text.)
+    // `dolq_cont` excludes `'`, so `$t'é$` is `{dolqfailed}` - a bare `$`
+    // followed by an identifier - and PostgreSQL parses it as ordinary text.)
     ['apostrophe inside a non-ASCII dollar body', "SELECT $té$ it's fine $té$ FROM users"],
     [
       'forbidden keyword inside a non-ASCII dollar body',
       'SELECT $té$ DROP TABLE x $té$ AS label FROM users',
     ],
     // flex takes the longest match, so `WHERE` is one keyword token and the
-    // literal after it is an ORDINARY string — `\'` does not escape there, and
+    // literal after it is an ORDINARY string - `\'` does not escape there, and
     // the literal ends at the first unpaired quote. Treating it as an E-string
     // would swallow `= ` into a phantom literal and reject valid SQL.
     ['identifier ending in E immediately before a literal', "SELECT * FROM users WHERE'a\\' = 'b'"],
@@ -333,7 +333,7 @@ describe('sanitizeSqlForTenant — dollar quotes and unterminated constructs', (
   }
 });
 
-describe('sanitizeSqlForTenant — identifier-encoding and regclass bypasses', () => {
+describe('sanitizeSqlForTenant - identifier-encoding and regclass bypasses', () => {
   const OTHER = 'p_fedcba9876543210fedcba9876543210';
   const blocked: Array<[string, string]> = [
     // Regression: `U&"…"` is a single IDENT token to PostgreSQL (unicode-escape
@@ -352,7 +352,7 @@ describe('sanitizeSqlForTenant — identifier-encoding and regclass bypasses', (
     ['lowercase unicode-escape identifier', `SELECT * FROM u&"${OTHER}"."users"`],
     ['unicode-escape identifier after an opening paren', `SELECT * FROM (U&"${OTHER}"."users") x`],
     // Regression: the call-site regex anchors on `fn\s*\(`, but after a quoted
-    // name comes `"` — matching neither — so quoting a forbidden function
+    // name comes `"` - matching neither - so quoting a forbidden function
     // defeated the check while PostgreSQL still resolves the lowercase name.
     [
       'quoted forbidden function name',
@@ -363,7 +363,7 @@ describe('sanitizeSqlForTenant — identifier-encoding and regclass bypasses', (
       `SELECT "dblink" ('host=x dbname=y', 'SELECT 1')`,
     ],
     // Regression: sequence functions resolve a regclass from a string literal,
-    // which stripSqlLiterals deliberately blanks — the schema-qualified target
+    // which stripSqlLiterals deliberately blanks - the schema-qualified target
     // was invisible to every guard, so a VIEWER could mutate or read another
     // tenant's sequences.
     ['setval on another tenant sequence', `SELECT setval('${OTHER}.users_id_seq', 1)`],
@@ -371,7 +371,7 @@ describe('sanitizeSqlForTenant — identifier-encoding and regclass bypasses', (
     ['currval on another tenant sequence', `SELECT currval('${OTHER}.users_id_seq')`],
     ['quoted sequence function', `SELECT "setval"('${OTHER}.users_id_seq', 1)`],
     // Literal arguments are opaque to the guards, so the denial cannot be
-    // scoped to foreign schemas — own-schema calls are rejected too.
+    // scoped to foreign schemas - own-schema calls are rejected too.
     ['nextval even on the tenant schema itself', `SELECT nextval('${TENANT}.users_id_seq')`],
   ];
 
@@ -381,7 +381,7 @@ describe('sanitizeSqlForTenant — identifier-encoding and regclass bypasses', (
     });
   }
 
-  it('allows U&" inside a string literal — the body is blanked before the check', () => {
+  it('allows U&" inside a string literal - the body is blanked before the check', () => {
     const sql = `SELECT * FROM users WHERE bio = 'try U&"x" for unicode'`;
     expect(sanitizeSqlForTenant(sql, TENANT)).toBe(sql);
   });
@@ -402,7 +402,7 @@ describe('sanitizeSqlForTenant — identifier-encoding and regclass bypasses', (
   });
 });
 
-describe('referencesForeignSchema — scanner layer', () => {
+describe('referencesForeignSchema - scanner layer', () => {
   const OTHER = 'p_fedcba9876543210fedcba9876543210';
 
   // These assert the table-reference scanner directly, so the guard still holds
@@ -429,7 +429,7 @@ describe('referencesForeignSchema — scanner layer', () => {
     expect(referencesForeignSchema(`SELECT * FROM ${TENANT}.users, ${TENANT}.notes`, TENANT)).toBe(
       false,
     );
-    // `table` is not an identifier here — only the reserved-word form is scanned.
+    // `table` is not an identifier here - only the reserved-word form is scanned.
     expect(referencesForeignSchema('SELECT table_name FROM users', TENANT)).toBe(false);
   });
 });

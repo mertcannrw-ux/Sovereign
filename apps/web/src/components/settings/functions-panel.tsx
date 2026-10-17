@@ -104,16 +104,16 @@ export function FunctionsPanel({ className }: FunctionsPanelProps) {
 
   function handleSave() {
     if (!form.path.trim()) return;
-    // Mock save — tRPC pending
+    // Mock save - tRPC pending
     resetAndClose();
   }
 
   function handleToggleEnabled(_func: { id: string; enabled: boolean }) {
-    // Mock toggle — tRPC pending
+    // Mock toggle - tRPC pending
   }
 
   function handleDelete(_func: { id: string }) {
-    // Mock delete — tRPC pending
+    // Mock delete - tRPC pending
   }
   return (
     <Card className={cn(className)}>

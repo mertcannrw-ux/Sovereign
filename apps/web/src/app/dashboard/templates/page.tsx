@@ -51,7 +51,7 @@ import { TemplateSketch } from './template-sketch';
 const PROJECT_NAME_LIMIT = 100;
 
 /**
- * Per-category illustration colours. Sanctioned in design.md — not app chrome.
+ * Per-category illustration colours. Sanctioned in design.md - not app chrome.
  */
 const categoryMeta: Record<
   Exclude<TemplateCategory, 'All'>,
@@ -265,7 +265,7 @@ function TemplatesCatalog() {
               Templates
             </h1>
             <p className="mt-2 max-w-xl text-sm leading-6 text-foreground-muted">
-              Choose a pattern and name the project. The brief waits in the prompt — nothing is
+              Choose a pattern and name the project. The brief waits in the prompt - nothing is
               generated until you send it.
             </p>
           </div>

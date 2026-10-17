@@ -4,7 +4,7 @@ import type { TemplateLayout } from '@/data/templates';
 
 /**
  * Recognizable pattern sketches. Colours are the sanctioned per-category
- * palette passed in from the templates page — not app chrome.
+ * palette passed in from the templates page - not app chrome.
  */
 export function TemplateSketch({
   layout,

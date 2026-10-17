@@ -1,6 +1,6 @@
 /**
  * Static allowlist keyed by the exact canonical command string. A command is
- * an exact string match: there is no shell — no `;`, `&&`, pipes, flags or
+ * an exact string match: there is no shell - no `;`, `&&`, pipes, flags or
  * package arguments can slip through, and an unknown key resolves to null.
  */
 export interface RuntimeCommandSpec {
@@ -50,7 +50,7 @@ export const RUNTIME_OUTPUT_MAX_CHARS = 8_000;
 /**
  * Head-and-tail truncation: build errors are printed at the end of the log and
  * the command line at the beginning, so both survive the cap. The marker is
- * part of the cap — the result never exceeds `maxChars`.
+ * part of the cap - the result never exceeds `maxChars`.
  */
 export function truncateRuntimeOutput(
   output: string,
@@ -128,7 +128,7 @@ export function formatRuntimeObservation(command: string, result: RuntimeCommand
   const lines: string[] = [];
   if (result.status === 'failed') {
     lines.push(
-      `run error: \`${command}\` did not complete${result.error ? ` — ${result.error}` : ''}.`,
+      `run error: \`${command}\` did not complete${result.error ? ` - ${result.error}` : ''}.`,
     );
   } else {
     lines.push(

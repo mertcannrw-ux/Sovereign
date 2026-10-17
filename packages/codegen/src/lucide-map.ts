@@ -62,7 +62,7 @@ const LIB_PREFIX =
  * The import-clause grammar `rewriteImportClause` understands. Kept explicit
  * (rather than a lazy `[\s\S]*?`) so a match can never begin at an earlier
  * `import` in the file: the lazy form spanned every statement up to the lucide
- * one, and the rewrite then replaced all of them — deleting the file's other
+ * one, and the rewrite then replaced all of them - deleting the file's other
  * imports and collapsing the lucide import to a bare fallback.
  */
 const IMPORT_CLAUSE = String.raw`(?:[\w$]+\s*,\s*)?(?:\{[^}]*\}|\*\s+as\s+[\w$]+|[\w$]+)`;

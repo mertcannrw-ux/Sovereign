@@ -135,14 +135,14 @@ Rules:
  * Appended only when the calling client can execute `run` (it advertises the
  * WebContainer runtime). Appending it unconditionally would advertise a tool
  * the run cannot use, and a `run` call without a runtime is a wasted turn.
- * The JSON line is shown to text-protocol providers only — the native prompt
+ * The JSON line is shown to text-protocol providers only - the native prompt
  * forbids JSON tool syntax in the assistant message.
  */
 export const RUNTIME_PROMPT_RULES = [
   `Sandbox verification ("run"):`,
   `- "run" executes ONE allowlisted command inside the project's browser sandbox and returns its combined stdout/stderr and exit code. Allowed commands: ${RUNTIME_COMMAND_NAMES.map((name) => `"${name}"`).join(', ')}. Nothing else can execute; never chain commands or add flags.`,
   `- Verify your work before finishing: run "npm install" after changing dependencies, then "npx tsc --noEmit" and "npx vite build". Fix every error the output reports, then run the command again until it is clean.`,
-  `- Output is capped at 8000 characters. A "run error" (sandbox closed, timeout) is not a compile failure — do not rewrite working files to fix it; say the sandbox could not run the command.`,
+  `- Output is capped at 8000 characters. A "run error" (sandbox closed, timeout) is not a compile failure - do not rewrite working files to fix it; say the sandbox could not run the command.`,
 ].join('\n');
 
 export function buildAgentSystemPrompt(toolsOffered: boolean, runtimeEnabled: boolean): string {

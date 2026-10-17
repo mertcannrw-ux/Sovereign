@@ -154,7 +154,7 @@ describe('useGeneration run outcomes', () => {
       column: 7,
     });
 
-    // Rollback emissions restore prior content and carry no position — the
+    // Rollback emissions restore prior content and carry no position - the
     // cursor resets to the top rather than pointing past the restored file.
     await act(async () => {
       await stream.emit({
@@ -376,14 +376,14 @@ describe('useGeneration run outcomes', () => {
     expect(result.current.liveAnswer).toBe('');
 
     await act(async () => {
-      await stream.emit({ type: 'answer', data: { content: 'Yes — after every' } });
+      await stream.emit({ type: 'answer', data: { content: 'Yes - after every' } });
     });
-    expect(result.current.liveAnswer).toBe('Yes — after every');
+    expect(result.current.liveAnswer).toBe('Yes - after every');
 
     await act(async () => {
-      await stream.emit({ type: 'answer', data: { content: 'Yes — after every write.' } });
+      await stream.emit({ type: 'answer', data: { content: 'Yes - after every write.' } });
     });
-    expect(result.current.liveAnswer).toBe('Yes — after every write.');
+    expect(result.current.liveAnswer).toBe('Yes - after every write.');
 
     // A tool turn settles with no answer at all: the prose prefix must not be
     // left on screen pretending to be the reply.

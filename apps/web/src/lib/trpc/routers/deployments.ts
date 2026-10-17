@@ -77,7 +77,7 @@ export const deploymentsRouter = router({
             const now = new Date();
 
             const buildSteps = [
-              `[${now.toISOString()}] Local stub — Vercel deploy is not connected.`,
+              `[${now.toISOString()}] Local stub - Vercel deploy is not connected.`,
               `[${now.toISOString()}] Recorded placeholder deployment v${nextVersion}.`,
               `[${now.toISOString()}] URL ${deploymentUrl} is not a live host.`,
             ];

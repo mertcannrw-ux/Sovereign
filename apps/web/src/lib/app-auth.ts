@@ -1,5 +1,5 @@
 /**
- * useAuth hook — reference implementation for generated apps.
+ * useAuth hook - reference implementation for generated apps.
  *
  * This file serves as a template for the code generation engine that produces
  * authentication logic inside generated applications.  The actual `useAuth`
@@ -50,7 +50,7 @@ export interface AuthContextValue extends AuthState {
 /* ── Hook ────────────────────────────────────────────────────── */
 
 /**
- * useAuth — returns the current authentication state and actions.
+ * useAuth - returns the current authentication state and actions.
  *
  * Usage in a generated app:
  * ```tsx
@@ -72,7 +72,7 @@ export function useAuth(): AuthContextValue {
 }
 
 /**
- * useUser — convenience selector that returns only the current user.
+ * useUser - convenience selector that returns only the current user.
  */
 export function useUser(): AuthUser | null {
   throw new Error(
@@ -82,7 +82,7 @@ export function useUser(): AuthUser | null {
 }
 
 /**
- * signIn — standalone function for signing in outside of React components.
+ * signIn - standalone function for signing in outside of React components.
  */
 export async function signIn(_options: SignInOptions): Promise<AuthUser> {
   throw new Error(
@@ -92,7 +92,7 @@ export async function signIn(_options: SignInOptions): Promise<AuthUser> {
 }
 
 /**
- * signOut — standalone function for signing out outside of React components.
+ * signOut - standalone function for signing out outside of React components.
  */
 export async function signOut(): Promise<void> {
   throw new Error(
@@ -102,7 +102,7 @@ export async function signOut(): Promise<void> {
 }
 
 /**
- * AuthProvider — wraps a React tree with auth context.
+ * AuthProvider - wraps a React tree with auth context.
  */
 export function AuthProvider({ children: _children }: { children: ReactNode }): ReactNode {
   throw new Error(
