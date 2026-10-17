@@ -30,7 +30,7 @@ interface ProjectListCursor {
 /**
  * Decode a projects.list cursor. Returns null for absent/malformed input: a
  * cursor only ever round-trips from our own nextCursor, so a bad one means a
- * stale client — degrade to a fresh first page instead of a 500.
+ * stale client - degrade to a fresh first page instead of a 500.
  */
 function parseProjectListCursor(raw: string | undefined): ProjectListCursor | null {
   if (!raw) return null;
@@ -163,7 +163,7 @@ export const projectsRouter = router({
       // Slug allocation must tolerate a concurrent create of the same name:
       // check-then-create races (two creators read "free" simultaneously), and
       // a time-based suffix can collide within the same millisecond. P2002
-      // from the projects_slug_key unique index is the arbiter — retry with
+      // from the projects_slug_key unique index is the arbiter - retry with
       // fresh entropy, like deployments.create does for its version counter.
       // The constraint name is checked so any OTHER unique violation on this
       // multi-table tx propagates instead of silently retrying 5×.

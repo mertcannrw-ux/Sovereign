@@ -27,12 +27,12 @@ const t = initTRPC.context<Context>().create({
 export const router = t.router;
 
 /**
- * Public procedure — accessible without authentication.
+ * Public procedure - accessible without authentication.
  */
 export const publicProcedure = t.procedure;
 
 /**
- * Protected procedure — requires a valid session.
+ * Protected procedure - requires a valid session.
  * Throws UNAUTHORIZED when the caller is not logged in.
  */
 export const protectedProcedure = t.procedure.use(({ ctx, next }) => {

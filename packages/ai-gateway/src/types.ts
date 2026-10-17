@@ -4,7 +4,7 @@ export type { GatewayMessage, ToolCall } from './tool-calls';
 
 /**
  * Options passed to a provider alongside the standard completion params.
- * `baseUrl` — override the provider's default API endpoint (required for Ollama,
+ * `baseUrl` - override the provider's default API endpoint (required for Ollama,
  * optional for others such as self-hosted/private endpoints).
  */
 export interface ProviderCompleteOptions {
@@ -12,7 +12,7 @@ export interface ProviderCompleteOptions {
   maxTokens?: number;
   temperature?: number;
   reasoningEffort?: string;
-  /** Optional abort signal — cancels the upstream request when aborted. */
+  /** Optional abort signal - cancels the upstream request when aborted. */
   signal?: AbortSignal;
   /**
    * Stable identifier for the conversation this request belongs to. Sent as

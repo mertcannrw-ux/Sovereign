@@ -21,7 +21,7 @@ const isIPv6 = (ip: string) => !isIPv4(ip) && ip.includes(':');
  * Checks use packed integer comparison for IPv4.
  */
 const PRIVATE_RANGES = [
-  // F-12: 0.0.0.0/8 — Linux treats as localhost alias
+  // F-12: 0.0.0.0/8 - Linux treats as localhost alias
   { start: [0, 0, 0, 0], end: [0, 255, 255, 255] },
   // RFC 1918
   { start: [10, 0, 0, 0], end: [10, 255, 255, 255] },
@@ -33,11 +33,11 @@ const PRIVATE_RANGES = [
   { start: [169, 254, 0, 0], end: [169, 254, 255, 255] },
   // Multicast
   { start: [224, 0, 0, 0], end: [239, 255, 255, 255] },
-  // CGNAT (RFC 6598) — includes the Alibaba Cloud metadata address 100.100.100.200
+  // CGNAT (RFC 6598) - includes the Alibaba Cloud metadata address 100.100.100.200
   { start: [100, 64, 0, 0], end: [100, 127, 255, 255] },
   // Benchmarking (RFC 2544)
   { start: [198, 18, 0, 0], end: [198, 19, 255, 255] },
-  // Reserved (RFC 1112) — includes the 255.255.255.255 broadcast address
+  // Reserved (RFC 1112) - includes the 255.255.255.255 broadcast address
   { start: [240, 0, 0, 0], end: [255, 255, 255, 255] },
   // Cloud metadata (inside link-local range, checked first)
   { start: [169, 254, 169, 254], end: [169, 254, 169, 254] },
@@ -151,10 +151,10 @@ function isPrivateIPv6(ip: string): boolean {
   const g6 = groups[6]!;
   const g7 = groups[7]!;
 
-  // ::/96 — unspecified `::`, loopback `::1`, and deprecated IPv4-compatible
+  // ::/96 - unspecified `::`, loopback `::1`, and deprecated IPv4-compatible
   // forms (`::127.0.0.1`, `::7f00:1`).
   if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0) return true;
-  // ::ffff:0:0/96 — IPv4-mapped; inspect the embedded IPv4 address.
+  // ::ffff:0:0/96 - IPv4-mapped; inspect the embedded IPv4 address.
   if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0xffff) {
     return isPrivateIPv4(groupsToIPv4(g6, g7));
   }
@@ -164,13 +164,13 @@ function isPrivateIPv6(ip: string): boolean {
   if ((g0 & 0xfe00) === 0xfc00) return true;
   // Multicast ff00::/8.
   if ((g0 & 0xff00) === 0xff00) return true;
-  // NAT64 64:ff9b::/96 — inspect the embedded IPv4 address.
+  // NAT64 64:ff9b::/96 - inspect the embedded IPv4 address.
   if (g0 === 0x64 && g1 === 0xff9b && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0) {
     return isPrivateIPv4(groupsToIPv4(g6, g7));
   }
-  // 6to4 2002::/16 — the next 32 bits carry the embedded IPv4 address.
+  // 6to4 2002::/16 - the next 32 bits carry the embedded IPv4 address.
   if (g0 === 0x2002) return isPrivateIPv4(groupsToIPv4(g1, g2));
-  // Teredo 2001:0000::/32 — the next 32 bits carry the Teredo server IPv4.
+  // Teredo 2001:0000::/32 - the next 32 bits carry the Teredo server IPv4.
   if (g0 === 0x2001 && g1 === 0x0000) return isPrivateIPv4(groupsToIPv4(g2, g3));
   return false;
 }
@@ -178,7 +178,7 @@ function isPrivateIPv6(ip: string): boolean {
 function isPrivateIP(ip: string): boolean {
   if (isIPv4(ip)) return isPrivateIPv4(ip);
   if (isIPv6(ip)) return isPrivateIPv6(ip);
-  return true; // Unknown format – block
+  return true; // Unknown format - block
 }
 
 /** Return whether a valid dotted-decimal IPv4 address belongs to the 127.0.0.0/8 loopback range. */
@@ -251,7 +251,7 @@ export class SsrfError extends Error {
 }
 
 /**
- * Synchronous URL validation — scheme, credentials, fragments.
+ * Synchronous URL validation - scheme, credentials, fragments.
  * Does NOT perform DNS resolution. HTTP is allowed for literal loopback
  * so custom local providers work. Remote custom providers may use any HTTPS port.
  */

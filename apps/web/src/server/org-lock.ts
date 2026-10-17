@@ -26,7 +26,7 @@ function orgIdToAdvisoryKey(organizationId: string): bigint {
  * writers take the org advisory lock inside their transaction, so a project
  * created by the departing member cannot slip between the transfer scan and
  * the membership delete (which would leave the removed user owning a project
- * in this organization — `requireProjectRole` grants OWNER from `ownerId`
+ * in this organization - `requireProjectRole` grants OWNER from `ownerId`
  * regardless of membership).
  *
  * Lock key space: org keys land in [2^62, 2^63-1] via the +2^62 region offset.

@@ -488,7 +488,7 @@ export const organizationsRouter = router({
       // The membership check + create + invite-state transition must be one
       // atomic, conditional operation: accept and revoke race each other, and
       // a plain read-then-write lets an invite accepted/revoked in between
-      // still create a membership. The conditional updateMany is the arbiter —
+      // still create a membership. The conditional updateMany is the arbiter -
       // only the writer that flips acceptedAt from NULL wins.
       const result = await ctx.db.$transaction(async (tx) => {
         const accepted = await tx.organizationInvite.updateMany({
@@ -682,7 +682,7 @@ export const organizationsRouter = router({
       // Offboarding must revoke access, not just membership: `requireProjectRole`
       // grants OWNER from `project.ownerId` regardless of organization, so a
       // removed member's projects are transferred to the org owner and their
-      // collaborations inside this organization are deleted — otherwise the
+      // collaborations inside this organization are deleted - otherwise the
       // removed account keeps full access to everything it owned here.
       await ctx.db.$transaction(async (tx) => {
         // Serialize against projects.create for this org (see helper): a

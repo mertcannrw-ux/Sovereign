@@ -85,7 +85,7 @@ const PROVIDERS: ProviderInfo[] = [
   {
     id: 'custom',
     name: 'Custom (OpenAI Compatible)',
-    icon: '✦',
+    icon: 'C',
     docsUrl: '',
     supportsBaseUrl: true,
   },
@@ -437,7 +437,7 @@ function AIProvidersTab() {
               <div className="flex items-center justify-between gap-4">
                 <div className="flex min-w-0 items-center gap-3">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-lg font-bold text-primary">
-                    🎨
+                    I
                   </div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">

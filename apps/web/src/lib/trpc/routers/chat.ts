@@ -36,7 +36,7 @@ import { persistProjectFiles } from '@/lib/project-files';
  * descending) as a (timestamp, id) pair. The id tiebreaker is required:
  * timestamps are millisecond precision and not unique, so a timestamp-only
  * cursor paired with `timestamp < cursor` makes every same-millisecond row
- * after the page cut unreachable — the walk jumps past the whole tie group.
+ * after the page cut unreachable - the walk jumps past the whole tie group.
  */
 export function paginateMessages<T extends { id: string; timestamp: string | Date }>(
   rows: T[],
@@ -225,7 +225,7 @@ export const chatRouter = router({
           // vLLM) and the ALLOW_LOOPBACK_PROVIDERS policy declined it. Telling
           // them to check their API key sends them to debug the wrong thing, so
           // surface the actionable reason verbatim. Every other failure keeps
-          // the generic line — the remaining SSRF reasons name internal address
+          // the generic line - the remaining SSRF reasons name internal address
           // space and belong in the server log only. BAD_REQUEST is deliberate:
           // INTERNAL_SERVER_ERROR maps to INTERNAL_ERROR in the app's
           // errorFormatter, which substitutes the generic message, so the

@@ -134,7 +134,7 @@ describe('formatRuntimeObservation', () => {
       error: 'no WebContainer',
     });
     expect(observation).toContain(
-      'run error: `npx vite build` did not complete — no WebContainer.',
+      'run error: `npx vite build` did not complete - no WebContainer.',
     );
   });
 

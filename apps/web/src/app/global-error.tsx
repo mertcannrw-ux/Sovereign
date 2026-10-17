@@ -5,7 +5,7 @@ import { useEffect } from 'react';
 /**
  * Catches errors thrown in the root layout, which `app/error.tsx` cannot.
  * Renders its own <html>/<body> and uses inline styles (not tokens/Tailwind)
- * because the root layout — and therefore globals.css — may not have loaded.
+ * because the root layout - and therefore globals.css - may not have loaded.
  */
 export default function GlobalError({
   error,

@@ -1,5 +1,5 @@
 /**
- * Structured database browser — replaces arbitrary SQL execution.
+ * Structured database browser - replaces arbitrary SQL execution.
  * All queries are parameterized with strict identifier validation.
  */
 
@@ -64,7 +64,7 @@ export interface ColumnInfo {
 
 /**
  * A PostgreSQL dollar-quote opener: `$$` or `$tag$`. Tags follow identifier
- * rules — they cannot start with a digit and cannot contain `$` — so `$1`
+ * rules - they cannot start with a digit and cannot contain `$` - so `$1`
  * stays a positional parameter instead of opening a quote. `scan.l`'s
  * `dolq_start`/`dolq_cont` also admit every byte >= 0x80, so a tag may hold
  * non-ASCII: matching only the ASCII subset would leave such a body unstripped,
@@ -86,7 +86,7 @@ const DOLLAR_TAG_RE = /\$(?:[A-Za-z_\u0080-\uFFFF][A-Za-z0-9_\u0080-\uFFFF]*)?\$
  * while the database executes all of it.
  *
  * The invariant `sanitizeSqlForTenant` depends on: everything this function
- * returns is faithful to the input's SQL structure — it never drops a token
+ * returns is faithful to the input's SQL structure - it never drops a token
  * PostgreSQL would parse. Only literal *bodies* become opaque, and those are
  * data, not SQL. The one deliberate divergence runs the safe way: `scan.l`'s
  * `quotecontinue` also lets a literal resume after `'` + newline + `'`, which
@@ -96,7 +96,7 @@ const DOLLAR_TAG_RE = /\$(?:[A-Za-z_\u0080-\uFFFF][A-Za-z0-9_\u0080-\uFFFF]*)?\$
 
 /**
  * True when the single quote at `index` opens a PostgreSQL E-string (`E'…'`),
- * whose body treats a backslash as an escape — `scan.l` state `<xe>` consumes
+ * whose body treats a backslash as an escape - `scan.l` state `<xe>` consumes
  * `\` plus the next character in `xeescape`, `xeoctesc`, `xehexesc` and
  * `xeunicode`, so `\'` is content rather than a terminator.
  *
@@ -245,7 +245,7 @@ const FORBIDDEN_SQL_KEYWORDS = [
   // without a FROM/JOIN token, e.g. `SELECT * FROM (TABLE other.users) x`.
   // `TABLE` is a reserved word in PostgreSQL, so it can only appear here as that
   // command (a table actually named `table` must be written `"table"` and is
-  // rejected too — an acceptable fail-closed trade-off). This keyword block is
+  // rejected too - an acceptable fail-closed trade-off). This keyword block is
   // the backstop; the scanner below also treats `TABLE` as a reference
   // introducer so the guard still holds if this list is ever changed.
   'TABLE',
@@ -253,7 +253,7 @@ const FORBIDDEN_SQL_KEYWORDS = [
 
 // Functions that reach outside the tenant schema (filesystem, sockets, server
 // process control, locks, notifications). Now that string literals are allowed,
-// these would otherwise become reachable — e.g. pg_read_file('...').
+// these would otherwise become reachable - e.g. pg_read_file('...').
 const FORBIDDEN_FUNCTIONS = [
   'pg_read_file',
   'pg_read_binary_file',
@@ -304,7 +304,7 @@ const FORBIDDEN_FUNCTIONS = [
   // cannot inspect: setval('p_other.users_id_seq', 1) rewrites another
   // tenant's sequence and nextval/currval read its values. Scoping the denial
   // to foreign schemas is impossible for the same reason, so own-schema calls
-  // like nextval('users_id_seq') are rejected too — no console workflow needs
+  // like nextval('users_id_seq') are rejected too - no console workflow needs
   // to advance a sequence manually. (lastval takes no argument and cannot name
   // another schema, so it stays allowed.)
   'nextval',
@@ -320,8 +320,8 @@ const FORBIDDEN_FUNCTIONS = [
 // schema reference must be caught no matter which valid SQL syntax hides it:
 // `FROM ONLY`, parenthesized table references, comma lists, subqueries, or
 // missing whitespace around keywords. Regex captures over the raw text cannot
-// do this safely — a capture that ends in the wrong place swallows every later
-// `FROM` — so this scanner tokenizes the already-stripped SQL (string literals
+// do this safely - a capture that ends in the wrong place swallows every later
+// `FROM` - so this scanner tokenizes the already-stripped SQL (string literals
 // and comments are gone) and only treats whole unquoted tokens as keywords.
 
 type SqlToken = { kind: 'word'; value: string; quoted: boolean } | { kind: 'punct'; value: string };
@@ -425,7 +425,7 @@ function isForeignQualifiedName(
  * untouched. Returns true on a foreign schema reference.
  *
  * `TABLE` is included as an introducer because `TABLE relation_expr` is a valid
- * SELECT form that names a relation without any FROM/JOIN token — e.g.
+ * SELECT form that names a relation without any FROM/JOIN token - e.g.
  * `SELECT * FROM (TABLE other.users) x`. Scanning only after FROM/JOIN/comma
  * would miss it and let a foreign tenant schema be read.
  */
@@ -524,7 +524,7 @@ export function sanitizeSqlForTenant(sql: string, tenantSchema?: string): string
   const structural = stripped.trim();
   if (!/^(SELECT|WITH)\s/i.test(structural)) return null;
   // A single statement must not contain an internal statement terminator. A
-  // trailing semicolon is not a terminator — it ends the same statement, so
+  // trailing semicolon is not a terminator - it ends the same statement, so
   // strip it before checking rather than rejecting `SELECT 1;`.
   const withoutTrailingTerminator = structural.replace(/;+\s*$/, '');
   if (/;/.test(withoutTrailingTerminator)) return null;
@@ -550,7 +550,7 @@ export function sanitizeSqlForTenant(sql: string, tenantSchema?: string): string
   if (/(^|[^A-Za-z0-9_$])u&"/i.test(withoutTrailingTerminator)) return null;
 
   // stripSqlLiterals preserves double-quoted identifiers, and `"query_to_xml"(…)`
-  // is a valid call of the lowercase function — but the quote after the name
+  // is a valid call of the lowercase function - but the quote after the name
   // matches neither \s nor ( in the call-site regex, so the raw text evades it.
   // Check unquoted text instead: a quoted name resolves only when it equals the
   // function name exactly, so unquoting can reveal calls but never hide one.
@@ -711,7 +711,7 @@ export async function browseRows(
     }
   }
 
-  // Cursor-based pagination — bound to the first ORDER BY column (or id when
+  // Cursor-based pagination - bound to the first ORDER BY column (or id when
   // no sort is specified) so pagination advances in the same order as the
   // result set. Previously the cursor used a hardcoded `id` column and was
   // pushed after whereFragment, so it never appeared in the query.

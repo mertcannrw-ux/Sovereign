@@ -83,7 +83,7 @@ function ensureIndexHtml(content: string): string {
   }
   // Any module script pointing at a local file is the app entry. Appending a
   // second one (the previous behaviour whenever the entry was not `main.tsx`)
-  // produced two roots — the generated entry plus the seeded `src/main.tsx` —
+  // produced two roots - the generated entry plus the seeded `src/main.tsx` -
   // and mounted the app twice. Normalize the existing entry to the locked path
   // instead, and append only when the document has no local entry at all.
   const localModuleSrc = /\bsrc\s*=\s*["'](?!\/\/)(?![a-z][a-z0-9+.-]*:)[^"']+["']/i;

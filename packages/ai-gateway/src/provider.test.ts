@@ -70,10 +70,10 @@ describe('readResponseBytes', () => {
   });
 
   it('decodes multi-byte characters split across chunks', async () => {
-    const encoded = new TextEncoder().encode('héllo — wörld');
+    const encoded = new TextEncoder().encode('héllo - wörld');
     const response = streamedResponse([encoded.slice(0, 3), encoded.slice(3)], 'close');
 
-    await expect(readResponseText('openai', response)).resolves.toBe('héllo — wörld');
+    await expect(readResponseText('openai', response)).resolves.toBe('héllo - wörld');
   });
 });
 
@@ -156,7 +156,7 @@ describe('outbound provider headers', () => {
 });
 
 /**
- * Feeds `chunks` verbatim and then ends the stream — deliberately never
+ * Feeds `chunks` verbatim and then ends the stream - deliberately never
  * appending a newline, since streams in the wild end on the final event.
  */
 function byteStream(chunks: (string | Uint8Array)[]): ReadableStream<Uint8Array> {
@@ -380,7 +380,7 @@ describe('ssrfFetch cancellation', () => {
   it('cancels the response body when the caller aborts after headers arrive', async () => {
     // Regression: the external abort listener was removed in a `finally` that
     // ran as soon as `fetch()` resolved, so a Stop after the first byte left the
-    // upstream request running — and billing — to completion.
+    // upstream request running - and billing - to completion.
     globalThis.fetch = fetchWithLiveBody((controller) => {
       controller.enqueue(new Uint8Array([1]));
       // The peer keeps the body open; nothing else will ever end this stream.
@@ -438,7 +438,7 @@ describe('ssrfFetch cancellation', () => {
           controller.enqueue(new Uint8Array([7]));
           controller.close();
         } catch {
-          // Body already errored — the deadline reached it. Asserted below.
+          // Body already errored - the deadline reached it. Asserted below.
         }
       }, 30);
     });

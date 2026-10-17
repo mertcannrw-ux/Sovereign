@@ -1,4 +1,4 @@
-// AST Validator — validates generated TypeScript/TSX/CSS code
+// AST Validator - validates generated TypeScript/TSX/CSS code
 
 import type { FileChange, Diagnostic } from './types';
 
@@ -42,12 +42,12 @@ export class ASTValidator {
   }
 
   private validateTypeScript(content: string, path: string, diagnostics: Diagnostic[]): void {
-    // Basic checks — full validation happens at build time
+    // Basic checks - full validation happens at build time
     if (/\beval\s*\(/.test(content)) {
       diagnostics.push({
         file: path,
         severity: 'warning',
-        message: 'Contains eval() — may be a security risk',
+        message: 'Contains eval() - may be a security risk',
       });
     }
 
@@ -55,7 +55,7 @@ export class ASTValidator {
       diagnostics.push({
         file: path,
         severity: 'warning',
-        message: 'Direct process.env access — consider using env.ts',
+        message: 'Direct process.env access - consider using env.ts',
       });
     }
   }
@@ -69,7 +69,7 @@ export class ASTValidator {
       diagnostics.push({
         file: path,
         severity: 'info',
-        message: 'CSS imports with url() — ensure paths are correct',
+        message: 'CSS imports with url() - ensure paths are correct',
       });
     }
   }

@@ -1,4 +1,4 @@
-// Prisma seed script — creates initial admin account, personal organization, and demo data
+// Prisma seed script - creates initial admin account, personal organization, and demo data
 import {
   PrismaClient,
   ProjectStatus,
@@ -16,7 +16,7 @@ const adapter = new PrismaPg({ connectionString });
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
-  console.log('🌱 Seeding database...');
+  console.log('Seeding database...');
 
   // Refuse to seed anything that is not clearly a local/dev target, so an
   // automated pipeline or a misconfigured staging box can never provision a
@@ -24,7 +24,7 @@ async function main() {
   //
   // `NODE_ENV=production` is always refused. An unset NODE_ENV (the normal
   // case for the documented local `npm run db:seed`) is allowed only when the
-  // database is on loopback — pointing at a remote database requires an
+  // database is on loopback - pointing at a remote database requires an
   // explicit NODE_ENV=development.
   if (process.env.NODE_ENV === 'production') {
     throw new Error('Refusing to seed in production. Seeds are for development/staging only.');
@@ -75,7 +75,7 @@ async function main() {
     });
     adminId = user.id;
 
-    console.log(`  ✅ Admin user created (credentials from environment):`);
+    console.log(`  Admin user created (credentials from environment):`);
     console.log(`     User ID:  ${user.id}`);
   }
 
@@ -97,7 +97,7 @@ async function main() {
         },
       },
     });
-    console.log(`  ✅ Organization created: ${org.name} (${org.id})`);
+    console.log(`  Organization created: ${org.name} (${org.id})`);
   } else {
     console.log(`  ⏭  Organization already exists: ${org.name}`);
   }
@@ -136,17 +136,17 @@ async function main() {
         },
       ],
     });
-    console.log('  ✅ 3 demo projects created');
+    console.log('  3 demo projects created');
   } else {
     console.log(`  ⏭  ${existingProjects} projects already exist, skipping demo data`);
   }
 
-  console.log('✅ Seed complete!');
+  console.log('Seed complete.');
 }
 
 main()
   .catch((e) => {
-    console.error('❌ Seed failed:', e);
+    console.error('Seed failed:', e);
     process.exit(1);
   })
   .finally(async () => {

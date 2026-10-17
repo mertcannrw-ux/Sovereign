@@ -25,7 +25,7 @@ const PROVIDERS = [
   { id: 'mistral', name: 'Mistral', icon: 'M', docs: 'console.mistral.ai/api-keys' },
   { id: 'groq', name: 'Groq', icon: 'G', docs: 'console.groq.com/keys' },
   { id: 'ollama', name: 'Ollama', icon: 'O', docs: 'ollama.ai' },
-  { id: 'custom', name: 'Custom (OpenAI Compatible)', icon: '✦', docs: '' },
+  { id: 'custom', name: 'Custom (OpenAI Compatible)', icon: 'C', docs: '' },
 ];
 
 export function SettingsWindow({

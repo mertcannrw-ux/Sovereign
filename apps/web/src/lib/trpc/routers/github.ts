@@ -3,7 +3,7 @@ import { protectedProcedure, router } from '../trpc';
 
 export const githubRouter = router({
   // Note: a `connect` mutation that stored a user's personal access token was
-  // removed — the token was never read by any code (the GitHub App integration
+  // removed - the token was never read by any code (the GitHub App integration
   // in @/server/github authenticates via installation tokens), so it persisted
   // encrypted-but-unused secrets. Only status/disconnect remain.
 

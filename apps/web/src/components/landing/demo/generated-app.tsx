@@ -6,7 +6,7 @@ import { cn } from '@app-builder/ui/utils';
  * The app Sovereign generates inside the preview sandbox.
  *
  * This is a *generated app*, not Sovereign chrome, so it deliberately sits on
- * its own light palette — design.md §6 sanctions literal colours for exactly
+ * its own light palette - design.md §6 sanctions literal colours for exactly
  * this mock. The `restyled` prop is the element-level edit the visual editor
  * applies in the hero demo: the same app, recoloured in place.
  */
@@ -41,7 +41,7 @@ export function GeneratedApp({
         </div>
       </div>
 
-      {/* Hero band — the element the visual editor recolours */}
+      {/* Hero band - the element the visual editor recolours */}
       <div
         className={cn(
           'relative flex flex-1 flex-col justify-center overflow-hidden border-b px-5 py-5 transition-colors duration-700',

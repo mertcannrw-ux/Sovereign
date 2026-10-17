@@ -79,7 +79,7 @@ export const databaseRouter = router({
     }),
 
   /**
-   * Get the schema of a specific table — columns, types, constraints.
+   * Get the schema of a specific table - columns, types, constraints.
    */
   getTableSchema: protectedProcedure
     .input(
@@ -216,7 +216,7 @@ export const databaseRouter = router({
    * Execute a read-only SQL query against the project's database schema.
    *
    * Exposed as a mutation (POST) rather than a query (GET) so the statement
-   * travels in the request body instead of the URL query string — SQL consoles
+   * travels in the request body instead of the URL query string - SQL consoles
    * routinely exceed practical URL length limits and URLs are logged.
    */
   executeQuery: protectedProcedure
@@ -240,7 +240,7 @@ export const databaseRouter = router({
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message:
-            'Only single SELECT/WITH statements are allowed — platform schemas, system catalogs, other tenant schemas, and multi-statement queries are blocked',
+            'Only single SELECT/WITH statements are allowed - platform schemas, system catalogs, other tenant schemas, and multi-statement queries are blocked',
         });
       }
 

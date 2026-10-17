@@ -221,7 +221,7 @@ describe('waitForRuntimeResult', () => {
 
     expect(outcome).toEqual({ kind: 'result', result: { ...COMPLETE_RESULT, consoleErrors: [] } });
     // Poll 1 (t+0): pending, no beat. Poll 2 (t+15s): pending, beat. Poll 3
-    // (t+30s): complete — result returned, no third beat.
+    // (t+30s): complete - result returned, no third beat.
     expect(heartbeats.length).toBe(1);
   });
 

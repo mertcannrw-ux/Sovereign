@@ -1,4 +1,4 @@
-// Code Generation Engine — pure stages, no in-memory state
+// Code Generation Engine - pure stages, no in-memory state
 //
 // Pipeline: buildContext → parseResponse → normalizePaths → validate → computeChanges → (apply via repository)
 

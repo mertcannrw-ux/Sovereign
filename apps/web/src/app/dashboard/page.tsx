@@ -172,8 +172,8 @@ function DashboardContent() {
   // Initial-load failures render after the auth guards, and after every hook
   // has run. Both queries fire while the session is still loading, so
   // rendering these first would surface UNAUTHORIZED as a dead-end "Failed to
-  // load" screen for anonymous visitors — with a Retry button that refetches
-  // into the same failure — racing the redirect to /auth/signin.
+  // load" screen for anonymous visitors - with a Retry button that refetches
+  // into the same failure - racing the redirect to /auth/signin.
   // `&& !data` keeps a working page visible: react-query retains `data` when
   // a background refetch fails, and the global query-cache onError toast
   // (lib/trpc/react.tsx) already surfaces that transient failure.
@@ -300,7 +300,7 @@ function DashboardContent() {
             ],
             [
               'Latest activity',
-              projects[0] ? relativeTime(projects[0].lastEdited) : '\u2014',
+              projects[0] ? relativeTime(projects[0].lastEdited) : '-',
               'Since your last edit',
             ],
           ].map(([label, value, detail]) => (

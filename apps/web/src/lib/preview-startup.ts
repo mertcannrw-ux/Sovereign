@@ -61,7 +61,7 @@ export function getPreviewSupportFiles(files: PreviewSourceFile[]): PreviewSourc
 }
 
 export const PREVIEW_JS_DISCLOSURE =
-  'Preview runs project JavaScript — including `npm` packages — on this machine, inside an isolated iframe. Do not open projects you do not trust.';
+  'Preview runs project JavaScript - including `npm` packages - on this machine, inside an isolated iframe. Do not open projects you do not trust.';
 
 export const NPM_INSTALL_TIMEOUT_MS = 60_000;
 export const VITE_READY_TIMEOUT_MS = 30_000;
@@ -79,7 +79,7 @@ export const VITE_DEV_COMMAND = { command: 'npx', args: ['vite', '--host'] } as 
  * Vite's actual CLI entry. `npx` re-resolves the package on every boot (and may
  * consult the registry); spawning this through `node` skips that. Used only
  * when {@link PreviewProcessHost.exists} confirms the shim is present, so a
- * missing entry never silently downgrades the preview — we fall back to `npx`.
+ * missing entry never silently downgrades the preview - we fall back to `npx`.
  */
 export const VITE_DIRECT_ENTRY_PATH = 'node_modules/vite/bin/vite.js';
 export const VITE_DIRECT_PREVIEW_COMMAND = {
@@ -104,8 +104,8 @@ export interface PreviewProcess {
 
 /**
  * Thrown when a preview boot was abandoned because its owner went away (page
- * unmount, project switch, retry). Callers must treat it as terminal silence —
- * never as a preview failure — and must leave the shared container alone: the
+ * unmount, project switch, retry). Callers must treat it as terminal silence -
+ * never as a preview failure - and must leave the shared container alone: the
  * container is reused by the next project's preview, so a dead boot that keeps
  * going would spawn a server nobody owns (which the next preview then adopts as
  * its own) and tear down a sandbox another page is using.
@@ -163,7 +163,7 @@ export interface PreviewServerEventSource {
 
 /**
  * Vite-in-WebContainer is ON by default: the agent builds Vite/React projects
- * (package.json + TSX), and the static file server cannot compile them — it
+ * (package.json + TSX), and the static file server cannot compile them - it
  * would serve `.tsx` as an opaque octet-stream and the preview would go blank.
  * Projects without a package.json still use the static server.
  *
@@ -301,7 +301,7 @@ export function getPreviewOverlayFiles(): PreviewSourceFile[] {
 }
 
 /**
- * Console errors (`PREVIEW_CONSOLE_ERROR`) arrive as `args` — `String(arg)` on
+ * Console errors (`PREVIEW_CONSOLE_ERROR`) arrive as `args` - `String(arg)` on
  * an object prints `[object Object]`, and React logs component stacks as
  * strings inside `args`, so each entry is described as precisely as possible.
  */
@@ -343,7 +343,7 @@ export function formatContainerError(error: { message: string }): string {
  * Subscribe to container diagnostics and return an unsubscribe function.
  *
  * `onPreviewError` receives only forwarded preview messages (console errors,
- * unhandled rejections and uncaught exceptions from the preview iframe) —
+ * unhandled rejections and uncaught exceptions from the preview iframe) -
  * these are the lines the agent loop is allowed to see. The returned teardown
  * matters: the WebContainer is a module-level singleton shared by every mount,
  * so listeners that outlive their hook instance keep writing into that
@@ -506,7 +506,7 @@ async function startVitePreview(
     : null;
   const stampMatches =
     packageJson != null && host.readFile != null && stamp !== null && stamp === packageJson;
-  // The stamp proves only that some install for this exact content exited 0 —
+  // The stamp proves only that some install for this exact content exited 0 -
   // it is never invalidated, so the tree it describes may since have been
   // deleted or left partial (a failed install that was then reverted, an
   // agent-issued `rm -rf node_modules`). Trusting it blindly would let `npx`
@@ -539,7 +539,7 @@ async function startVitePreview(
     );
     // npm install takes seconds; navigating away in that window is the common
     // case. Spawning Vite here anyway leaves an orphan listening on 5173 that
-    // the *next* project's preview adopts as its own URL — the stale-preview
+    // the *next* project's preview adopts as its own URL - the stale-preview
     // bug.
     throwIfCancelled(isCancelled);
     if (installCode !== 0) {
@@ -554,9 +554,9 @@ async function startVitePreview(
 
   // `npx` re-resolves the package (occasionally against the registry) on every
   // boot. The install above guarantees Vite's own bin shim exists, so spawning
-  // it directly is strictly cheaper. Anything unexpected about the entry — a
+  // it directly is strictly cheaper. Anything unexpected about the entry - a
   // hand-edited `package.json` that skipped Vite, a half-deleted
-  // `node_modules` — is re-checked with `npx` rather than downgrading the
+  // `node_modules` - is re-checked with `npx` rather than downgrading the
   // preview to static: the static server cannot run TS React apps, so a
   // silently blank pane is the worst failure mode here.
   const hasDirectEntry = host.exists
@@ -590,7 +590,7 @@ export async function startPreviewProcess(
     mode: PreviewEngine;
     onLog: (line: string) => void;
     installTimeoutMs?: number;
-    /** Live static server already serving — reuse instead of spawning a second one. */
+    /** Live static server already serving - reuse instead of spawning a second one. */
     existingStatic?: PreviewProcess | null;
     /** True once the caller no longer wants this preview (its page went away). */
     isCancelled?: () => boolean;

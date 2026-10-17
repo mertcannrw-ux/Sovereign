@@ -87,8 +87,8 @@ function devSlidingWindow(key: string, config: RateLimitConfig): RateLimitResult
 
 // ─── Upstash sliding window ──────────────────────────────
 
-// Emitted once per process: an Upstash outage — or a deployment that
-// deliberately runs without Redis — must not lock every user out of
+// Emitted once per process: an Upstash outage - or a deployment that
+// deliberately runs without Redis - must not lock every user out of
 // sign-in/registration, so we fall back to the in-memory limiter (per-instance,
 // still functional) instead of denying everything in production. Warning only
 // once keeps the degraded state visible without flooding production logs on
@@ -236,7 +236,7 @@ export function hashIp(ip: string): string {
 /**
  * Header bag as it reaches a rate-limit call site: a `Headers` instance from a
  * route handler, or a plain object from next-auth's
- * `authorize(credentials, req)` — `RequestInternal.headers` is
+ * `authorize(credentials, req)` - `RequestInternal.headers` is
  * `Record<string, any>` there, built from `Object.fromEntries(await headers())`,
  * so it has no `.get` method. The value type is pinned to what HTTP headers
  * actually are rather than `unknown`, so passing something that is not a header
@@ -264,8 +264,8 @@ function readHeader(headers: HeaderBag, name: string): string | null {
  *
  * Only meaningful behind a reverse proxy (`TRUSTED_PROXY`): without one every
  * request appears to come from the app itself, so keying on IP would collapse
- * all users into a single bucket. Both consumers — tRPC's `createContext` and
- * the credentials `authorize` hook — MUST resolve the IP here so the two paths
+ * all users into a single bucket. Both consumers - tRPC's `createContext` and
+ * the credentials `authorize` hook - MUST resolve the IP here so the two paths
  * cannot drift into different keying for the same request. A null return means
  * "no trustworthy IP", and each caller applies its own fallback.
  */
@@ -280,13 +280,13 @@ export function trustedClientIp(headers: HeaderBag): string | null {
       .filter(Boolean);
     // Proxies APPEND the caller's address, so the right-most entry is the one
     // added by our trusted proxy. Earlier entries are client-supplied and
-    // spoofable — never trust them for a rate-limit key.
+    // spoofable - never trust them for a rate-limit key.
     const last = entries[entries.length - 1];
     if (last && isIP(last)) return last;
     // XFF is present but carries no usable peer address, so the proxy is not
     // appending one. Fail closed instead of falling through to X-Real-IP: on a
     // pass-through proxy that header is pure client text, and honouring it
-    // hands out a fresh rate-limit bucket per request — the very bypass the
+    // hands out a fresh rate-limit bucket per request - the very bypass the
     // X-Real-IP branch below exists to prevent. Null keeps each caller on its
     // documented fallback (per-email keying in `authorize`, 127.0.0.1 in tRPC).
     return null;

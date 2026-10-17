@@ -1,9 +1,9 @@
-# Sovereign — Design System
+# Sovereign - Design System
 
 > **Single source of truth for the visual language.**
-> This document describes the palette that actually ships. It supersedes the earlier "Dark Premium" brief (which specified `#202020` surfaces and a `#22C55E → #E8D33E → #F59E0B` accent gradient — that direction was abandoned and its assets have been removed from the codebase).
+> This document describes the palette that actually ships. It supersedes the earlier "Dark Premium" brief (which specified `#202020` surfaces and a `#22C55E → #E8D33E → #F59E0B` accent gradient - that direction was abandoned and its assets have been removed from the codebase).
 >
-> Canonical values live in `apps/web/tailwind.config.ts` (`theme.extend.colors`) and `apps/web/src/app/globals.css` (`:root`). If this document and the config disagree, **the config wins** — update this file.
+> Canonical values live in `apps/web/tailwind.config.ts` (`theme.extend.colors`) and `apps/web/src/app/globals.css` (`:root`). If this document and the config disagree, **the config wins** - update this file.
 
 ---
 
@@ -34,7 +34,7 @@
 | Inverse text    | `foreground-inverse`   | `#11110F`              | text on inverse surfaces                              |
 | Hairline border | `border`               | `#242422`              | dividers, card edges, table rules                     |
 | Strong border   | `border-strong`        | `#646460`              | control boundaries, emphasized edges                  |
-| **Focus**       | `border-focus`         | `#B8FF5A`              | focus rings — always use this, never a bespoke colour |
+| **Focus**       | `border-focus`         | `#B8FF5A`              | focus rings - always use this, never a bespoke colour |
 | **Accent**      | `primary`              | `#B8FF5A`              | primary buttons, active states, key metrics           |
 | Accent hover    | `primary-hover`        | `#C7FF7C`              | hover on accent surfaces                              |
 | Accent tint     | `primary-light`        | `rgba(184,255,90,.10)` | selected rows, subtle accent fills                    |
@@ -42,7 +42,7 @@
 | Success         | `success`              | `#73D86C`              | positive state, "generated", connected                |
 | Warning         | `warning`              | `#E6B85C`              | caution, degraded, at-limit                           |
 | Error           | `error`                | `#F06A6A`              | failures, destructive actions                         |
-| On-error text   | `error-foreground`     | `#190909`              | text on `error` fills — **not** white (see §2.3)      |
+| On-error text   | `error-foreground`     | `#190909`              | text on `error` fills - **not** white (see §2.3)      |
 
 Each of `success` / `warning` / `error` also has a `-light` variant (`rgba(…,0.10)`) for tinted backgrounds, and a `-foreground` for text placed on the solid colour.
 
@@ -50,15 +50,15 @@ Each of `success` / `warning` / `error` also has a `-light` variant (`rgba(…,0
 
 Ratios computed with sRGB alpha compositing against the actual surfaces:
 
-| Pair                                   | Ratio   | AA (4.5:1)            |
-| -------------------------------------- | ------- | --------------------- |
-| `foreground` on `background`           | 13.66:1 | ✅                    |
-| `foreground-secondary` on `background` | 9.99:1  | ✅                    |
-| `foreground-muted` on `background`     | 5.02:1  | ✅                    |
-| `primary` on `background`              | 16.58:1 | ✅                    |
-| `primary-foreground` on `primary`      | 15.48:1 | ✅                    |
-| `error-foreground` on `error`          | 6.43:1  | ✅                    |
-| white on `error`                       | 3.01:1  | ❌ **do not do this** |
+| Pair                                   | Ratio   | AA (4.5:1)           |
+| -------------------------------------- | ------- | -------------------- |
+| `foreground` on `background`           | 13.66:1 | Pass                 |
+| `foreground-secondary` on `background` | 9.99:1  | Pass                 |
+| `foreground-muted` on `background`     | 5.02:1  | Pass                 |
+| `primary` on `background`              | 16.58:1 | Pass                 |
+| `primary-foreground` on `primary`      | 15.48:1 | Pass                 |
+| `error-foreground` on `error`          | 6.43:1  | Pass                 |
+| white on `error`                       | 3.01:1  | **Fail, do not use** |
 
 ### 2.3 Rules
 
@@ -66,7 +66,7 @@ Ratios computed with sRGB alpha compositing against the actual surfaces:
 2. **Never use `text-white` on `error`.** `error-foreground` (`#190909`) is the correct pairing at 6.43:1; white is 3.01:1 and fails AA.
 3. **`foreground-muted` passes AA at small sizes.** It measures 5.02:1 on `background`, 4.80:1 on `background-subtle` and 4.52:1 on `background-muted`, so it may be used for small text and placeholders anywhere.
 4. **`border` is decorative.** At 1.28:1 against `background` it is a divider, not a control outline. Interactive controls must be identifiable without relying on their hairline alone.
-5. **Focus is always `border-focus`, at soft strength.** Focus indicators use the `border-focus` colour: inputs take a `border-focus` border plus a `ring-border-focus/30`–`/40` halo (≈3.3:1, above the 3:1 focus-visible minimum); buttons and other controls use `ring-border-focus/40`. Full-strength lime rings are not used — they measure 16.6:1 and read as glare on the dark surface. A focus indicator not based on `border-focus` is a bug.
+5. **Focus is always `border-focus`, at soft strength.** Focus indicators use the `border-focus` colour: inputs take a `border-focus` border plus a `ring-border-focus/30`–`/40` halo (≈3.3:1, above the 3:1 focus-visible minimum); buttons and other controls use `ring-border-focus/40`. Full-strength lime rings are not used - they measure 16.6:1 and read as glare on the dark surface. A focus indicator not based on `border-focus` is a bug.
 6. **Alpha steps on the marketing surface.** The floor for body-sized white text is `/48`; lower steps (`/20`–`/45`) are reserved for display type and the sanctioned illustration mock. All landing-page body copy now sits at or above `/48`.
 7. **Status colours carry meaning only with a label or icon.** Never signal success/warning/error by hue alone.
 
@@ -81,16 +81,16 @@ Ratios computed with sRGB alpha compositing against the actual surfaces:
 | `text-hero`       | `clamp(3rem, 8vw, 7.5rem)` / 0.92   | 900    | −0.04em  | marketing hero        |
 | `text-heading`    | `clamp(2.25rem, 5vw, 4rem)` / 1.05  | 800    | −0.03em  | section headings      |
 | `text-subheading` | `clamp(1.5rem, 3vw, 2.25rem)` / 1.2 | 700    | −0.02em  | sub-sections          |
-| `text-4xl`        | 2.25rem / 2.5rem                    | —      | —        | page titles           |
-| `text-3xl`        | 1.875rem / 2.25rem                  | —      | —        | card titles           |
-| `text-2xl`        | 1.5rem / 2rem                       | —      | —        | panel titles          |
-| `text-xl`         | 1.25rem / 1.75rem                   | —      | —        | lead paragraphs       |
-| `text-lg`         | 1.125rem / 1.75rem                  | —      | —        | emphasis              |
-| `text-base`       | 1rem / 1.5rem                       | —      | —        | body                  |
-| `text-sm`         | 0.875rem / 1.25rem                  | —      | —        | UI labels, dense copy |
-| `text-xs`         | 0.75rem / 1rem                      | —      | —        | metadata, badges      |
+| `text-4xl`        | 2.25rem / 2.5rem                    | -      | -        | page titles           |
+| `text-3xl`        | 1.875rem / 2.25rem                  | -      | -        | card titles           |
+| `text-2xl`        | 1.5rem / 2rem                       | -      | -        | panel titles          |
+| `text-xl`         | 1.25rem / 1.75rem                   | -      | -        | lead paragraphs       |
+| `text-lg`         | 1.125rem / 1.75rem                  | -      | -        | emphasis              |
+| `text-base`       | 1rem / 1.5rem                       | -      | -        | body                  |
+| `text-sm`         | 0.875rem / 1.25rem                  | -      | -        | UI labels, dense copy |
+| `text-xs`         | 0.75rem / 1rem                      | -      | -        | metadata, badges      |
 
-**Rules:** display sizes tighten tracking (`−0.03em` to `−0.045em`); body text stays at 0. `text-xs` (12px) is the floor for informational text — nothing that must be read should go below it.
+**Rules:** display sizes tighten tracking (`−0.03em` to `−0.045em`); body text stays at 0. `text-xs` (12px) is the floor for informational text - nothing that must be read should go below it.
 
 ---
 
@@ -102,7 +102,7 @@ Ratios computed with sRGB alpha compositing against the actual surfaces:
 
 **Radius.** `sm` 6px · `md` 8px · `lg` 12px · `xl` 16px · `2xl` 20px · `card` 20px · `window` 16px. Pills (`rounded-full`) are reserved for primary CTAs and status chips.
 
-**Elevation.** Dark UI signals depth with surface steps before shadow, but shadows are available: `shadow-sm`, `shadow` (default), `shadow-md`, `shadow-lg`, `shadow-button`, `shadow-card`, `shadow-card-hover`. Radii and shadows must not be mixed arbitrarily — cards use `card` + `shadow-card`; windows use `window`.
+**Elevation.** Dark UI signals depth with surface steps before shadow, but shadows are available: `shadow-sm`, `shadow` (default), `shadow-md`, `shadow-lg`, `shadow-button`, `shadow-card`, `shadow-card-hover`. Radii and shadows must not be mixed arbitrarily - cards use `card` + `shadow-card`; windows use `window`.
 
 ---
 
@@ -112,7 +112,7 @@ Ratios computed with sRGB alpha compositing against the actual surfaces:
 - **Focus visible.** Every interactive element needs a visible `border-focus` ring. Never `outline-none` without an equally visible replacement.
 - **Targets.** Minimum 24×24px hit area; 44×44px preferred. Icon-only buttons must carry an `aria-label`.
 - **Overlays.** Dialog, dropdown, select, tooltip and toast share a single documented z-index scale, and tooltips must be portalled so they are not clipped by scrolling ancestors.
-- **Motion.** Respect `prefers-reduced-motion` in **both** CSS and JS (`MotionConfig reducedMotion="user"`). Never apply `animation-duration: 0.01ms !important` to `*` — it freezes spinners and canvas loops. This is the same rule the code generator enforces on generated apps (`docs/agent-runtime.md`).
+- **Motion.** Respect `prefers-reduced-motion` in **both** CSS and JS (`MotionConfig reducedMotion="user"`). Never apply `animation-duration: 0.01ms !important` to `*` - it freezes spinners and canvas loops. This is the same rule the code generator enforces on generated apps (`docs/agent-runtime.md`).
 
 ---
 
@@ -120,20 +120,20 @@ Ratios computed with sRGB alpha compositing against the actual surfaces:
 
 Historically tracked in `docs/design-accessibility-review.md` (removed from the repo); the resolved state of each item:
 
-1. ~~The spacing-key defect above (§4).~~ **Fixed** — the numeric overrides are removed; Tailwind's native steps ship.
-2. ~~`foreground-muted` and `border-strong` do not meet WCAG AA.~~ **Fixed** — `foreground-muted` is now `#80807C` (5.02:1 / 4.80:1 / 4.52:1 on the three surfaces; AA at all sizes) and `border-strong` is now `#646460` (3.35:1 / 3.20:1 / 3.02:1 — above the 3:1 non-text minimum on every surface, tuned to the minimum rather than overshooting to keep the dark surface calm). `border` remains a decorative hairline by design; `background-muted` is a fill, not text, and keeps its value.
+1. ~~The spacing-key defect above (§4).~~ **Fixed** - the numeric overrides are removed; Tailwind's native steps ship.
+2. ~~`foreground-muted` and `border-strong` do not meet WCAG AA.~~ **Fixed** - `foreground-muted` is now `#80807C` (5.02:1 / 4.80:1 / 4.52:1 on the three surfaces; AA at all sizes) and `border-strong` is now `#646460` (3.35:1 / 3.20:1 / 3.02:1 - above the 3:1 non-text minimum on every surface, tuned to the minimum rather than overshooting to keep the dark surface calm). `border` remains a decorative hairline by design; `background-muted` is a fill, not text, and keeps its value.
 3. **Sanctioned literal colours.** Everything else now resolves to a token. These keep literal values on purpose, and a reviewer should not "fix" them:
-   - the landing page's light "generated site" mock (`components/landing/demo/generated-app.tsx`) — it
+   - the landing page's light "generated site" mock (`components/landing/demo/generated-app.tsx`) - it
      depicts a _different_ website inside the dark chrome, and the visual-editor clip recolours it in
      place to show what an element edit does;
-   - the settings provider roster in `components/landing/demo/settings-window.tsx` — a transcription of
+   - the settings provider roster in `components/landing/demo/settings-window.tsx` - a transcription of
      the real `PROVIDERS` table in `app/settings/page.tsx`;
    - the code-sample syntax colours in `components/landing/demo/workspace-panes.tsx` and `apps/web/src/components/code-editor/code-editor.tsx`;
-   - the `.code-block` surface in `globals.css` and the code viewer in `components/project/code-pane.tsx` (`#1e1e1e` / `#d4d4d4`) — an editor surface, not app chrome;
-   - the Tailwind colour-swatch list in `components/visual-editor/properties-panel.tsx` — those are the colours a _user's generated app_ may pick;
-   - the CSS injected into the sandboxed `apps/web/src/lib/visual-editor.ts` overlay — it renders inside the generated app's document, not this one;
-   - per-project accent colours (`app/dashboard/page.tsx`) and per-category template palettes (`app/dashboard/templates/page.tsx`) — intentional art.
-4. ~~Orphan brand art in the abandoned palette.~~ **Removed** — `apps/web/public/logo.svg`, `logo.png` and `logo-transparent.png` (bronze "SOVEREIGN" dragon crest) are deleted; the live mark is `components/landing/logo.tsx`, which mirrors the sidebar tile so the marketing header and the signed-in app read as one product.
+   - the `.code-block` surface in `globals.css` and the code viewer in `components/project/code-pane.tsx` (`#1e1e1e` / `#d4d4d4`) - an editor surface, not app chrome;
+   - the Tailwind colour-swatch list in `components/visual-editor/properties-panel.tsx` - those are the colours a _user's generated app_ may pick;
+   - the CSS injected into the sandboxed `apps/web/src/lib/visual-editor.ts` overlay - it renders inside the generated app's document, not this one;
+   - per-project accent colours (`app/dashboard/page.tsx`) and per-category template palettes (`app/dashboard/templates/page.tsx`) - intentional art.
+4. ~~Orphan brand art in the abandoned palette.~~ **Removed** - `apps/web/public/logo.svg`, `logo.png` and `logo-transparent.png` (bronze "SOVEREIGN" dragon crest) are deleted; the live mark is `components/landing/logo.tsx`, which mirrors the sidebar tile so the marketing header and the signed-in app read as one product.
 
 ---
 
@@ -168,7 +168,7 @@ components/landing/
 
 **Every pixel of UI in `demo/` is a transcription of shipped components**, not an illustration: the sidebar, the 68px editor header, the version timeline, the chat transcript and tool-step list, the prompt composer, the Preview/Code tabs, the code pane, the settings provider roster and the injected visual-editor overlay all copy their labels, metrics and colours from the files in `apps/web/src/{app,components,lib}/`. When the real UI changes, the demo has to change with it.
 
-`demo-player.tsx` autoplays when the player scrolls into view, pauses when it leaves, loops, and — when `prefers-reduced-motion` is set — holds a poster frame until the viewer presses Play.
+`demo-player.tsx` autoplays when the player scrolls into view, pauses when it leaves, loops, and - when `prefers-reduced-motion` is set - holds a poster frame until the viewer presses Play.
 
 ---
 

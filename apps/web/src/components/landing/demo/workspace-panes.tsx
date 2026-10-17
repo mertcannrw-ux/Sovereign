@@ -6,10 +6,10 @@ import { GeneratedApp } from './generated-app';
 
 /* ---------------------------------------------------------------------------
  * Rebuilt from the shipped panes:
- *   app/project/[id]/page.tsx  — Preview/Code tabs, Edit toggle, refresh
- *   components/project/preview-pane.tsx — sandbox boot copy, edit-mode pill
- *   components/project/code-pane.tsx    — 176px file list, editor surface
- *   lib/visual-editor.ts       — the overlay injected into the preview
+ *   app/project/[id]/page.tsx  - Preview/Code tabs, Edit toggle, refresh
+ *   components/project/preview-pane.tsx - sandbox boot copy, edit-mode pill
+ *   components/project/code-pane.tsx    - 176px file list, editor surface
+ *   lib/visual-editor.ts       - the overlay injected into the preview
  * ------------------------------------------------------------------------- */
 
 export function PaneTabs({
@@ -159,7 +159,7 @@ export function VisualEditorOverlay({
   /** Index into TOOLS, or -1 when none is active. */
   toolIndex: number;
   typed: string;
-  /** True once the request has been sent — dims the send button again. */
+  /** True once the request has been sent - dims the send button again. */
   sent: boolean;
   className?: string;
 }) {
@@ -168,7 +168,7 @@ export function VisualEditorOverlay({
       className={cn('pointer-events-none absolute left-4 right-4 z-40', className)}
       style={{ filter: 'drop-shadow(0 16px 32px rgba(0,0,0,0.6))' }}
     >
-      {/* .sv-label — lime mono chip pinned above the element */}
+      {/* .sv-label - lime mono chip pinned above the element */}
       <span
         className="ml-1 inline-block rounded-t-md rounded-bl-md px-2 py-[3px] font-mono text-[10px] font-semibold leading-4"
         style={{ background: '#B8FF5A', color: '#10130c' }}
@@ -381,7 +381,7 @@ const TS_KEYWORD: Record<string, true> = {
   useState: true,
 };
 
-/** Minimal TSX tokeniser — enough colour to read as a real editor. */
+/** Minimal TSX tokeniser - enough colour to read as a real editor. */
 function SyntaxHighlight({ line }: { line: string }) {
   const parts = line.split(/(\b[A-Za-z_$][\w$]*\b|'[^']*'|"[^"]*")/g).filter(Boolean);
   return (
