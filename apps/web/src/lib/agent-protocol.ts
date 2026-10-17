@@ -193,7 +193,7 @@ export function getAgentFileMutationPaths(action: AgentAction): Set<string> {
  * The user-facing text an action settles into, or null when the action is not a
  * transcript answer (`read`/`write`/`edit`/`delete`/`run`/`generate_images`/
  * `think`/`ask_questions`/`propose_design_directions`). Mirrors the generate
- * route's own settle order — `respond` wins over `finish` inside a batch — so a
+ * route's own settle order - `respond` wins over `finish` inside a batch - so a
  * live streaming bubble can be replaced by exactly the text the run will
  * persist.
  */
@@ -588,11 +588,11 @@ const JSON_ACTION_START = /\{\s*"type"\s*:/;
  * User-facing answer text visible so far in a partially streamed completion.
  *
  * The transcript answer is produced by one of two shapes: a `respond`/`finish`
- * action — whose `message`/`summary` field streams while the model writes it —
+ * action - whose `message`/`summary` field streams while the model writes it -
  * or plain prose, which `parseAgentAction` turns into a `respond` when the turn
  * settles. Returns null while no answer is recognisable (tool payloads, an
  * unopened string field, an empty completion), so callers never emit a cleared
- * snapshot mid-turn; the settled text — `getSettledAnswer` — is authoritative
+ * snapshot mid-turn; the settled text - `getSettledAnswer` - is authoritative
  * and always identical to the message the `ready` event persists.
  */
 export function getStreamingAnswer(raw: string): string | null {

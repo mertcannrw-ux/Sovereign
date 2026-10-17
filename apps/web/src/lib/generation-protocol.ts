@@ -124,7 +124,7 @@ Requirements:
 - Games may include a canvas, deterministic update loop, input handling, collision/state systems, scoring, pause/restart controls, and responsive sizing.
 - Prioritize a complete working core over oversized static markup. Every newly referenced local file must be emitted.
 - If the build is too large for one response, finish the current file cleanly when possible; the system will request continuation for remaining files.
-- After every requested file is complete, emit <<<END_BUILD>>> exactly once. This marker means the entire build—not merely the current file—is finished.
+- After every requested file is complete, emit <<<END_BUILD>>> exactly once. This marker means the entire build - not merely the current file - is finished.
 - Keep the summary out of files and keep code out of the summary.`;
 
 function validPath(path: string): boolean {

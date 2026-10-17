@@ -107,7 +107,7 @@ export function PreviewPane({
         (frame) => frame?.contentWindow === event.source,
       );
       if (!fromPreview) return;
-      // Only trust messages that really come from the preview origin — the
+      // Only trust messages that really come from the preview origin - the
       // preview iframe runs generated code, which must not be able to forge
       // selections or edit requests.
       const expectedOrigin = (() => {
@@ -165,7 +165,7 @@ export function PreviewPane({
       }
       if (event.data.type === 'edit-request') {
         // The payload arrives from the preview frame, which runs generated code.
-        // Honor it only while the user has edit mode switched on — otherwise any
+        // Honor it only while the user has edit mode switched on - otherwise any
         // script in the preview could start a billable agent run.
         if (!isEditMode) return;
         const element = event.data.element as SelectedPreviewElement | undefined;

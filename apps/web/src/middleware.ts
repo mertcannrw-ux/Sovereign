@@ -45,7 +45,7 @@ export async function middleware(request: NextRequest) {
     'https://stackblitz.com',
     'https://*.webcontainer-api.io',
     // Dev-only: the Next.js HMR socket. Production app code opens no socket of
-    // its own — preview sockets live inside the sandboxed iframe's own origin.
+    // its own - preview sockets live inside the sandboxed iframe's own origin.
     ...(isDev ? ['ws:', 'wss:'] : []),
   ].join(' ');
   const cspDirectives = [

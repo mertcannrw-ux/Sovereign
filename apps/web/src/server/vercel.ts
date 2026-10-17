@@ -29,7 +29,7 @@
  *          .digest('hex');
  *
  *        if (signature !== `sha1=${expected}`) {
- *          // respond 401 — payload was tampered or misrouted
+ *          // respond 401 - payload was tampered or misrouted
  *        }
  *
  *   4. On successful verification, map Vercel's deployment status into
@@ -91,7 +91,7 @@ export interface DeploymentStatusResult {
    * Vercel's raw status is returned; map it in the caller if needed.
    */
   status: string;
-  /** Deployment URL — present once the deployment reaches READY. */
+  /** Deployment URL - present once the deployment reaches READY. */
   url?: string;
 }
 
@@ -194,7 +194,7 @@ export async function createVercelProject(
 /**
  * Deploy source files to an existing Vercel project.
  *
- * Creates a new deployment — Vercel will build and deploy the
+ * Creates a new deployment - Vercel will build and deploy the
  * provided files according to the project's framework configuration.
  */
 export async function deployToVercel(params: DeployToVercelParams): Promise<DeployToVercelResult> {

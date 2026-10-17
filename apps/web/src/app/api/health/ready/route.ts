@@ -66,13 +66,13 @@ async function checkObjectStorage(): Promise<HealthCheck> {
       error: 'Not configured (skipped)',
     };
   }
-  // R2/S3 availability check — just verify credentials are present for now.
+  // R2/S3 availability check - just verify credentials are present for now.
   // Full bucket probe is too expensive for a readiness check.
   return { name: 'object-storage', status: 'ok', latencyMs: Date.now() - start };
 }
 
 /**
- * Readiness probe — returns 200 if critical dependencies are reachable.
+ * Readiness probe - returns 200 if critical dependencies are reachable.
  * Never tests paid external providers (E2B, Stripe, Vercel, etc.).
  */
 export async function GET() {

@@ -7,7 +7,7 @@ const globalForPrisma = globalThis as unknown as {
 
 /**
  * Get or create the Prisma client singleton.
- * Safe to call at module top-level — defers connection to first query.
+ * Safe to call at module top-level - defers connection to first query.
  */
 export function getDb(): PrismaClient {
   if (globalForPrisma.prisma) return globalForPrisma.prisma;
@@ -25,7 +25,7 @@ export function getDb(): PrismaClient {
 }
 
 /**
- * Convenience export — calls getDb() on first property access.
+ * Convenience export - calls getDb() on first property access.
  * Use `getDb()` directly if this causes issues.
  */
 let _client: PrismaClient | null = null;

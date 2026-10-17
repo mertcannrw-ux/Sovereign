@@ -32,7 +32,7 @@ function bodyOf(chunks: readonly string[]): ReadableStream<Uint8Array> {
   });
 }
 
-/** A body that never produces a chunk — the deadline in `readResponseBytes` is
+/** A body that never produces a chunk - the deadline in `readResponseBytes` is
  *  what has to win, so the test drives the clock instead of sleeping. */
 function stalledBody(): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({

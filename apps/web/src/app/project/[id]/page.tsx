@@ -246,7 +246,7 @@ function ProjectWorkspace() {
     // arrive newest-first, so flatten in reverse to keep chronological order.
     history: historyMessages,
     // A post-send refetch revalidates every loaded page sequentially (one
-    // round trip each), yet only the newest page can change — older pages
+    // round trip each), yet only the newest page can change - older pages
     // are immutable history. Collapse to page 0 so one send costs one
     // refetch; "Load older" re-fetches on demand. The compound cursor makes
     // that walk lossless even across same-millisecond timestamps.

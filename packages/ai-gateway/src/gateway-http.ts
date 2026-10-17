@@ -65,7 +65,7 @@ export function readOllamaUsage(raw: Record<string, unknown>): UsageCounts {
   );
 }
 
-/** Zeroed usage — the shape every provider defaults to before a frame arrives. */
+/** Zeroed usage - the shape every provider defaults to before a frame arrives. */
 export function emptyUsage(): AICompletionResponse['usage'] {
   return { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 }
@@ -103,7 +103,7 @@ export function parseUsage(
 /**
  * Builds an undici dispatcher that connects to `pinnedIp` while keeping the
  * requested hostname as the TLS SNI (servername). This pins the validated IP
- * to defeat DNS-rebinding TOCTOU without rewriting the URL host — rewriting the
+ * to defeat DNS-rebinding TOCTOU without rewriting the URL host - rewriting the
  * host would change the SNI and break SNI-based virtual hosting (regression N-2).
  */
 function createPinnedIpDispatcher(parsed: URL, pinnedIp: string): Dispatcher {
@@ -114,7 +114,7 @@ function createPinnedIpDispatcher(parsed: URL, pinnedIp: string): Dispatcher {
   const https = parsed.protocol === 'https:';
   const baseConnector = buildConnector({ timeout: 10_000 });
   // Route the connection to the validated IP while preserving the original
-  // hostname as the TLS SNI (servername) — this is what defeats DNS-rebinding
+  // hostname as the TLS SNI (servername) - this is what defeats DNS-rebinding
   // TOCTOU without breaking SNI-based virtual hosting (N-2).
   const connect: typeof baseConnector = (opts, cb) =>
     baseConnector(
@@ -132,7 +132,7 @@ function createPinnedIpDispatcher(parsed: URL, pinnedIp: string): Dispatcher {
 /**
  * Inactivity deadline for one stream read. `ssrfFetch` clears its timer once
  * the response headers arrive, so a peer that stops sending mid-body would
- * otherwise stall the agent run — and hold its project lease — until the
+ * otherwise stall the agent run - and hold its project lease - until the
  * platform kills the function. Rejects when no chunk arrives in the window;
  * the caller's `finally` cancels the reader, closing the socket.
  */
@@ -162,14 +162,14 @@ function readStreamChunk(
 
 /**
  * Core line reader behind `readSSEStream` / `readJSONLines` /
- * `readAnthropicSSE`. Yields each newline-terminated line decoded as UTF-8 —
- * plus the final unterminated one — passed through `step`, which applies the
+ * `readAnthropicSSE`. Yields each newline-terminated line decoded as UTF-8 -
+ * plus the final unterminated one - passed through `step`, which applies the
  * format's line rule and returns at most one value per line (or `undefined`
  * when the line carries no payload).
  *
  * Shared by the read loop and the final flush. The last event of a stream is
  * frequently not newline-terminated; the residual-buffer flush below exists
- * so the final frame — usually the usage or finish frame — is not silently
+ * so the final frame - usually the usage or finish frame - is not silently
  * dropped when the stream does not end with a newline.
  */
 async function* readDelimitedLines<T>(
@@ -282,7 +282,7 @@ export async function* readAnthropicSSE(
     if (trimmed.startsWith('data:')) {
       const payload = trimmed.slice(5).trim();
       const event = currentEvent;
-      // Cleared for every `data:` line — empty keep-alives included — so a
+      // Cleared for every `data:` line - empty keep-alives included - so a
       // data line without its own `event:` never inherits a stale name.
       currentEvent = '';
       if (payload !== '') {
@@ -296,7 +296,7 @@ export async function* readAnthropicSSE(
 // ─── SSRF-safe fetch ──────────────────────────────────────
 
 const MAX_BODY_BYTES = 10 * 1024 * 1024; // 10 MB
-const MAX_ERROR_BODY_BYTES = 64 * 1024; // 64 KB — error payloads only need the message
+const MAX_ERROR_BODY_BYTES = 64 * 1024; // 64 KB - error payloads only need the message
 const DEFAULT_TIMEOUT_MS = 60_000; // 60s for non-streaming requests
 const STREAM_TIMEOUT_MS = 120_000; // 120s timeout for streaming connection/headers
 /** Max gap between body chunks once a stream is open (see readStreamChunk). */
@@ -371,14 +371,14 @@ export async function ssrfFetch(
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   // The caller's signal must stay wired for the WHOLE request, including the
-  // response body — which is still in flight when `fetch()` resolves. A
+  // response body - which is still in flight when `fetch()` resolves. A
   // hand-rolled listener removed in the `finally` below detached it at header
   // time, so a client disconnect (Stop) after the first byte left the provider
   // call running, and billing, to completion.
   //
   // The link is not free. Node pins an `AbortSignal.any` composite in a
   // process-global strong set until it aborts, loses its last abort listener,
-  // or its sources are collected — and undici never removes its abort listener
+  // or its sources are collected - and undici never removes its abort listener
   // on a normally-completing request. So each call keeps its request graph
   // reachable from `options.signal`, which one agent run reuses for every
   // provider call, for the life of that run. Measured: dropping the run signal
@@ -407,7 +407,7 @@ export async function ssrfFetch(
       ...(Object.keys(mergedHeaders).length ? { headers: mergedHeaders } : {}),
       ...(dispatcher !== undefined ? { dispatcher } : {}),
       signal,
-      redirect: 'error', // Zero redirects — block all redirects
+      redirect: 'error', // Zero redirects - block all redirects
     } as RequestInit & { dispatcher?: unknown });
     return response;
   } catch (e) {
@@ -455,12 +455,12 @@ function createBodySizeLimit(maxBytes: number): TransformStream<Uint8Array, Uint
  *
  * Caps the stream at {@link MAX_BODY_BYTES} (10 MB) via `createBodySizeLimit`
  * so a malicious or runaway endpoint cannot stream a body forever and balloon
- * memory — the size cap is applied inside the read pipeline, not per chunk.
+ * memory - the size cap is applied inside the read pipeline, not per chunk.
  */
 export function streamingBody(response: Response): ReadableStream<Uint8Array> {
   const rawBody = response.body;
   if (!rawBody) {
-    throw new Error('Response body is null — cannot stream');
+    throw new Error('Response body is null - cannot stream');
   }
   return rawBody.pipeThrough(createBodySizeLimit(MAX_BODY_BYTES));
 }
@@ -469,11 +469,11 @@ export function streamingBody(response: Response): ReadableStream<Uint8Array> {
  * The POST-JSON request shape shared by every completion and streaming call:
  * resolve the endpoint, `ssrfFetch` it (validating only caller-supplied
  * endpoints, {@link STREAM_TIMEOUT_MS} header deadline only when streaming),
- * and hand back the untouched `Response` — each provider applies its own
+ * and hand back the untouched `Response` - each provider applies its own
  * error-body dialect and response parser afterwards.
  */
 export interface CompletionRequestOptions {
-  /** Request headers — auth/session policy is the provider's. */
+  /** Request headers - auth/session policy is the provider's. */
   headers: Record<string, string>;
   /** Request body, JSON-serialized exactly once here. */
   payload: unknown;
@@ -533,7 +533,7 @@ export interface ReadResponseOptions {
   maxBytes?: number;
   /** Wall-clock budget for the whole body. Defaults to 60s. */
   timeoutMs?: number;
-  /** Status reported on the size-limit error — non-streaming reads report 0. */
+  /** Status reported on the size-limit error - non-streaming reads report 0. */
   tooLargeStatus?: number;
   /** Message reported on the size-limit error. */
   tooLargeMessage?: string;
@@ -593,7 +593,7 @@ export async function readResponseBytes(
       await reader.cancel();
       reader.releaseLock();
     } catch {
-      // The reader is discarded either way — the body is never read again.
+      // The reader is discarded either way - the body is never read again.
     }
   }
 
@@ -606,7 +606,7 @@ export async function readResponseBytes(
   return bytes;
 }
 
-/** UTF-8 text form of {@link readResponseBytes} — the safe `response.text()`. */
+/** UTF-8 text form of {@link readResponseBytes} - the safe `response.text()`. */
 export async function readResponseText(
   providerName: AIProvider,
   response: Response,
@@ -621,9 +621,9 @@ export async function readResponseText(
  * `readResponseText` runs *outside* the parse guard deliberately: it is where
  * `request_timeout` and `response_too_large` originate, and callers key retry
  * behaviour off those codes. Letting them fall into the `invalid_json` branch
- * would relabel an infrastructure failure as a malformed payload — with
+ * would relabel an infrastructure failure as a malformed payload - with
  * `response.status === 200`, since this runs only after the `!response.ok`
- * check — and silently make timeouts non-retryable.
+ * check - and silently make timeouts non-retryable.
  */
 export async function readJsonResponse(
   providerName: AIProvider,
@@ -657,7 +657,7 @@ export type ApiErrorPicker = (body: Record<string, unknown>) => PickedApiError |
 /**
  * Shared `!response.ok` handling: reads the error body capped at 64 KB, lets
  * the provider dialect pick `code`/`message` out of the parsed JSON
- * ({@link ApiErrorPicker} — OpenAI-compatible envelopes, Anthropic `type`,
+ * ({@link ApiErrorPicker} - OpenAI-compatible envelopes, Anthropic `type`,
  * Gemini `status`, Ollama string bodies), and falls back to
  * ``HTTP <status>: <statusText>`` + `code: 'unknown'` whenever the body is
  * unparseable or the dialect finds nothing.

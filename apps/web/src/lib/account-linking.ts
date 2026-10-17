@@ -14,7 +14,7 @@
  * through a credential they supplied. A row with a `passwordHash` fails that
  * test: this app has no email-verification flow, so anyone can register an
  * arbitrary address with a password. Linking a social identity onto such a row
- * would preserve the attacker's password access — classic account
+ * would preserve the attacker's password access - classic account
  * pre-hijacking.
  *
  * Rows without a password were created by an earlier OAuth sign-in for the same

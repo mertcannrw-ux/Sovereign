@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic';
  * Longest a single generate stream may run. The agent loop has no step cap, so
  * wall clock is the only bound left: 800s is Vercel's generally available
  * maximum for Fluid functions (Pro/Enterprise). This must stay a numeric
- * literal — Next extracts it statically (SWC) and silently drops non-literal
+ * literal - Next extracts it statically (SWC) and silently drops non-literal
  * values (compute-in-environment or `Math.min(...)`) back to the platform
  * default. Hobby's ceiling is 300s and the build fails at deploy time above
  * it, so `assertPlanAllowsMaxDuration` turns the misconfiguration into a
@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
 
   // Built explicitly rather than with `ReadableStream.from`: the static is not
   // declared by the DOM lib this app compiles against. `pull` reproduces what
-  // `Stream.from` did — one generator yield per chunk, backpressure honoured —
+  // `Stream.from` did - one generator yield per chunk, backpressure honoured -
   // and `cancel` reproduces its disconnect path, unwinding the generator where
   // the runner aborts in-flight provider calls and releases the generation
   // lease.

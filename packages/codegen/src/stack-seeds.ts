@@ -206,7 +206,7 @@ This project is a static Vite + React 19 + TypeScript SPA.
 - \`vite.config.ts\` must use \`@vitejs/plugin-react\` only. Never import \`@app-builder/visual-editor\`.
 - \`tsconfig.json\` must set \`"jsx": "react-jsx"\`.
 - Public env vars are compile-time \`VITE_*\` keys. Never write \`.env\`; use \`.env.example\`.
-- \`src/ErrorBoundary.tsx\` is required — restyle if needed, do not delete.
+- \`src/ErrorBoundary.tsx\` is required - restyle if needed, do not delete.
 - Wrap the app in \`<main>\`. \`index.html\` needs \`lang\`, viewport, title, description, and \`/src/main.tsx\`.
 `;
 

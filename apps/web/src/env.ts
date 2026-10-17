@@ -13,7 +13,7 @@ export const env = createEnv({
     // A length check alone is not enough: the string `.env.example` used to
     // ship is 39 characters, so a deployment that copied the file and edited
     // only its database URL would boot happily while signing session JWTs with
-    // a secret that is committed to this repository — anyone could then forge a
+    // a secret that is committed to this repository - anyone could then forge a
     // session for any user id. Reject that literal by name.
     NEXTAUTH_SECRET:
       process.env.NODE_ENV === 'test'
@@ -23,7 +23,7 @@ export const env = createEnv({
             .min(32, 'NEXTAUTH_SECRET must be at least 32 characters')
             .refine(
               (value) => value !== 'generate-me-with-openssl-rand-base64-32',
-              'NEXTAUTH_SECRET is still a placeholder — generate a real one with `openssl rand -base64 32`',
+              'NEXTAUTH_SECRET is still a placeholder - generate a real one with `openssl rand -base64 32`',
             ),
     API_KEY_ENCRYPTION_KEY: z
       .string()
@@ -44,7 +44,7 @@ export const env = createEnv({
     // Redis
     REDIS_URL: z.string().url().optional(),
 
-    // OAuth — optional; providers with incomplete credentials won't render in sign-in
+    // OAuth - optional; providers with incomplete credentials won't render in sign-in
     GOOGLE_CLIENT_ID: z.string().optional(),
     GOOGLE_CLIENT_SECRET: z.string().optional(),
     GITHUB_CLIENT_ID: z.string().optional(),

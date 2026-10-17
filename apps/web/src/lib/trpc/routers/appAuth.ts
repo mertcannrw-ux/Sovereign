@@ -168,7 +168,7 @@ export const appAuthRouter = router({
     }),
 
   /**
-   * Create a new user in the project's app (admin only — owner or admin role).
+   * Create a new user in the project's app (admin only - owner or admin role).
    */
   createUser: protectedProcedure.input(createUserSchema).mutation(async ({ ctx, input }) => {
     await requireProjectRole(ctx, input.projectId, 'OWNER');

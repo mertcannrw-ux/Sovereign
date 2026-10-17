@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
 /**
- * Liveness probe — returns 200 if the process is running.
+ * Liveness probe - returns 200 if the process is running.
  * No external dependencies checked.
  */
 export async function GET() {

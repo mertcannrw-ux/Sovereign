@@ -11,7 +11,7 @@ import path from 'node:path';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 // Local-disk fallback storage. Deliberately kept OUT of `public/` so Next.js never
-// serves assets statically — files are served only through the authenticated
+// serves assets statically - files are served only through the authenticated
 // `/api/assets` route, which verifies both the DB record and project ownership.
 export const LOCAL_ASSET_ROOT = path.join(process.cwd(), '.private-assets');
 
@@ -166,7 +166,7 @@ export async function deleteFromR2(objectKey: string): Promise<void> {
     const relativePath = objectKey.startsWith('/') ? objectKey.slice(1) : objectKey;
     const fullPath = path.join(LOCAL_ASSET_ROOT, relativePath);
     await fs.promises.unlink(fullPath).catch((err) => {
-      // ENOENT just means the object was already gone — fine. Any other error
+      // ENOENT just means the object was already gone - fine. Any other error
       // (permissions, I/O) must propagate so the caller does not delete the DB
       // row for a file that still exists on disk.
       if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') throw err;

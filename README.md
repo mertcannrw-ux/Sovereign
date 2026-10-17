@@ -1,154 +1,81 @@
-# Sovereign — AI App Builder
+# Sovereign
 
-> **Sovereign** is a premium, editorial-grade Bring-Your-Own-Key (BYOK) AI SaaS application builder. It architects full-stack web applications, manages project versions, and enables live element-level visual canvas editing.
+A bring-your-own-key (BYOK) AI app builder. Sovereign generates full-stack web applications from prompts, versions every change, and supports element-level editing in a live preview.
 
----
+## Features
 
-## ⚡ Key Features
+- **Code generation.** Generate, iterate on, and patch React and Next.js applications with the model of your choice.
+- **Visual editing.** Inspect and modify elements directly in the live preview.
+- **Multi-tenancy.** Organizations, members, projects, and roles (Owner, Editor, Viewer).
+- **BYOK.** Provider API keys are encrypted at rest with AES-256-GCM.
+- **Persistence.** PostgreSQL through Prisma.
 
-- **AI Code Generation Engine:** Generate, iterate, and patch full-stack Next.js and React applications using AI models.
-- **Visual Canvas & Element Editor:** Inspect and modify elements directly in the live browser preview.
-- **Multi-Tenant Architecture:** Built-in support for Organizations, Members, Projects, and Access Roles (Owner, Editor, Viewer).
-- **BYOK (Bring Your Own Key):** Securely store and encrypt provider API keys locally per workspace using AES-256-GCM.
-- **Database & Persistence:** Powered by Prisma ORM and PostgreSQL with automatic schema generation and seed management.
-- **Monorepo Architecture:** Clean sub-package decomposition using Turborepo.
-
----
-
-## 🏗️ Project Structure
+## Repository
 
 ```
-Sovereign/
-├── apps/
-│   └── web/                # Next.js App Router frontend, tRPC APIs, & server routes
-├── packages/
-│   ├── ai-gateway/         # AI provider interface, SSRF protection & streaming
-│   ├── codegen/            # Code generation, parser, and patch protocol engine
-│   ├── shared/             # Shared TypeScript types, schemas, & utilities
-│   ├── tsconfig/           # Centralized TypeScript configurations
-│   ├── ui/                 # Shared helpers: `cn()` class merge, date/key formatters
-│   └── visual-editor/      # Visual element editor, selector engine & property panels
-├── prisma/
-│   ├── schema.prisma       # Database models & enums
-│   ├── init.sql            # Full PostgreSQL DDL script
-│   └── seed.ts             # Seed script for initial admin user & demo projects
-└── README.md
+apps/web/              Next.js app: UI, tRPC API, server routes
+packages/ai-gateway/   Provider interface, streaming, SSRF protection
+packages/codegen/      Code generation, parsing, and patch protocol
+packages/shared/       Shared types, schemas, and utilities
+packages/ui/           Shared UI helpers
+packages/visual-editor/ Element selection and property editing
+packages/tsconfig/     Shared TypeScript configuration
+prisma/                Schema, SQL, and seed script
+docs/                  Technical documentation
 ```
 
----
+Further reading:
 
-## 📚 Documentation
+- [`design.md`](./design.md): design system, tokens, and component conventions
+- [`docs/agent-runtime.md`](./docs/agent-runtime.md): agent runtime, generation protocol, and tool contract
 
-| Document                                           | What it covers                                                                        |
-| :------------------------------------------------- | :------------------------------------------------------------------------------------ |
-| [`design.md`](./design.md)                         | Design system: colour tokens, typography, spacing, component conventions, open issues |
-| [`docs/agent-runtime.md`](./docs/agent-runtime.md) | Agent runtime, generation protocol, and tool contract                                 |
+## Getting started
 
----
-
-## 🚀 Quick Start
-
-### 1. Prerequisites
-
-Ensure you have the following installed on your machine:
-
-- **Node.js:** `v20.0.0` or higher
-- **npm:** `v10.0.0` or higher
-
-### 2. Install Dependencies
+Requires Node.js 20+ and npm 10+.
 
 ```bash
 npm install
-```
-
-### 3. Environment Setup
-
-Copy the `.env.example` file into the app directory as `apps/web/.env`. Next.js resolves env files from the app directory, not the monorepo root, so `.env` only works when it lives next to `apps/web`:
-
-```bash
 cp .env.example apps/web/.env
 ```
 
-On Windows PowerShell use `Copy-Item .env.example apps/web/.env`.
+Next.js reads env files from `apps/web`, not the repository root. `prisma.config.ts` loads the same file, so database scripts work from the root.
 
-_(Note: The default `apps/web/.env` is configured for local development using the embedded PostgreSQL socket server. `prisma.config.ts` loads the same file, so `npm run db:push`, `db:seed`, and `db:studio` work from the repository root.)_
-
-> **Production — rate limiting:** when deployed behind a reverse proxy (Vercel, Cloudflare, Nginx, …), set `TRUSTED_PROXY="true"`. Without it the app sees every request as `127.0.0.1`, so pre-auth rate limits (`register`/`signIn`) collapse into a single global bucket shared by all users. See `.env.example`.
-
----
-
-## 🗄️ Database Setup & Development
-
-### 1. Start the Local PostgreSQL Database
-
-Launch the embedded PGLite server:
+Start the local database, apply the schema, and seed it:
 
 ```bash
-npm run db:start
-```
-
-_This starts a PostgreSQL server on `127.0.0.1:5433` using `.pglite_data`._
-
-### 2. Push the Prisma Schema
-
-Apply the schema to the running database:
-
-```bash
+npm run db:start   # PGlite server on 127.0.0.1:5433
 npm run db:push
+npm run db:seed    # in a second terminal
 ```
 
-### 3. Seed Initial Admin & Demo Data
+The seed creates an admin account from `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD` in `apps/web/.env`.
 
-In a separate terminal window, populate the database:
-
-```bash
-npm run db:seed
-```
-
-#### 🔑 Local Admin Credentials (from `apps/web/.env`)
-
-| Field            | Credential                                                                      |
-| :--------------- | :------------------------------------------------------------------------------ |
-| **Sign-in URL**  | [http://localhost:3000/auth/signin](http://localhost:3000/auth/signin)          |
-| **Email**        | Set by `SEED_ADMIN_EMAIL` in `apps/web/.env` (default `admin@appbuilder.local`) |
-| **Password**     | Set by `SEED_ADMIN_PASSWORD` in `apps/web/.env`                                 |
-| **Organization** | `Admin's Organization`                                                          |
-
----
-
-## 💻 Running the Application
-
-Start the local development server:
+Run the app:
 
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+Then open [http://localhost:3000](http://localhost:3000).
 
----
+## Scripts
 
-## 📜 Available Scripts
+| Command                | Description                               |
+| :--------------------- | :---------------------------------------- |
+| `npm run dev`          | Start the development server on port 3000 |
+| `npm run build`        | Build all apps and packages               |
+| `npm run test`         | Run unit tests in every workspace         |
+| `npm run typecheck`    | Typecheck all workspaces                  |
+| `npm run check`        | Typecheck, lint, and build                |
+| `npm run format`       | Format with Prettier                      |
+| `npm run format:check` | Check formatting (used by CI)             |
+| `npm run db:start`     | Start the local PGlite server             |
+| `npm run db:generate`  | Generate the Prisma client                |
+| `npm run db:push`      | Push the Prisma schema to the database    |
+| `npm run db:seed`      | Seed the admin user and demo projects     |
+| `npm run db:studio`    | Open Prisma Studio                        |
 
-| Command                | Description                                                      |
-| :--------------------- | :--------------------------------------------------------------- |
-| `npm run dev`          | Starts the Next.js development server on port 3000 via Turborepo |
-| `npm run build`        | Builds all applications and packages for production              |
-| `npm run db:start`     | Launches the local PGLite PostgreSQL server on port 5433         |
-| `npm run db:generate`  | Generates the Prisma Client types                                |
-| `npm run db:push`      | Pushes the Prisma schema directly to the database                |
-| `npm run db:seed`      | Seeds initial admin user, organization, and demo projects        |
-| `npm run db:studio`    | Opens Prisma Studio GUI to view and edit database rows           |
-| `npm run format`       | Formats all files across the monorepo with Prettier              |
-| `npm run format:check` | Verifies formatting without writing (used by CI)                 |
-| `npm run test`         | Runs every workspace's unit test suite via Turborepo             |
-| `npm run typecheck`    | Typechecks all workspaces                                        |
-| `npm run check`        | Runs typechecking, linting, and build checks                     |
-
-### End-to-end tests
-
-Playwright smoke tests live in `apps/web/e2e` and cover health endpoints,
-security headers, unauthenticated-API rejection, and page rendering:
+End-to-end tests use Playwright and start the app automatically:
 
 ```bash
 cd apps/web
@@ -156,18 +83,8 @@ npx playwright install chromium   # first run only
 npm run test:e2e
 ```
 
-The Playwright config starts the app automatically (dev server locally,
-`next start` in CI).
+## Deployment
 
----
-
-## 🩺 Health Check Endpoints
-
-- **Readiness Probe:** `GET /api/health/ready` — Verifies database connection and critical services (`200 OK` when ready).
-- **Liveness Probe:** `GET /api/health/live` — Basic server responsiveness probe (`200 OK`).
-
----
-
-## 🔒 Security & Environment Protection
-
-All sensitive environment files (`apps/web/.env`, `.env.local`), database data directories (`.pglite_data/`), and build artifacts are strictly ignored in `.gitignore` to prevent credential exposure. Always use `.env.example` as a template for production deployment configs.
+- Set `TRUSTED_PROXY="true"` when running behind a reverse proxy. Otherwise every request appears to come from `127.0.0.1` and pre-auth rate limits share a single bucket.
+- Health checks: `GET /api/health/live` (liveness) and `GET /api/health/ready` (readiness, includes the database).
+- Use `.env.example` as the reference for all configuration. Never commit `.env` files.

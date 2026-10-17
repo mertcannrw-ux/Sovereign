@@ -19,7 +19,7 @@ export interface VersionTimelineEntry {
 }
 
 interface VersionTimelineProps {
-  /** Every version, ascending. Nothing is hidden — a long history scrolls. */
+  /** Every version, ascending. Nothing is hidden - a long history scrolls. */
   versions: VersionTimelineEntry[];
   /** The version the project is currently at. */
   currentVersion: number;

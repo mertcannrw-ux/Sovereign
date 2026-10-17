@@ -8,9 +8,9 @@
  * expires them after ~1 hour, but this service treats each call as independent.
  *
  * Environment variables (from @/env):
- *   GITHUB_APP_ID       — numeric app ID (string)
- *   GITHUB_APP_PRIVATE_KEY — PEM-encoded RSA private key
- *   GITHUB_APP_WEBHOOK_SECRET — secret for verifying webhook payloads
+ *   GITHUB_APP_ID       - numeric app ID (string)
+ *   GITHUB_APP_PRIVATE_KEY - PEM-encoded RSA private key
+ *   GITHUB_APP_WEBHOOK_SECRET - secret for verifying webhook payloads
  *
  * If any required variable is missing, functions throw an actionable error.
  */
@@ -131,7 +131,7 @@ async function parseGithubResponse<T>(response: Response, context: string): Prom
       // ignore parse errors on error body
     }
     const message = body
-      ? `GitHub API error (${context}): ${response.status} — ${body.slice(0, 500)}`
+      ? `GitHub API error (${context}): ${response.status} - ${body.slice(0, 500)}`
       : `GitHub API error (${context}): ${response.status}`;
     throw new Error(message);
   }

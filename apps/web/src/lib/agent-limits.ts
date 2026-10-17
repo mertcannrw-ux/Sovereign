@@ -2,7 +2,7 @@
  * Operator knobs for the agent loop, parsed once per process.
  *
  * BYOK runs carry **no default limits**: the user pays for the tokens, so a run
- * ends when the model finishes or something with a signal stops it — the chat's
+ * ends when the model finishes or something with a signal stops it - the chat's
  * Stop button, lease ownership, or a provider/transport error. A hard-coded
  * step ceiling used to cut long builds mid-file (a 25-file app that needed 41
  * turns died with every file written and nothing verified), and a default
@@ -21,7 +21,7 @@ export const VERCEL_HOBBY_MAX_DURATION = 300;
 
 /**
  * `maxDuration` on the generate route must stay a numeric literal (Next
- * extracts it statically), so a Hobby deployment cannot lower it via env — it
+ * extracts it statically), so a Hobby deployment cannot lower it via env - it
  * must edit the literal. An un-edited literal fails the Vercel build with a
  * plan error at deploy time; this check moves that failure to boot with the
  * exact fix spelled out, and only fires on Vercel Hobby (`VERCEL` is set by
@@ -40,7 +40,7 @@ export function assertPlanAllowsMaxDuration(maxDuration: number): void {
 
 /**
  * Consecutive non-mutating turns before the run stops, or `Infinity` when the
- * guard is off — which is the default. Reading files, thinking out loud and
+ * guard is off - which is the default. Reading files, thinking out loud and
  * checking the build are all legitimate turns that may repeat many times over.
  */
 export function resolveNoProgressGuard(raw: string | undefined): number {

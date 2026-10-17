@@ -281,7 +281,7 @@ export function PromptBar({
       dismissPopover();
     };
     // The preview runs in an iframe, so presses inside it never reach this
-    // document — the blur it causes on this window is the only signal we get.
+    // document - the blur it causes on this window is the only signal we get.
     const onWindowBlur = () => dismissPopover();
 
     document.addEventListener('pointerdown', onPointerDown);

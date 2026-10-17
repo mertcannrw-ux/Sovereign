@@ -113,7 +113,7 @@ describe('usePreviewRuntime runtime bridge', () => {
 
     act(() => {
       // A streamed file still sitting in the 120 ms preview queue when the run
-      // arrives — the command must not start before it is on disk.
+      // arrives - the command must not start before it is on disk.
       result.current.applyFilePreview({
         operation: 'update',
         path: 'src/App.tsx',

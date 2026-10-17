@@ -69,7 +69,7 @@ export interface UseGenerationOptions {
     | 'applyFiles'
     | 'applyImmediateWrite'
     // The live mirror is read (never written) to snapshot the content a streamed
-    // file had before the run touched it — see `trackProvisional` in `send`.
+    // file had before the run touched it - see `trackProvisional` in `send`.
     | 'files'
     | 'flushPendingWrites'
     | 'handleRuntimeRequest'
@@ -116,7 +116,7 @@ export interface UseGenerationResult {
   /**
    * Starts a run. A send that is rejected before it starts (no prompt or
    * direction response, no model/provider, or a run already in flight) is a
-   * no-op that leaves the user's prompt and attachments untouched — the prompt
+   * no-op that leaves the user's prompt and attachments untouched - the prompt
    * bar mirrors these same guards so it never clears what was not sent.
    */
   send: (
@@ -147,7 +147,7 @@ function isTokenUsage(value: unknown): value is ChatMessage['tokenUsage'] {
 const MAX_ERROR_DETAIL_CHARS = 2000;
 
 /**
- * Provider failures arrive as raw JSON/HTML bodies — a rejected API key dumps the
+ * Provider failures arrive as raw JSON/HTML bodies - a rejected API key dumps the
  * whole response. The chat shows a clean sentence instead; the unfiltered text is
  * only kept in the message's collapsed `thinking` detail, truncated so a huge
  * provider dump cannot bloat the transcript.
@@ -340,7 +340,7 @@ export function useGeneration({
         provisionalOriginals.clear();
         // Re-queueing the committed content replaces the buffered fragments, and
         // the throttled write path pushes the committed text back into the
-        // container — a fragment that already landed there is repaired this way.
+        // container - a fragment that already landed there is repaired this way.
         for (const [path, original] of originals) {
           runtime.applyFilePreview(
             original === null
@@ -567,7 +567,7 @@ export function useGeneration({
             },
           ]);
           // The persisted message is authoritative and is swapped in for the
-          // streamed bubble in this same batch — clearing it earlier would blink
+          // streamed bubble in this same batch - clearing it earlier would blink
           // the answer away while `applyFiles` still writes to the sandbox.
           setLiveAnswer('');
           setCurrentVersion(event.data.versionNumber);
@@ -579,7 +579,7 @@ export function useGeneration({
         });
 
         // A stream that ends without a terminal event (dropped connection, server
-        // restart) leaves the buffered previews unverified — treat that like a
+        // restart) leaves the buffered previews unverified - treat that like a
         // stop rather than flushing a possibly truncated fragment.
         if (!serverSettled) {
           if (abortControllerRef.current === abortController) discardProvisionalWrites();
@@ -633,7 +633,7 @@ export function useGeneration({
           }
         }
         // Only a run that ended on a server terminal event may write its buffered
-        // previews. After a stop — or a run superseded by a newer one — the buffer
+        // previews. After a stop - or a run superseded by a newer one - the buffer
         // still holds a truncated fragment the server never committed, and
         // flushing it is what left an unparseable file in the sandbox.
         if (serverSettled && !abortController.signal.aborted) {

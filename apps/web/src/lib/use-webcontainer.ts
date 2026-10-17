@@ -106,14 +106,14 @@ function resetContainer(): void {
   void discarded
     .then((container) => container.teardown())
     .catch(() => {
-      // Never booted (or already torn down) — nothing to release.
+      // Never booted (or already torn down) - nothing to release.
     });
 }
 
 /**
  * Start (or join) the container boot without claiming ownership of a preview.
- * The hook's own boot waits behind `enabled` — authenticated plus the project
- * file fetch — so without this the multi-second runtime download/instantiation
+ * The hook's own boot waits behind `enabled` - authenticated plus the project
+ * file fetch - so without this the multi-second runtime download/instantiation
  * cannot begin until those complete; warming at mount lets the first real
  * `getContainer()` await an already-in-flight boot. A page that never boots a
  * preview pays the boot cost too: the sandbox runtime is downloaded,
@@ -123,7 +123,7 @@ export function warmWebContainer(): void {
   const warming = getContainer();
   void warming.catch(() => {
     // A failed warm boot must not poison the page's own attempt: drop the
-    // rejected promise so the next getContainer() starts a fresh sandbox —
+    // rejected promise so the next getContainer() starts a fresh sandbox -
     // but only while it is still the cached one; a retry that already
     // replaced it owns the container now.
     if (containerPromise === warming) resetContainer();
@@ -203,7 +203,7 @@ const CONTAINER_OWNED_FILES: ReadonlySet<string> = new Set([
  * browser session opens, and it keeps files a project has since deleted. A
  * command like `tsc --noEmit` compiles everything under `tsconfig.include`, so
  * leftovers from another project show up as errors in files the project does
- * not have — the walk exists to find and delete them.
+ * not have - the walk exists to find and delete them.
  */
 async function listProjectTree(container: WebContainer, directory = '.'): Promise<string[]> {
   const entries = await container.fs.readdir(directory, { withFileTypes: true });
@@ -262,7 +262,7 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
     const next = writeQueueRef.current.then(
       // The container filesystem is shared by every project this browser session
       // opens. An op queued by a preview that has since unmounted would write
-      // the old project's files *after* the next project's boot — the new
+      // the old project's files *after* the next project's boot - the new
       // project's preview would then serve the previous project's app.
       () => (aliveRef.current ? op() : undefined),
       () => (aliveRef.current ? op() : undefined),
@@ -288,7 +288,7 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
 
   /**
    * Run one allowlisted command in the shared container and collect its output.
-   * Resolves — never rejects — with the failure described, because the caller
+   * Resolves - never rejects - with the failure described, because the caller
    * owes the blocked server a result for every `runtime-request` it accepts.
    * WebContainer exposes stdout and stderr as one terminal stream, so there is
    * a single `output` field; the exit code disambiguates success.
@@ -422,7 +422,7 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
    * Make the container's tree equal `files` (the project's authoritative set):
    * delete every project-owned path the set does not contain, then write the
    * set. A `run` must not spawn until this has settled, or the command compiles
-   * another project's leftovers — `tsc` walks everything under `src`, and the
+   * another project's leftovers - `tsc` walks everything under `src`, and the
    * container is shared by every project this browser session opens.
    */
   const syncProjectTree = useCallback(
@@ -741,7 +741,7 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
       const unsubscribe = container.on('server-ready', (_port, url) => {
         const pending = pendingProcessRef.current;
         if (!pending && !awaitingServerReadyRef.current) {
-          // A server this preview did not start — typically the previous project's
+          // A server this preview did not start - typically the previous project's
           // Vite process, whose boot outlived the page that spawned it. Adopting
           // its port would point this project's pane at another project's preview,
           // and at a dead URL once that process goes away.

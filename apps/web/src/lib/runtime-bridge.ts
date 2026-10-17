@@ -9,7 +9,7 @@ import {
 /**
  * Server-side hand-off between the generation stream (the waiter) and
  * `POST /api/generate/runtime/[requestId]` (the client delivering a run
- * result). Server only — the client talks to the POST route over HTTP.
+ * result). Server only - the client talks to the POST route over HTTP.
  *
  * The in-process map is the fast path: in a single-instance deployment the POST
  * resolves the waiter without touching the database. The `GenerationToolTrace`
@@ -108,11 +108,11 @@ export interface WaitForRuntimeResultOptions {
   /** Overall budget: the command's own timeout plus the delivery grace. */
   timeoutMs: number;
   signal?: AbortSignal;
-  /** Reads the persisted trace row — the only state shared across instances. */
+  /** Reads the persisted trace row - the only state shared across instances. */
   loadTrace: (requestId: string) => Promise<RuntimeTraceRow | null>;
   /**
    * Fired every {@link RUNTIME_HEARTBEAT_MS} while waiting. The SSE stream
-   * emits nothing while a `run` executes — up to 195s for `npm install` —
+   * emits nothing while a `run` executes - up to 195s for `npm install` -
    * and idle-timeout-happy proxies kill a silent stream long before the
    * command finishes. The client cannot miss a `runtime-request` because of
    * this: it arrives before the wait starts, not on the heartbeat schedule.

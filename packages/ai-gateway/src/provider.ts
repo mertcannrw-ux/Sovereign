@@ -30,7 +30,7 @@ import type { PickedApiError } from './gateway-http';
 
 // ─── Gateway HTTP layer ───────────────────────────────────
 // Fetch/reader/size-limit infrastructure lives in `./gateway-http`, shared by
-// every provider. The public surface of this module is unchanged — the
+// every provider. The public surface of this module is unchanged - the
 // re-exports below keep the original symbols and signatures for callers
 // (image-client, tests, index.ts) importing from './provider'.
 export { ssrfFetch } from './gateway-http';
@@ -593,7 +593,7 @@ export class AnthropicProvider implements Provider {
       {
         headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
       },
-      // `_baseUrl` is not honoured — this endpoint is a constant, so there is
+      // `_baseUrl` is not honoured - this endpoint is a constant, so there is
       // nothing caller-supplied to validate.
       { signal },
     );
@@ -779,7 +779,7 @@ export class GoogleProvider implements Provider {
 
     const candidates = data['candidates'];
     if (!Array.isArray(candidates) || candidates.length === 0) {
-      // blocked / empty response — return empty content
+      // blocked / empty response - return empty content
       const usage = parseUsage(data['usageMetadata'], readGeminiUsage);
       return { content: '', finishReason: 'stop', usage };
     }
@@ -852,7 +852,7 @@ export class OllamaProvider implements Provider {
   ): Promise<AICompletionResponse> {
     // Ollama doesn't use API key; `apiKey` param is ignored.
     // Always validate: the default endpoint is loopback, which is exactly what
-    // validateUrl() gates behind ALLOW_LOOPBACK_PROVIDERS — a default must not
+    // validateUrl() gates behind ALLOW_LOOPBACK_PROVIDERS - a default must not
     // silently bypass that policy.
     const baseUrl = options?.baseUrl ?? 'http://localhost:11434';
 
@@ -963,7 +963,7 @@ export class OllamaProvider implements Provider {
   /** Fetch sorted Ollama model names, enforcing SSRF and loopback policy; the API key is unused. */
   async listModels(_apiKey: string, baseUrl?: string, signal?: AbortSignal): Promise<string[]> {
     const url = `${baseUrl ?? 'http://localhost:11434'}/api/tags`;
-    // validateUrl: true — the default endpoint is loopback and must go through
+    // validateUrl: true - the default endpoint is loopback and must go through
     // the same ALLOW_LOOPBACK_PROVIDERS gate as a custom one.
     const response = await ssrfFetch(this.name, url, undefined, {
       validateUrl: true,
@@ -1007,7 +1007,7 @@ export class CustomProvider extends OpenAICompatibleProvider {
 
 /**
  * OpenAI-compatible envelopes carry `error.message`; the code comes from
- * `error.code` or — the assignment after it wins — `error.type`.
+ * `error.code` or - the assignment after it wins - `error.type`.
  */
 function openAIErrorBody(body: Record<string, unknown>): PickedApiError | undefined {
   const error = body['error'];

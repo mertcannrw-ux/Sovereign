@@ -55,7 +55,7 @@ export interface RuntimeRequestEventData {
  * tool call. Its purpose is transport-level: `waitForRuntimeResult` fires
  * `onHeartbeat` every `RUNTIME_HEARTBEAT_MS` so an idle-timeout-happy proxy
  * does not cut the SSE connection during a long `npm install`. No UI state
- * consumes it — `useGeneration` has no branch for it, so the frame ends in
+ * consumes it - `useGeneration` has no branch for it, so the frame ends in
  * that handler's catch-all no-op. It is a keep-alive, not a progress signal.
  * Carries nothing beyond the request it belongs to.
  */

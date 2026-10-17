@@ -366,7 +366,7 @@ export async function createAgentStream(params: AgentExecutionParams): Promise<A
               content: [
                 `Project: ${project.name}`,
                 project.description ? `Description: ${project.description}` : '',
-                `Project state: ${isExistingProject ? 'EXISTING APPLICATION — preserve the current design and make only the requested changes.' : 'EMPTY PROJECT — create the application from the user request.'}`,
+                `Project state: ${isExistingProject ? 'EXISTING APPLICATION - preserve the current design and make only the requested changes.' : 'EMPTY PROJECT - create the application from the user request.'}`,
                 `Current file manifest:\n${[...files.keys()].join('\n') || '(empty project)'}`,
                 body.editTarget
                   ? `Selected visual element: ${JSON.stringify(body.editTarget)}`
@@ -851,7 +851,7 @@ export async function createAgentStream(params: AgentExecutionParams): Promise<A
               }
               emitStep({
                 ...thinkingStep,
-                title: 'Output truncated — continuing',
+                title: 'Output truncated - continuing',
                 detail:
                   'The previous completion hit its token ceiling; asking the model to continue.',
                 status: 'complete',
@@ -871,7 +871,7 @@ export async function createAgentStream(params: AgentExecutionParams): Promise<A
                 if (!text) {
                   emitStep({
                     ...thinkingStep,
-                    title: 'No user-facing output — asking again',
+                    title: 'No user-facing output - asking again',
                     detail: reasoningContent.trim() || 'The model returned no output.',
                     status: 'complete',
                     completedAt: new Date().toISOString(),
