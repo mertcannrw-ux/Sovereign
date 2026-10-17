@@ -70,9 +70,9 @@ export function Section({
   children: ReactNode;
 }) {
   return (
-    <section id={id} className={cn('relative scroll-mt-14 border-t border-border', className)}>
+    <section id={id} className={cn('relative scroll-mt-16 border-t border-border', className)}>
       <RuleMarks />
-      <div className={cn(COLUMN, GUTTER, 'py-20 sm:py-28', bodyClassName)}>{children}</div>
+      <div className={cn(COLUMN, GUTTER, 'py-16 sm:py-24', bodyClassName)}>{children}</div>
     </section>
   );
 }
@@ -119,7 +119,7 @@ export function SectionHeading({
       {eyebrow ? <Eyebrow index={index}>{eyebrow}</Eyebrow> : null}
       <h2
         className={cn(
-          'text-balance text-[clamp(2rem,4.2vw,3.25rem)] font-semibold leading-[1.05] tracking-[-0.035em] text-foreground',
+          'text-balance text-[clamp(1.75rem,3.4vw,2.625rem)] font-semibold leading-[1.1] tracking-[-0.035em] text-foreground',
           eyebrow && 'mt-6',
         )}
       >

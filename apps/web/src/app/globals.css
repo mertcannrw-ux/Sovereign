@@ -77,24 +77,6 @@
 }
 
 @layer components {
-  /* Hairline grid that fades out toward the horizon. Sits behind the auth
-   * screens; the marketing page itself is flat (design.md §7). */
-  .landing-grid {
-    background-image:
-      linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
-    background-size: 72px 72px;
-    background-position: center top;
-  }
-
-  .landing-grid::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background: linear-gradient(to bottom, transparent 35%, var(--background) 93%);
-  }
-
   .text-balance {
     text-wrap: balance;
   }
@@ -141,6 +123,18 @@
   }
   .animate-caret {
     animation: caret 1.05s steps(1) infinite;
+  }
+  .animate-marquee {
+    animation: marquee 40s linear infinite;
+  }
+
+  @keyframes marquee {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(-50%);
+    }
   }
 
   @keyframes shimmer {
