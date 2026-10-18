@@ -4,16 +4,7 @@ import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import {
-  ArrowRight,
-  Clock3,
-  FolderKanban,
-  Grid2X2,
-  List,
-  Plus,
-  Search,
-  Sparkles,
-} from 'lucide-react';
+import { ArrowRight, Clock3, FolderKanban, Grid2X2, List, Search, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -27,6 +18,8 @@ import {
   DialogClose,
 } from '@/components/ui/dialog';
 import { trpc } from '@/lib/trpc/client';
+import { motion } from 'framer-motion';
+import { cn } from '@app-builder/ui/utils';
 
 // Accent color palette for project cards
 const ACCENTS = [
@@ -199,7 +192,7 @@ function DashboardContent() {
   return (
     <div className="min-h-full bg-background">
       <header className="border-b border-border">
-        <div className="mx-auto flex max-w-[1400px] flex-col gap-6 px-5 py-8 sm:px-8 lg:flex-row lg:items-end lg:justify-between lg:py-10">
+        <div className="mx-auto max-w-[1400px] px-5 py-8 sm:px-8 lg:py-10">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">
               Workspace
@@ -210,14 +203,6 @@ function DashboardContent() {
               off.
             </p>
           </div>
-          <Button
-            size="lg"
-            onClick={() => setShowNew(true)}
-            disabled={isCreating || orgsQuery.isLoading}
-          >
-            <Plus className="mr-2 h-4 w-4" />
-            New project
-          </Button>
         </div>
       </header>
 
@@ -321,18 +306,33 @@ function DashboardContent() {
               className="pl-10"
             />
           </div>
-          <div className="flex items-center gap-1 rounded-lg border border-border bg-background-subtle p-1">
+          <div className="relative flex items-center gap-1 rounded-lg border border-border bg-background-subtle p-1">
+            <div
+              aria-hidden="true"
+              className="duration-280 pointer-events-none absolute bottom-1 top-1 w-8 rounded-md bg-background-muted shadow-sm transition-all ease-[cubic-bezier(0.16,1,0.3,1)]"
+              style={{
+                left: `${view === 'grid' ? 4 : 40}px`,
+              }}
+            />
             <button
+              type="button"
               aria-label="Grid view"
               onClick={() => setView('grid')}
-              className={`rounded-md p-2 ${view === 'grid' ? 'bg-background-muted text-foreground' : 'text-foreground-muted'}`}
+              className={cn(
+                'relative z-10 grid h-8 w-8 place-items-center rounded-md transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
+                view === 'grid' ? 'text-foreground' : 'text-foreground-muted hover:text-foreground',
+              )}
             >
               <Grid2X2 className="h-4 w-4" />
             </button>
             <button
+              type="button"
               aria-label="List view"
               onClick={() => setView('list')}
-              className={`rounded-md p-2 ${view === 'list' ? 'bg-background-muted text-foreground' : 'text-foreground-muted'}`}
+              className={cn(
+                'relative z-10 grid h-8 w-8 place-items-center rounded-md transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
+                view === 'list' ? 'text-foreground' : 'text-foreground-muted hover:text-foreground',
+              )}
             >
               <List className="h-4 w-4" />
             </button>
@@ -355,69 +355,83 @@ function DashboardContent() {
                 : 'Try another search or create something new.'}
             </p>
           </div>
-        ) : view === 'grid' ? (
-          <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-            {projects.map((project) => (
-              <Link
-                key={project.id}
-                href={`/project/${project.id}`}
-                className="group overflow-hidden rounded-2xl border border-border bg-background-subtle transition-all hover:-translate-y-0.5 hover:border-border-strong hover:shadow-[0_24px_60px_rgba(0,0,0,.3)]"
-              >
-                <div className="relative aspect-[16/9] overflow-hidden bg-background-subtle">
-                  <div className="absolute inset-5 rounded-xl border border-white/[0.08] bg-background-subtle p-4">
-                    <div className="flex gap-1.5">
-                      <i className="h-1.5 w-1.5 rounded-full bg-white/15" />
-                      <i className="h-1.5 w-1.5 rounded-full bg-white/15" />
-                      <i className="h-1.5 w-1.5 rounded-full bg-white/15" />
-                    </div>
-                    <div
-                      className="mt-5 h-2 w-1/3 rounded-full"
-                      style={{ background: project.accent }}
-                    />
-                    <div className="mt-3 h-2 w-3/4 rounded-full bg-white/10" />
-                    <div className="mt-2 h-2 w-1/2 rounded-full bg-white/10" />
-                  </div>
-                </div>
-                <div className="p-5">
-                  <div className="flex items-center gap-2">
-                    <h3 className="truncate text-sm font-semibold tracking-[-0.01em]">
-                      {project.name}
-                    </h3>
-                    <Badge variant={statusVariant[project.status]} className="shrink-0 text-[10px]">
-                      {project.status}
-                    </Badge>
-                  </div>
-                  <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-foreground-muted">
-                    {project.description}
-                  </p>
-                  <div className="mt-4 flex items-center gap-1.5 text-[10px] text-foreground-muted">
-                    <Clock3 className="h-3 w-3" />
-                    {relativeTime(project.lastEdited)}
-                  </div>
-                </div>
-              </Link>
-            ))}
-          </div>
         ) : (
-          <div className="overflow-hidden rounded-xl border border-border">
-            {projects.map((project) => (
-              <Link
-                key={project.id}
-                href={`/project/${project.id}`}
-                className="flex items-center gap-4 border-b border-border bg-background-subtle px-5 py-4 last:border-0 hover:bg-background-muted"
-              >
-                <span className="h-9 w-1 rounded-full" style={{ background: project.accent }} />
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium">{project.name}</p>
-                  <p className="truncate text-xs text-foreground-muted">{project.description}</p>
-                </div>
-                <Badge variant={statusVariant[project.status]}>{project.status}</Badge>
-                <span className="hidden text-xs text-foreground-muted sm:block">
-                  {relativeTime(project.lastEdited)}
-                </span>
-              </Link>
-            ))}
-          </div>
+          <motion.div
+            key={view}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.18, ease: 'easeOut' }}
+          >
+            {view === 'grid' ? (
+              <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+                {projects.map((project) => (
+                  <Link
+                    key={project.id}
+                    href={`/project/${project.id}`}
+                    className="group overflow-hidden rounded-2xl border border-border bg-background-subtle transition-all hover:-translate-y-0.5 hover:border-border-strong hover:shadow-[0_24px_60px_rgba(0,0,0,.3)]"
+                  >
+                    <div className="relative aspect-[16/9] overflow-hidden bg-background-subtle">
+                      <div className="absolute inset-5 rounded-xl border border-white/[0.08] bg-background-subtle p-4">
+                        <div className="flex gap-1.5">
+                          <i className="h-1.5 w-1.5 rounded-full bg-white/15" />
+                          <i className="h-1.5 w-1.5 rounded-full bg-white/15" />
+                          <i className="h-1.5 w-1.5 rounded-full bg-white/15" />
+                        </div>
+                        <div
+                          className="mt-5 h-2 w-1/3 rounded-full"
+                          style={{ background: project.accent }}
+                        />
+                        <div className="mt-3 h-2 w-3/4 rounded-full bg-white/10" />
+                        <div className="mt-2 h-2 w-1/2 rounded-full bg-white/10" />
+                      </div>
+                    </div>
+                    <div className="p-5">
+                      <div className="flex items-center gap-2">
+                        <h3 className="truncate text-sm font-semibold tracking-[-0.01em]">
+                          {project.name}
+                        </h3>
+                        <Badge
+                          variant={statusVariant[project.status]}
+                          className="shrink-0 text-[10px]"
+                        >
+                          {project.status}
+                        </Badge>
+                      </div>
+                      <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-foreground-muted">
+                        {project.description}
+                      </p>
+                      <div className="mt-4 flex items-center gap-1.5 text-[10px] text-foreground-muted">
+                        <Clock3 className="h-3 w-3" />
+                        {relativeTime(project.lastEdited)}
+                      </div>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-xl border border-border">
+                {projects.map((project) => (
+                  <Link
+                    key={project.id}
+                    href={`/project/${project.id}`}
+                    className="flex items-center gap-4 border-b border-border bg-background-subtle px-5 py-4 last:border-0 hover:bg-background-muted"
+                  >
+                    <span className="h-9 w-1 rounded-full" style={{ background: project.accent }} />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium">{project.name}</p>
+                      <p className="truncate text-xs text-foreground-muted">
+                        {project.description}
+                      </p>
+                    </div>
+                    <Badge variant={statusVariant[project.status]}>{project.status}</Badge>
+                    <span className="hidden text-xs text-foreground-muted sm:block">
+                      {relativeTime(project.lastEdited)}
+                    </span>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </motion.div>
         )}
         {projectsQuery.hasNextPage && !projectsQuery.isFetchingNextPage && (
           <div className="mt-8 flex justify-center">
