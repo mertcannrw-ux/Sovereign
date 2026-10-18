@@ -1,11 +1,19 @@
 'use client';
 
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useSession, signOut } from 'next-auth/react';
 import { cn } from '@app-builder/ui/utils';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu';
 import {
   Command,
   LayoutDashboard,
@@ -17,13 +25,13 @@ import {
   PanelLeft,
   LogOut,
   Plus,
+  Ellipsis,
 } from 'lucide-react';
 
 const navItems = [
   { href: '/dashboard', label: 'Projects', icon: LayoutDashboard },
   { href: '/dashboard/templates', label: 'Templates', icon: LayoutTemplate },
   { href: '/dashboard/team', label: 'Team', icon: Users },
-  { href: '/settings', label: 'Settings', icon: Settings },
 ];
 
 interface SidebarProps {
@@ -34,6 +42,7 @@ interface SidebarProps {
 
 export function Sidebar({ open, onClose, className }: SidebarProps) {
   const pathname = usePathname();
+  const router = useRouter();
   const { data: session } = useSession();
   const user = session?.user;
 
@@ -113,28 +122,56 @@ export function Sidebar({ open, onClose, className }: SidebarProps) {
         </nav>
 
         <div className="border-t border-border p-3">
-          <div className="flex items-center gap-3 rounded-xl p-2">
-            <Avatar className="h-9 w-9 border border-border">
-              {user?.image ? <AvatarImage src={user.image} alt={user?.name ?? 'User'} /> : null}
-              <AvatarFallback className="bg-background-muted text-xs text-foreground-secondary">
-                {(user?.name ?? user?.email ?? 'U').charAt(0).toUpperCase()}
-              </AvatarFallback>
-            </Avatar>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-foreground">
-                {user?.name ?? 'Your account'}
-              </p>
-              <p className="truncate text-xs text-foreground-muted">{user?.email ?? ''}</p>
-            </div>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label="Sign out"
-              onClick={() => signOut({ callbackUrl: '/' })}
-            >
-              <LogOut className="h-4 w-4" />
-            </Button>
-          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label="Account menu"
+                className="flex w-full items-center gap-3 rounded-xl p-2 text-left transition-colors hover:bg-background-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40 data-[state=open]:bg-background-muted"
+              >
+                <Avatar className="h-9 w-9 border border-border">
+                  {user?.image ? <AvatarImage src={user.image} alt={user?.name ?? 'User'} /> : null}
+                  <AvatarFallback className="bg-background-muted text-xs text-foreground-secondary">
+                    {(user?.name ?? user?.email ?? 'U').charAt(0).toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-foreground">
+                    {user?.name ?? 'Your account'}
+                  </p>
+                  <p className="truncate text-xs text-foreground-muted">{user?.email ?? ''}</p>
+                </div>
+                <Ellipsis className="h-4 w-4 shrink-0 text-foreground-muted" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="top" align="start" sideOffset={8} className="w-[232px]">
+              <DropdownMenuLabel className="px-2 py-1.5 font-normal">
+                <div className="flex flex-col">
+                  <span className="truncate text-sm font-medium text-foreground">
+                    {user?.name ?? 'Your account'}
+                  </span>
+                  <span className="truncate text-xs font-normal text-foreground-muted">
+                    {user?.email ?? ''}
+                  </span>
+                </div>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => {
+                  onClose();
+                  router.push('/settings');
+                }}
+              >
+                <Settings className="text-foreground-muted" />
+                Settings
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => signOut({ callbackUrl: '/' })}>
+                <LogOut className="text-foreground-muted" />
+                Sign out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </aside>
     </>

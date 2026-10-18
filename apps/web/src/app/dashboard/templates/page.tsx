@@ -21,6 +21,7 @@ import {
   X,
 } from 'lucide-react';
 import { cn } from '@app-builder/ui/utils';
+import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -118,8 +119,8 @@ function TemplatesCatalog() {
 
   const categoryParam = searchParams.get('category');
   const category = templateCategories.find((item) => item === categoryParam) ?? 'All';
-  const sort: TemplateSort = searchParams.get('sort') === 'name' ? 'name' : 'recommended';
-  const view = searchParams.get('view') === 'list' ? 'list' : 'grid';
+  const urlSort: TemplateSort = searchParams.get('sort') === 'name' ? 'name' : 'recommended';
+  const urlView = searchParams.get('view') === 'list' ? 'list' : 'grid';
   const selected = templates.find((item) => item.id === searchParams.get('template')) ?? null;
   const selectedGuide = selected ? templateGuides[selected.id] : undefined;
 
@@ -134,6 +135,29 @@ function TemplatesCatalog() {
   const [creating, setCreating] = useState(false);
   const [pickedOrgId, setPickedOrgId] = useState('');
 
+  const [sort, setSort] = useState<TemplateSort>(urlSort);
+  const [view, setView] = useState<'grid' | 'list'>(urlView);
+
+  const [sortPill, setSortPill] = useState(() => ({
+    left: urlSort === 'name' ? 115 : 4,
+    width: urlSort === 'name' ? 47 : 111,
+  }));
+  const sortBtnRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+
+  useEffect(() => {
+    setSort(urlSort);
+  }, [urlSort]);
+
+  useEffect(() => {
+    setView(urlView);
+  }, [urlView]);
+
+  useEffect(() => {
+    const el = sortBtnRefs.current[sort];
+    if (el) {
+      setSortPill({ left: el.offsetLeft, width: el.offsetWidth });
+    }
+  }, [sort]);
   // Sync state with URL query parameter
   useEffect(() => {
     if (urlQuery !== seenQuery) {
@@ -347,42 +371,71 @@ function TemplatesCatalog() {
               <div
                 role="group"
                 aria-label="Sort templates"
-                className="flex rounded-lg border border-border bg-background-subtle p-1"
+                className="relative flex rounded-lg border border-border bg-background-subtle p-1"
               >
+                <div
+                  aria-hidden="true"
+                  className="duration-280 pointer-events-none absolute bottom-1 top-1 rounded-md bg-background-muted shadow-sm transition-all ease-[cubic-bezier(0.16,1,0.3,1)]"
+                  style={{
+                    left: `${sortPill.left}px`,
+                    width: `${sortPill.width}px`,
+                  }}
+                />
                 {(
                   [
                     ['recommended', 'Recommended'],
                     ['name', 'A–Z'],
                   ] as const
-                ).map(([key, label]) => (
-                  <button
-                    key={key}
-                    type="button"
-                    aria-pressed={sort === key}
-                    onClick={() =>
-                      router.replace(href({ sort: key, template: null }), { scroll: false })
-                    }
-                    className={cn(
-                      'h-8 rounded-md px-3 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
-                      sort === key
-                        ? 'bg-background-muted text-foreground'
-                        : 'text-foreground-muted hover:text-foreground',
-                    )}
-                  >
-                    {label}
-                  </button>
-                ))}
+                ).map(([key, label]) => {
+                  const isActive = sort === key;
+                  return (
+                    <button
+                      key={key}
+                      ref={(el) => {
+                        sortBtnRefs.current[key] = el;
+                      }}
+                      type="button"
+                      aria-pressed={isActive}
+                      onClick={() => {
+                        setSort(key);
+                        const el = sortBtnRefs.current[key];
+                        if (el) {
+                          setSortPill({ left: el.offsetLeft, width: el.offsetWidth });
+                        }
+                        router.replace(href({ sort: key, template: null }), { scroll: false });
+                      }}
+                      className={cn(
+                        'relative z-10 h-8 rounded-md px-3 text-xs font-semibold transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
+                        isActive
+                          ? 'text-foreground'
+                          : 'text-foreground-muted hover:text-foreground',
+                      )}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
               </div>
-              <div className="flex items-center gap-1 rounded-lg border border-border bg-background-subtle p-1">
+              <div className="relative flex items-center gap-1 rounded-lg border border-border bg-background-subtle p-1">
+                <div
+                  aria-hidden="true"
+                  className="duration-280 pointer-events-none absolute bottom-1 top-1 w-8 rounded-md bg-background-muted shadow-sm transition-all ease-[cubic-bezier(0.16,1,0.3,1)]"
+                  style={{
+                    left: `${view === 'grid' ? 4 : 40}px`,
+                  }}
+                />
                 <button
                   type="button"
                   aria-label="Grid view"
                   aria-pressed={view === 'grid'}
-                  onClick={() => router.replace(href({ view: 'grid' }), { scroll: false })}
+                  onClick={() => {
+                    setView('grid');
+                    router.replace(href({ view: 'grid' }), { scroll: false });
+                  }}
                   className={cn(
-                    'grid h-8 w-8 place-items-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
+                    'relative z-10 grid h-8 w-8 place-items-center rounded-md transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
                     view === 'grid'
-                      ? 'bg-background-muted text-foreground'
+                      ? 'text-foreground'
                       : 'text-foreground-muted hover:text-foreground',
                   )}
                 >
@@ -392,11 +445,14 @@ function TemplatesCatalog() {
                   type="button"
                   aria-label="List view"
                   aria-pressed={view === 'list'}
-                  onClick={() => router.replace(href({ view: 'list' }), { scroll: false })}
+                  onClick={() => {
+                    setView('list');
+                    router.replace(href({ view: 'list' }), { scroll: false });
+                  }}
                   className={cn(
-                    'grid h-8 w-8 place-items-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
+                    'relative z-10 grid h-8 w-8 place-items-center rounded-md transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
                     view === 'list'
-                      ? 'bg-background-muted text-foreground'
+                      ? 'text-foreground'
                       : 'text-foreground-muted hover:text-foreground',
                   )}
                 >
@@ -449,51 +505,60 @@ function TemplatesCatalog() {
                 </Button>
               </div>
             </div>
-          ) : view === 'list' ? (
-            <div className="overflow-hidden rounded-xl border border-border">
-              {filtered.map((template) => (
-                <TemplateRow
-                  key={template.id}
-                  template={template}
-                  href={href({ template: template.id })}
-                />
-              ))}
-            </div>
           ) : (
-            <div className="space-y-10">
-              {picks.length > 0 ? (
-                <section>
-                  <h2 className="mb-4 text-sm font-semibold text-foreground-secondary">
-                    Good first picks
-                  </h2>
-                  <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-                    {picks.map((template) => (
-                      <TemplateCard
-                        key={template.id}
-                        template={template}
-                        href={href({ template: template.id })}
-                      />
-                    ))}
-                  </div>
-                </section>
-              ) : null}
-              <section>
-                {picks.length > 0 ? (
-                  <h2 className="mb-4 text-sm font-semibold text-foreground-secondary">
-                    More templates
-                  </h2>
-                ) : null}
-                <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-                  {rest.map((template) => (
-                    <TemplateCard
+            <motion.div
+              key={view}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+            >
+              {view === 'list' ? (
+                <div className="overflow-hidden rounded-xl border border-border">
+                  {filtered.map((template) => (
+                    <TemplateRow
                       key={template.id}
                       template={template}
                       href={href({ template: template.id })}
                     />
                   ))}
                 </div>
-              </section>
-            </div>
+              ) : (
+                <div className="space-y-10">
+                  {picks.length > 0 ? (
+                    <section>
+                      <h2 className="mb-4 text-sm font-semibold text-foreground-secondary">
+                        Good first picks
+                      </h2>
+                      <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+                        {picks.map((template) => (
+                          <TemplateCard
+                            key={template.id}
+                            template={template}
+                            href={href({ template: template.id })}
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  ) : null}
+                  <section>
+                    {picks.length > 0 ? (
+                      <h2 className="mb-4 text-sm font-semibold text-foreground-secondary">
+                        More templates
+                      </h2>
+                    ) : null}
+                    <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+                      {rest.map((template) => (
+                        <TemplateCard
+                          key={template.id}
+                          template={template}
+                          href={href({ template: template.id })}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                </div>
+              )}
+            </motion.div>
           )}
         </div>
       </main>

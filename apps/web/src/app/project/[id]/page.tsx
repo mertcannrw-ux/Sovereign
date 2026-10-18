@@ -103,6 +103,18 @@ function ProjectWorkspace() {
   const [leftPanelWidth, setLeftPanelWidth] = useState(LEFT_PANEL_DEFAULT);
   const [isResizing, setIsResizing] = useState(false);
 
+  const [tabPill, setTabPill] = useState(() => ({
+    left: activeTab === 'code' ? 94 : 4,
+    width: activeTab === 'code' ? 75 : 90,
+  }));
+  const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+
+  useEffect(() => {
+    const el = tabRefs.current[activeTab];
+    if (el) {
+      setTabPill({ left: el.offsetLeft, width: el.offsetWidth });
+    }
+  }, [activeTab]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const lastMessageTailRef = useRef<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -685,13 +697,43 @@ function ProjectWorkspace() {
           )}
         >
           <div className="flex items-center gap-3 border-b border-border bg-background-subtle px-4 py-2.5">
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1">
-              <TabsList className="h-8">
-                <TabsTrigger value="preview" className="gap-1.5 text-xs">
+            <Tabs
+              value={activeTab}
+              onValueChange={(val) => {
+                setActiveTab(val);
+                const el = tabRefs.current[val];
+                if (el) {
+                  setTabPill({ left: el.offsetLeft, width: el.offsetWidth });
+                }
+              }}
+              className="flex-1"
+            >
+              <TabsList className="relative h-8">
+                <div
+                  aria-hidden="true"
+                  className="duration-280 pointer-events-none absolute bottom-1 top-1 rounded-sm bg-background shadow-sm transition-all ease-[cubic-bezier(0.16,1,0.3,1)]"
+                  style={{
+                    left: `${tabPill.left}px`,
+                    width: `${tabPill.width}px`,
+                  }}
+                />
+                <TabsTrigger
+                  ref={(el) => {
+                    tabRefs.current['preview'] = el;
+                  }}
+                  value="preview"
+                  className="relative z-10 gap-1.5 text-xs transition-colors duration-200 data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+                >
                   <Eye className="h-3.5 w-3.5" />
                   Preview
                 </TabsTrigger>
-                <TabsTrigger value="code" className="gap-1.5 text-xs">
+                <TabsTrigger
+                  ref={(el) => {
+                    tabRefs.current['code'] = el;
+                  }}
+                  value="code"
+                  className="relative z-10 gap-1.5 text-xs transition-colors duration-200 data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+                >
                   <Code className="h-3.5 w-3.5" />
                   Code
                 </TabsTrigger>
