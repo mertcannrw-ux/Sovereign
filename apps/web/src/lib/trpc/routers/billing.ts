@@ -3,8 +3,14 @@ import { TRPCError } from '@trpc/server';
 import { protectedProcedure, router } from '../trpc';
 import { env } from '@/env';
 import { requireOrganizationRole } from '@/server/authz';
-import { PLAN_LIMITS, hasLiveSubscription, planFromSubscription } from '@/server/plans';
 import {
+  PLAN_LIMITS,
+  hasLiveSubscription,
+  planFromSubscription,
+  recordPlanInterest,
+} from '@/server/plans';
+import {
+  arePaidPlansAvailable,
   expireOpenCheckoutSessions,
   getCustomerSubscriptionState,
   getPlanPrices,
@@ -56,7 +62,19 @@ export const billingRouter = router({
         hasBillingAccount: Boolean(subscription),
         canManage: role === 'OWNER' || role === 'ADMIN',
         billingConfigured: isBillingConfigured(),
+        paidPlansAvailable: arePaidPlansAvailable(),
       };
+    }),
+
+  /**
+   * Record that the caller pressed a paid plan's subscribe button while paid
+   * plans are "coming soon". Any signed-in user may call it; repeats are no-ops.
+   */
+  registerInterest: protectedProcedure
+    .input(z.object({ plan: z.enum(['pro', 'business']) }))
+    .mutation(async ({ ctx, input }) => {
+      await recordPlanInterest(ctx.db, ctx.user.id, input.plan);
+      return { ok: true as const };
     }),
 
   /**
@@ -73,6 +91,12 @@ export const billingRouter = router({
     .mutation(async ({ ctx, input }) => {
       await requireOrganizationRole(ctx, input.organizationId, 'ADMIN');
       requireBillingConfigured();
+      if (!arePaidPlansAvailable()) {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'Paid plans are coming soon.',
+        });
+      }
       const price = getPlanPrices()[input.plan]!;
       const stripe = getStripe();
 

@@ -34,6 +34,11 @@ export function isBillingConfigured(): boolean {
   return Boolean(env.STRIPE_SECRET_KEY && env.STRIPE_PRICE_ID_PRO && env.STRIPE_PRICE_ID_BUSINESS);
 }
 
+/** Paid plans are launched and purchasable; otherwise they are "coming soon". */
+export function arePaidPlansAvailable(): boolean {
+  return env.PAID_PLANS_ENABLED && isBillingConfigured();
+}
+
 const STATUS_MAP: Record<Stripe.Subscription.Status, SubscriptionStatus> = {
   trialing: 'TRIALING',
   active: 'ACTIVE',

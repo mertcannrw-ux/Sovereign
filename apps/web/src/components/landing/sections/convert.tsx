@@ -4,6 +4,8 @@ import { cn } from '@app-builder/ui/utils';
 import { Section, SectionHeading, primaryButton, secondaryButton } from '../primitives';
 import { FaqItem } from './faq-item';
 
+// Non-commercial launch: paid plans are listed as coming soon. Their buttons lead
+// to the billing tab (after sign-in), where pressing subscribe records interest.
 const PLANS = [
   {
     name: 'Free',
@@ -16,6 +18,7 @@ const PLANS = [
       'All 21 templates',
     ],
     cta: 'Start building',
+    href: '/auth/signin',
   },
   {
     name: 'Pro',
@@ -28,8 +31,9 @@ const PLANS = [
       'Functions, database and app auth',
       'Unlimited version history',
     ],
-    cta: 'Start free trial',
-    featured: true,
+    cta: 'Get Pro',
+    href: '/settings?tab=billing',
+    comingSoon: true,
   },
   {
     name: 'Business',
@@ -41,7 +45,9 @@ const PLANS = [
       'Shared organizations',
       'Priority support',
     ],
-    cta: 'Start free trial',
+    cta: 'Get Business',
+    href: '/settings?tab=billing',
+    comingSoon: true,
   },
 ];
 
@@ -93,10 +99,10 @@ export function PricingSection() {
           <li key={plan.name} className="flex flex-col bg-background p-6 sm:p-8">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-medium text-foreground">{plan.name}</h3>
-              {plan.featured && (
+              {plan.comingSoon && (
                 <span className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.08em] text-foreground-secondary">
                   <span aria-hidden className="h-1.5 w-1.5 bg-primary" />
-                  Recommended
+                  Coming soon
                 </span>
               )}
             </div>
@@ -119,8 +125,8 @@ export function PricingSection() {
               ))}
             </ul>
             <Link
-              href="/auth/signin"
-              className={cn(plan.featured ? primaryButton : secondaryButton, 'mt-auto w-full')}
+              href={plan.href}
+              className={cn(plan.comingSoon ? secondaryButton : primaryButton, 'mt-auto w-full')}
             >
               {plan.cta}
             </Link>

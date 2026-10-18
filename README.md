@@ -60,22 +60,23 @@ Then open [http://localhost:3000](http://localhost:3000).
 
 ## Scripts
 
-| Command                | Description                               |
-| :--------------------- | :---------------------------------------- |
-| `npm run dev`          | Start the development server on port 3000 |
-| `npm run build`        | Build all apps and packages               |
-| `npm run test`         | Run unit tests in every workspace         |
-| `npm run typecheck`    | Typecheck all workspaces                  |
-| `npm run check`        | Typecheck, lint, and build                |
-| `npm run format`       | Format with Prettier                      |
-| `npm run format:check` | Check formatting (used by CI)             |
-| `npm run db:start`     | Start the local PGlite server             |
-| `npm run db:generate`  | Generate the Prisma client                |
-| `npm run db:migrate`   | Create and apply a migration (see below)  |
-| `npm run db:deploy`    | Apply pending migrations                  |
-| `npm run db:status`    | Show which migrations are applied         |
-| `npm run db:seed`      | Seed the admin user and demo projects     |
-| `npm run db:studio`    | Open Prisma Studio                        |
+| Command                   | Description                                      |
+| :------------------------ | :----------------------------------------------- |
+| `npm run dev`             | Start the development server on port 3000        |
+| `npm run build`           | Build all apps and packages                      |
+| `npm run test`            | Run unit tests in every workspace                |
+| `npm run typecheck`       | Typecheck all workspaces                         |
+| `npm run check`           | Typecheck, lint, and build                       |
+| `npm run format`          | Format with Prettier                             |
+| `npm run format:check`    | Check formatting (used by CI)                    |
+| `npm run db:start`        | Start the local PGlite server                    |
+| `npm run db:generate`     | Generate the Prisma client                       |
+| `npm run db:migrate`      | Create and apply a migration (see below)         |
+| `npm run db:deploy`       | Apply pending migrations                         |
+| `npm run db:status`       | Show which migrations are applied                |
+| `npm run db:seed`         | Seed the admin user and demo projects            |
+| `npm run db:studio`       | Open Prisma Studio                               |
+| `npm run interest:report` | List users who tried to subscribe to a paid plan |
 
 End-to-end tests use Playwright and start the app automatically:
 
