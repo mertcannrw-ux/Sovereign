@@ -40,12 +40,12 @@ cp .env.example apps/web/.env
 
 Next.js reads env files from `apps/web`, not the repository root. `prisma.config.ts` loads the same file, so database scripts work from the root.
 
-Start the local database, apply the schema, and seed it:
+Start the local database, apply the migrations, and seed it:
 
 ```bash
 npm run db:start   # PGlite server on 127.0.0.1:5433
-npm run db:push
-npm run db:seed    # in a second terminal
+npm run db:deploy  # in a second terminal
+npm run db:seed
 ```
 
 The seed creates an admin account from `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD` in `apps/web/.env`.
@@ -71,7 +71,9 @@ Then open [http://localhost:3000](http://localhost:3000).
 | `npm run format:check` | Check formatting (used by CI)             |
 | `npm run db:start`     | Start the local PGlite server             |
 | `npm run db:generate`  | Generate the Prisma client                |
-| `npm run db:push`      | Push the Prisma schema to the database    |
+| `npm run db:migrate`   | Create and apply a migration (see below)  |
+| `npm run db:deploy`    | Apply pending migrations                  |
+| `npm run db:status`    | Show which migrations are applied         |
 | `npm run db:seed`      | Seed the admin user and demo projects     |
 | `npm run db:studio`    | Open Prisma Studio                        |
 
@@ -83,8 +85,22 @@ npx playwright install chromium   # first run only
 npm run test:e2e
 ```
 
+## Database migrations
+
+The schema lives in `prisma/schema.prisma`; every change to it ships as a migration in `prisma/migrations`. After editing the schema, with the local database running:
+
+```bash
+npm run db:migrate -- add_project_tags
+```
+
+This writes `prisma/migrations/<timestamp>_add_project_tags/migration.sql` and applies it locally. Review the SQL (renames show up as a drop plus an add, so edit those by hand) and commit it with the schema change. CI fails when `schema.prisma` and the migrations disagree.
+
+(`prisma migrate dev` does not work here: it needs a shadow database, which the single-database PGlite server cannot provide.)
+
 ## Deployment
 
+- Run `npm run db:deploy` against the production database before starting each new release. It applies pending migrations only and never resets data.
+- A database created earlier with `prisma db push` already has the baseline schema. Mark it as applied once, instead of running it: `npx prisma migrate resolve --applied 0_init`.
 - Set `TRUSTED_PROXY="true"` when running behind a reverse proxy. Otherwise every request appears to come from `127.0.0.1` and pre-auth rate limits share a single bucket.
 - Health checks: `GET /api/health/live` (liveness) and `GET /api/health/ready` (readiness, includes the database).
 - Use `.env.example` as the reference for all configuration. Never commit `.env` files.

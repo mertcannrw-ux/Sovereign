@@ -96,11 +96,11 @@ jobs:
 
       - run: npm ci --ignore-scripts
       - run: npx prisma generate
-      # No prisma/migrations directory yet - push the schema straight to the
-      # throwaway CI database. Switch to `migrate deploy` once migrations exist.
-      # (Prisma 7 dropped `db push --skip-generate`; `npx prisma generate` above
-      # already produced the client.)
-      - run: npx prisma db push
+      # Build the database the way production does: from the committed migrations.
+      - run: npx prisma migrate deploy
+      - name: Check schema.prisma has a migration
+        # Fails when schema.prisma changed without `npm run db:migrate -- <name>`.
+        run: npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
