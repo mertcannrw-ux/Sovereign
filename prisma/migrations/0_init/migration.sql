@@ -645,19 +645,6 @@ CREATE TABLE "design_directions" (
 );
 
 -- CreateTable
-CREATE TABLE "agent_plans" (
-    "id" TEXT NOT NULL,
-    "project_id" TEXT NOT NULL,
-    "steps" JSONB NOT NULL,
-    "explanation" TEXT,
-    "approved_at" TIMESTAMP(3),
-    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updated_at" TIMESTAMP(3) NOT NULL,
-
-    CONSTRAINT "agent_plans_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
 CREATE TABLE "generation_runs" (
     "id" TEXT NOT NULL,
     "project_id" TEXT NOT NULL,
@@ -698,6 +685,19 @@ CREATE TABLE "generation_tool_traces" (
 );
 
 -- CreateTable
+CREATE TABLE "agent_plans" (
+    "id" TEXT NOT NULL,
+    "project_id" TEXT NOT NULL,
+    "steps" JSONB NOT NULL,
+    "explanation" TEXT,
+    "approved_at" TIMESTAMP(3),
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "agent_plans_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "verify_reports" (
     "id" TEXT NOT NULL,
     "run_id" TEXT NOT NULL,
@@ -714,6 +714,9 @@ CREATE TABLE "verify_reports" (
 
 -- CreateIndex
 CREATE UNIQUE INDEX "users_email_key" ON "users"("email");
+
+-- CreateIndex
+CREATE INDEX "accounts_user_id_idx" ON "accounts"("user_id");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "accounts_provider_provider_account_id_key" ON "accounts"("provider", "provider_account_id");
@@ -827,6 +830,9 @@ CREATE INDEX "backend_functions_project_id_idx" ON "backend_functions"("project_
 CREATE UNIQUE INDEX "backend_functions_project_id_path_method_key" ON "backend_functions"("project_id", "path", "method");
 
 -- CreateIndex
+CREATE INDEX "app_databases_project_id_idx" ON "app_databases"("project_id");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "app_databases_project_id_key" ON "app_databases"("project_id");
 
 -- CreateIndex
@@ -932,10 +938,10 @@ CREATE INDEX "entitlements_organization_id_idx" ON "entitlements"("organization_
 CREATE UNIQUE INDEX "entitlements_organization_id_key_key" ON "entitlements"("organization_id", "key");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "image_provider_configs_user_id_label_key" ON "image_provider_configs"("user_id", "label");
+CREATE INDEX "image_provider_configs_user_id_idx" ON "image_provider_configs"("user_id");
 
 -- CreateIndex
-CREATE INDEX "image_provider_configs_user_id_idx" ON "image_provider_configs"("user_id");
+CREATE UNIQUE INDEX "image_provider_configs_user_id_label_key" ON "image_provider_configs"("user_id", "label");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "project_assets_object_key_key" ON "project_assets"("object_key");
@@ -953,13 +959,10 @@ CREATE UNIQUE INDEX "design_direction_sets_selected_direction_id_key" ON "design
 CREATE INDEX "design_direction_sets_project_id_created_at_idx" ON "design_direction_sets"("project_id", "created_at");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "design_directions_set_id_order_number_key" ON "design_directions"("set_id", "order_number");
-
--- CreateIndex
 CREATE INDEX "design_directions_set_id_idx" ON "design_directions"("set_id");
 
 -- CreateIndex
-CREATE INDEX "agent_plans_project_id_created_at_idx" ON "agent_plans"("project_id", "created_at");
+CREATE UNIQUE INDEX "design_directions_set_id_order_number_key" ON "design_directions"("set_id", "order_number");
 
 -- CreateIndex
 CREATE INDEX "generation_runs_project_id_started_at_idx" ON "generation_runs"("project_id", "started_at");
@@ -975,6 +978,9 @@ CREATE INDEX "generation_tool_traces_request_id_idx" ON "generation_tool_traces"
 
 -- CreateIndex
 CREATE INDEX "generation_tool_traces_created_at_idx" ON "generation_tool_traces"("created_at");
+
+-- CreateIndex
+CREATE INDEX "agent_plans_project_id_created_at_idx" ON "agent_plans"("project_id", "created_at");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "verify_reports_run_id_key" ON "verify_reports"("run_id");
@@ -1115,7 +1121,25 @@ ALTER TABLE "subscriptions" ADD CONSTRAINT "subscriptions_organization_id_fkey" 
 ALTER TABLE "entitlements" ADD CONSTRAINT "entitlements_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "agent_plans" ADD CONSTRAINT "agent_plans_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "projects"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "image_provider_configs" ADD CONSTRAINT "image_provider_configs_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "project_assets" ADD CONSTRAINT "project_assets_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "projects"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "project_assets" ADD CONSTRAINT "project_assets_created_by_id_fkey" FOREIGN KEY ("created_by_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "design_direction_sets" ADD CONSTRAINT "design_direction_sets_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "projects"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "design_direction_sets" ADD CONSTRAINT "design_direction_sets_selected_direction_id_fkey" FOREIGN KEY ("selected_direction_id") REFERENCES "design_directions"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "design_directions" ADD CONSTRAINT "design_directions_set_id_fkey" FOREIGN KEY ("set_id") REFERENCES "design_direction_sets"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "design_directions" ADD CONSTRAINT "design_directions_preview_asset_id_fkey" FOREIGN KEY ("preview_asset_id") REFERENCES "project_assets"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "generation_runs" ADD CONSTRAINT "generation_runs_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "projects"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -1130,29 +1154,10 @@ ALTER TABLE "generation_runs" ADD CONSTRAINT "generation_runs_plan_id_fkey" FORE
 ALTER TABLE "generation_tool_traces" ADD CONSTRAINT "generation_tool_traces_run_id_fkey" FOREIGN KEY ("run_id") REFERENCES "generation_runs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "agent_plans" ADD CONSTRAINT "agent_plans_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "projects"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "verify_reports" ADD CONSTRAINT "verify_reports_run_id_fkey" FOREIGN KEY ("run_id") REFERENCES "generation_runs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "verify_reports" ADD CONSTRAINT "verify_reports_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "projects"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "image_provider_configs" ADD CONSTRAINT "image_provider_configs_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "project_assets" ADD CONSTRAINT "project_assets_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "projects"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "project_assets" ADD CONSTRAINT "project_assets_created_by_id_fkey" FOREIGN KEY ("created_by_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "design_direction_sets" ADD CONSTRAINT "design_direction_sets_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "projects"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "design_directions" ADD CONSTRAINT "design_directions_set_id_fkey" FOREIGN KEY ("set_id") REFERENCES "design_direction_sets"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "design_directions" ADD CONSTRAINT "design_directions_preview_asset_id_fkey" FOREIGN KEY ("preview_asset_id") REFERENCES "project_assets"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "design_direction_sets" ADD CONSTRAINT "design_direction_sets_selected_direction_id_fkey" FOREIGN KEY ("selected_direction_id") REFERENCES "design_directions"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-

@@ -5,7 +5,18 @@ import { CheckCircle2, ExternalLink, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { trpc } from '@/lib/trpc/client';
+
+type PaidPlan = 'pro' | 'business';
 
 const PLAN_DETAILS = {
   free: { name: 'Free', price: '$0', summary: '3 active projects' },
@@ -55,11 +66,19 @@ export function BillingPanel() {
   );
   const checkoutMutation = trpc.billing.createCheckoutSession.useMutation();
   const portalMutation = trpc.billing.createPortalSession.useMutation();
+  const interestMutation = trpc.billing.registerInterest.useMutation();
+  const [comingSoonPlan, setComingSoonPlan] = useState<PaidPlan | null>(null);
 
   const billing = planQuery.data;
   const awaitingCheckout = returnedFromCheckout && !billing?.hasSubscription;
 
-  async function startCheckout(plan: 'pro' | 'business') {
+  /** Before launch, a subscribe click records interest and explains instead. */
+  function showComingSoon(plan: PaidPlan) {
+    setComingSoonPlan(plan);
+    interestMutation.mutate({ plan });
+  }
+
+  async function startCheckout(plan: PaidPlan) {
     setError('');
     try {
       const { url } = await checkoutMutation.mutateAsync({ organizationId: orgId, plan });
@@ -102,6 +121,7 @@ export function BillingPanel() {
   const current = PLAN_DETAILS[billing.plan];
   const status = billing.status ? STATUS_LABELS[billing.status] : null;
   const busy = checkoutMutation.isPending || portalMutation.isPending;
+  const comingSoon = !billing.paidPlansAvailable;
   const canUpgrade = billing.canManage && billing.billingConfigured && !billing.hasSubscription;
 
   return (
@@ -178,7 +198,10 @@ export function BillingPanel() {
           {(['pro', 'business'] as const).map((plan) => (
             <Card key={plan} className="border-border bg-background-subtle">
               <CardContent className="flex h-full flex-col p-6">
-                <p className="font-semibold text-foreground">{PLAN_DETAILS[plan].name}</p>
+                <div className="flex items-center gap-2">
+                  <p className="font-semibold text-foreground">{PLAN_DETAILS[plan].name}</p>
+                  {comingSoon && <Badge variant="secondary">Coming soon</Badge>}
+                </div>
                 <p className="mt-2 text-2xl font-semibold text-foreground">
                   {PLAN_DETAILS[plan].price}
                   <span className="text-sm font-normal text-foreground-muted"> / month</span>
@@ -189,8 +212,8 @@ export function BillingPanel() {
                 </p>
                 <Button
                   className="mt-6"
-                  onClick={() => startCheckout(plan)}
-                  disabled={!canUpgrade || busy}
+                  onClick={() => (comingSoon ? showComingSoon(plan) : startCheckout(plan))}
+                  disabled={!comingSoon && (!canUpgrade || busy)}
                 >
                   {checkoutMutation.isPending && checkoutMutation.variables?.plan === plan && (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -203,15 +226,37 @@ export function BillingPanel() {
         </div>
       )}
 
-      {!billing.canManage && (
+      {!comingSoon && !billing.canManage && (
         <p className="text-sm text-foreground-muted">
           Only workspace owners and admins can change the plan.
         </p>
       )}
-      {!billing.billingConfigured && (
+      {!comingSoon && !billing.billingConfigured && (
         <p className="text-sm text-foreground-muted">Billing is not configured on this server.</p>
       )}
       {error && <p className="text-sm text-error">{error}</p>}
+
+      <Dialog
+        open={comingSoonPlan !== null}
+        onOpenChange={(open) => !open && setComingSoonPlan(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {comingSoonPlan ? PLAN_DETAILS[comingSoonPlan].name : ''} is coming soon
+            </DialogTitle>
+            <DialogDescription>
+              Paid plans are not available yet, and we have noted your interest. Until they launch,
+              everything runs on the Free plan with {PLAN_DETAILS.free.summary}.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button>Got it</Button>
+            </DialogClose>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

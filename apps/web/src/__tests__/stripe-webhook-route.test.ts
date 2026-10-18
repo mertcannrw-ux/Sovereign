@@ -30,6 +30,17 @@ vi.mock('@/lib/db', () => ({
 
 const stripe = getStripe();
 const retrieve = vi.spyOn(stripe.subscriptions, 'retrieve');
+const listSessions = vi.spyOn(stripe.checkout.sessions, 'list');
+const expireSession = vi.spyOn(stripe.checkout.sessions, 'expire');
+
+/** Stripe list calls are async-iterable (auto-pagination). */
+function listOf<T>(items: T[]) {
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield* items;
+    },
+  } as never;
+}
 
 function stripeSubscription(overrides: Record<string, unknown> = {}) {
   return {
@@ -60,6 +71,8 @@ function post(body: string, signature?: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   retrieve.mockReset();
+  listSessions.mockReset().mockReturnValue(listOf([]));
+  expireSession.mockReset().mockResolvedValue({} as never);
   mocks.findUnique.mockResolvedValue({ id: 'row-1', stripeSubscriptionId: null });
   mocks.update.mockResolvedValue({});
 });
@@ -119,6 +132,49 @@ describe('POST /api/stripe/webhook', () => {
     expect(res.status).toBe(200);
     expect(retrieve).toHaveBeenCalledWith('sub_new');
     expect(mocks.update.mock.calls[0]?.[0].data.status).toBe('TRIALING');
+  });
+
+  it("expires the customer's other open checkouts once one completes", async () => {
+    retrieve.mockResolvedValue(stripeSubscription() as never);
+    listSessions.mockReturnValue(listOf([{ id: 'cs_other_tab' }]));
+    const res = await post(
+      event('checkout.session.completed', {
+        id: 'cs_1',
+        customer: 'cus_1',
+        subscription: 'sub_new',
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(listSessions).toHaveBeenCalledWith({ customer: 'cus_1', status: 'open', limit: 100 });
+    expect(expireSession).toHaveBeenCalledWith('cs_other_tab');
+  });
+
+  it('only expires checkouts on checkout completion', async () => {
+    retrieve.mockResolvedValue(stripeSubscription() as never);
+    await post(event('customer.subscription.updated', { id: 'sub_new' }));
+    expect(listSessions).not.toHaveBeenCalled();
+  });
+
+  it('flags a second live subscription for the same customer', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mocks.findUnique.mockResolvedValue({ id: 'row-1', stripeSubscriptionId: 'sub_old' });
+    retrieve.mockImplementation((async (id: string) =>
+      stripeSubscription({ id, status: 'active' })) as never);
+    const res = await post(event('customer.subscription.created', { id: 'sub_new' }));
+    expect(res.status).toBe(200);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('DUPLICATE SUBSCRIPTION'));
+    expect(error.mock.calls[0]?.[0]).toContain('sub_old');
+  });
+
+  it('does not flag a replacement for an ended subscription', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mocks.findUnique.mockResolvedValue({ id: 'row-1', stripeSubscriptionId: 'sub_old' });
+    retrieve.mockImplementation((async (id: string) =>
+      stripeSubscription({ id, status: id === 'sub_old' ? 'canceled' : 'active' })) as never);
+    const res = await post(event('customer.subscription.created', { id: 'sub_new' }));
+    expect(res.status).toBe(200);
+    expect(error).not.toHaveBeenCalled();
+    expect(mocks.update.mock.calls[0]?.[0].data.stripeSubscriptionId).toBe('sub_new');
   });
 
   it('ignores customers it did not create', async () => {

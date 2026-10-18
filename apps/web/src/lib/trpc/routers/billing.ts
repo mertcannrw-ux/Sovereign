@@ -3,8 +3,20 @@ import { TRPCError } from '@trpc/server';
 import { protectedProcedure, router } from '../trpc';
 import { env } from '@/env';
 import { requireOrganizationRole } from '@/server/authz';
-import { PLAN_LIMITS, hasLiveSubscription, planFromSubscription } from '@/server/plans';
-import { getPlanPrices, getStripe, isBillingConfigured } from '@/server/stripe';
+import {
+  PLAN_LIMITS,
+  hasLiveSubscription,
+  planFromSubscription,
+  recordPlanInterest,
+} from '@/server/plans';
+import {
+  arePaidPlansAvailable,
+  expireOpenCheckoutSessions,
+  getCustomerSubscriptionState,
+  getPlanPrices,
+  getStripe,
+  isBillingConfigured,
+} from '@/server/stripe';
 
 const TRIAL_DAYS = 14;
 
@@ -50,7 +62,19 @@ export const billingRouter = router({
         hasBillingAccount: Boolean(subscription),
         canManage: role === 'OWNER' || role === 'ADMIN',
         billingConfigured: isBillingConfigured(),
+        paidPlansAvailable: arePaidPlansAvailable(),
       };
+    }),
+
+  /**
+   * Record that the caller pressed a paid plan's subscribe button while paid
+   * plans are "coming soon". Any signed-in user may call it; repeats are no-ops.
+   */
+  registerInterest: protectedProcedure
+    .input(z.object({ plan: z.enum(['pro', 'business']) }))
+    .mutation(async ({ ctx, input }) => {
+      await recordPlanInterest(ctx.db, ctx.user.id, input.plan);
+      return { ok: true as const };
     }),
 
   /**
@@ -67,6 +91,12 @@ export const billingRouter = router({
     .mutation(async ({ ctx, input }) => {
       await requireOrganizationRole(ctx, input.organizationId, 'ADMIN');
       requireBillingConfigured();
+      if (!arePaidPlansAvailable()) {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'Paid plans are coming soon.',
+        });
+      }
       const price = getPlanPrices()[input.plan]!;
       const stripe = getStripe();
 
@@ -107,9 +137,22 @@ export const billingRouter = router({
         });
       }
 
+      // Our row only learns of a subscription once the webhook lands, so ask
+      // Stripe too: a checkout just completed in another tab must block this one.
+      const existing = await getCustomerSubscriptionState(stripe, subscription.stripeCustomerId);
+      if (existing.hasLive) {
+        throw new TRPCError({
+          code: 'CONFLICT',
+          message: 'This workspace already has a subscription. Change it from the billing portal.',
+        });
+      }
+      // Only the newest checkout can be paid, so two open tabs cannot both
+      // subscribe.
+      await expireOpenCheckoutSessions(stripe, subscription.stripeCustomerId);
+
       // One trial per organization: any earlier subscription, even a canceled
       // one, uses it up.
-      const trialEligible = !subscription.stripeSubscriptionId;
+      const trialEligible = !subscription.stripeSubscriptionId && !existing.hasAny;
       const session = await stripe.checkout.sessions.create({
         mode: 'subscription',
         customer: subscription.stripeCustomerId,

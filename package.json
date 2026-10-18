@@ -20,10 +20,12 @@
     "db:start": "pglite-server -d .pglite_data -p 5433 -m 100",
     "postinstall": "prisma generate",
     "db:generate": "prisma generate",
-    "db:push": "prisma db push",
-    "db:migrate": "prisma migrate dev",
+    "db:migrate": "node prisma/new-migration.mjs",
+    "db:deploy": "prisma migrate deploy",
+    "db:status": "prisma migrate status",
     "db:seed": "prisma db seed",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "interest:report": "tsx prisma/plan-interest-report.ts"
   },
   "devDependencies": {
     "@next/eslint-plugin-next": "16.2.10",

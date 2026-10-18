@@ -4,6 +4,7 @@ import {
   hasLiveSubscription,
   planForPriceId,
   planFromSubscription,
+  recordPlanInterest,
 } from './plans';
 
 const PRICES = { pro: 'price_pro', business: 'price_business' };
@@ -77,6 +78,20 @@ describe('assertCanCreateProject', () => {
     const db = fakeDb({ status: 'PAST_DUE', priceId: 'price_pro' }, 3);
     await expect(assertCanCreateProject(db, 'org-1', PRICES)).rejects.toMatchObject({
       code: 'FORBIDDEN',
+    });
+  });
+});
+
+describe('recordPlanInterest', () => {
+  it('records each user and plan once, ignoring repeat clicks', async () => {
+    const createMany = vi.fn().mockResolvedValue({ count: 1 });
+    const db = { planInterest: { createMany } } as unknown as Parameters<
+      typeof recordPlanInterest
+    >[0];
+    await recordPlanInterest(db, 'user-1', 'pro');
+    expect(createMany).toHaveBeenCalledWith({
+      data: [{ userId: 'user-1', plan: 'pro' }],
+      skipDuplicates: true,
     });
   });
 });

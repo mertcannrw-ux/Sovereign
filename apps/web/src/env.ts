@@ -78,6 +78,12 @@ export const env = createEnv({
     STRIPE_WEBHOOK_SECRET: z.string().optional(),
     STRIPE_PRICE_ID_PRO: z.string().optional(),
     STRIPE_PRICE_ID_BUSINESS: z.string().optional(),
+    // Off until the commercial launch: paid plans show as "coming soon" and
+    // checkout is refused, even with Stripe configured.
+    PAID_PLANS_ENABLED: z
+      .enum(['true', 'false', ''])
+      .optional()
+      .transform((v) => v === 'true'),
 
     // Transactional email (Resend)
     RESEND_API_KEY: z.string().optional(),
@@ -149,6 +155,7 @@ export const env = createEnv({
     STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET,
     STRIPE_PRICE_ID_PRO: process.env.STRIPE_PRICE_ID_PRO,
     STRIPE_PRICE_ID_BUSINESS: process.env.STRIPE_PRICE_ID_BUSINESS,
+    PAID_PLANS_ENABLED: process.env.PAID_PLANS_ENABLED,
 
     RESEND_API_KEY: process.env.RESEND_API_KEY,
     EMAIL_FROM: process.env.EMAIL_FROM,

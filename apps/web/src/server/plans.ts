@@ -60,6 +60,19 @@ export function hasLiveSubscription(
 
 type PlanDb = Pick<Prisma.TransactionClient, 'subscription' | 'project'>;
 
+/**
+ * Note that a user tried to subscribe to a paid plan before paid plans
+ * launched. Counted once per user and plan, however often they click:
+ * ON CONFLICT DO NOTHING, so double-clicks cannot race into two rows.
+ */
+export async function recordPlanInterest(
+  db: Pick<Prisma.TransactionClient, 'planInterest'>,
+  userId: string,
+  plan: PaidPlan,
+): Promise<void> {
+  await db.planInterest.createMany({ data: [{ userId, plan }], skipDuplicates: true });
+}
+
 export async function getOrgPlan(
   db: PlanDb,
   organizationId: string,
@@ -92,7 +105,7 @@ export async function assertCanCreateProject(
   if (active >= limit) {
     throw new TRPCError({
       code: 'FORBIDDEN',
-      message: `The Free plan includes ${limit} active projects. Upgrade to Pro for unlimited projects.`,
+      message: `The Free plan includes ${limit} active projects. Archive one to start another.`,
     });
   }
 }

@@ -137,6 +137,7 @@ model User {
   imageProviderConfigs  ImageProviderConfig[]
   createdAssets         ProjectAsset[]
   generationRuns        GenerationRun[]
+  planInterests         PlanInterest[]
 
   @@map("users")
 }
@@ -828,6 +829,22 @@ model Subscription {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 
   @@map("subscriptions")
+}
+
+/// A user pressed a paid plan's subscribe button while paid plans were still
+/// "coming soon". One row per user and plan: repeat clicks are not counted.
+model PlanInterest {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  /// "pro" or "business"
+  plan      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, plan])
+  @@index([plan])
+  @@map("plan_interests")
 }
 
 model Entitlement {
