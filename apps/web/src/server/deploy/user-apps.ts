@@ -20,6 +20,7 @@ import {
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
+import { getDomain } from 'tldts';
 import { env } from '@/env';
 
 export const MAX_FILES = 100;
@@ -41,6 +42,12 @@ const RESERVED_SUBDOMAINS = new Set([
   'status',
 ]);
 const DNS_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+/**
+ * The shape of `deploySubdomain`'s id-derived fallback. A slug of this shape is
+ * never used as-is: a project named "app-1a2b3c4d5e6f" would otherwise publish
+ * over the live app of whichever project falls back to that same name.
+ */
+const FALLBACK_SUBDOMAIN = /^app-[0-9a-f]{12}$/;
 const SAFE_PATH = /^[A-Za-z0-9._@-]+(?:\/[A-Za-z0-9._@-]+)*$/;
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -92,13 +99,35 @@ export function isDeployConfigured(): boolean {
 }
 
 /**
+ * True when `DEPLOY_DOMAIN` is on the same site (registrable domain) as this
+ * app. User apps run arbitrary JavaScript, so on a shared site they could set
+ * cookies for this app's domain (session fixation) and count as same-site for
+ * SameSite cookies. Serve them from a separate domain, ideally one on the
+ * Public Suffix List.
+ */
+export function deployDomainSharesSite(appUrls: (string | undefined)[]): boolean {
+  if (!env.DEPLOY_DOMAIN) return false;
+  // A domain listed on the PSL as a suffix has no registrable domain (null),
+  // which correctly never matches anything.
+  const deploySite = getDomain(env.DEPLOY_DOMAIN, { allowPrivateDomains: true });
+  if (!deploySite) return false;
+  return appUrls.some((appUrl) => {
+    if (!appUrl) return false;
+    return getDomain(appUrl, { allowPrivateDomains: true }) === deploySite;
+  });
+}
+
+/**
  * The project's slug when it is a usable, unreserved DNS label; otherwise a
  * stable id-derived name (slugs run up to ~90 characters, past the 63 limit).
  */
 export function deploySubdomain(project: { id: string; slug: string }): string {
   const { slug } = project;
   const usable =
-    DNS_LABEL.test(slug) && slug.slice(2, 4) !== '--' && !RESERVED_SUBDOMAINS.has(slug);
+    DNS_LABEL.test(slug) &&
+    slug.slice(2, 4) !== '--' &&
+    !RESERVED_SUBDOMAINS.has(slug) &&
+    !FALLBACK_SUBDOMAIN.test(slug);
   return usable ? slug : `app-${project.id.replace(/-/g, '').slice(0, 12)}`;
 }
 

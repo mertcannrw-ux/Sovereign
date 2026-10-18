@@ -1,5 +1,5 @@
 /**
- * Serves deployed user apps: `<slug>.edelsteinquest.store/<path>` → R2 `live/<slug>/<path>`.
+ * Serves deployed user apps: `<slug>.<ROOT_DOMAIN>/<path>` → R2 `live/<slug>/<path>`.
  *
  * Cost guard: every request makes at most ONE R2 read, and cache hits make
  * none. The Worker runs on the free plan, whose 100k requests/day hard cap
@@ -9,12 +9,14 @@
  *
  * - Paths with a file extension are served as-is (404 if missing).
  * - Paths without one get the app's index.html (SPA client-side routing).
- * - Taking an app down = deleting its `live/<slug>/` prefix from R2. HTML and
- *   404s are never cached, so takedowns and redeploys apply immediately; only
- *   content-hashed assets are, as they never change under the same name.
+ * - Taking an app down = deleting its `live/<slug>/` prefix from R2. Only
+ *   content-hashed build assets (`assets/name-<hash>.ext`) are cached, since
+ *   they never change under the same name, and the edge keeps them for at
+ *   most EDGE_ASSET_TTL. Everything else (HTML, `public/` files like
+ *   favicon.ico, 404s) is never cached, so takedowns and redeploys apply
+ *   immediately to those and within EDGE_ASSET_TTL to hashed assets.
  */
 
-const ROOT_DOMAIN = 'edelsteinquest.store';
 const RESERVED = new Set([
   'www',
   'api',
@@ -27,9 +29,14 @@ const RESERVED = new Set([
   'status',
 ]);
 const SLUG = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+/** Vite's default output name: `assets/<name>-<8+ char base64url hash>.<ext>`. */
+const HASHED_ASSET = /^assets\/(?:[^/]+\/)*[^/]+-[A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+$/;
 
-const HTML_CACHE = 'no-cache';
-const ASSET_CACHE = 'public, max-age=31536000, immutable';
+const EDGE_ASSET_TTL = 60 * 60;
+const UNCACHED = 'no-cache';
+// Browsers may keep hashed assets forever; s-maxage bounds how long the edge
+// cache keeps serving one after its app is taken down.
+const HASHED_ASSET_CACHE = `public, max-age=31536000, s-maxage=${EDGE_ASSET_TTL}, immutable`;
 
 export default {
   async fetch(request, env, ctx) {
@@ -38,36 +45,39 @@ export default {
     }
 
     const url = new URL(request.url);
-    const slug = resolveSlug(url.hostname);
+    const slug = resolveSlug(url.hostname, env.ROOT_DOMAIN);
     if (!slug) return notFound();
 
-    const key = resolveKey(slug, url.pathname);
-    if (!key) return notFound();
+    const file = resolveFile(url.pathname);
+    if (!file) return notFound();
+    const key = `live/${slug}/${file}`;
 
-    const isHtml = key.endsWith('.html');
+    const cacheable = HASHED_ASSET.test(file);
     const cache = caches.default;
     const cacheKey = new Request(url.origin + url.pathname, { method: 'GET' });
-    if (!isHtml) {
+    if (cacheable) {
       const cached = await cache.match(cacheKey);
       if (cached) return request.method === 'HEAD' ? new Response(null, cached) : cached;
     }
 
     const object = await env.APPS.get(key);
     if (!object) return notFound();
-    const response = fileResponse(object, isHtml);
-    if (!isHtml) ctx.waitUntil(cache.put(cacheKey, response.clone()));
+    const response = fileResponse(object, cacheable);
+    if (cacheable) ctx.waitUntil(cache.put(cacheKey, response.clone()));
     return request.method === 'HEAD' ? new Response(null, response) : response;
   },
 };
 
-function resolveSlug(hostname) {
-  const suffix = `.${ROOT_DOMAIN}`;
+function resolveSlug(hostname, rootDomain) {
+  if (!rootDomain) return null;
+  const suffix = `.${rootDomain}`;
   if (!hostname.endsWith(suffix)) return null;
   const slug = hostname.slice(0, -suffix.length);
   return SLUG.test(slug) && !RESERVED.has(slug) ? slug : null;
 }
 
-function resolveKey(slug, pathname) {
+/** The bundle-relative file for a request path, or null if the path is unsafe. */
+function resolveFile(pathname) {
   let path;
   try {
     path = decodeURIComponent(pathname);
@@ -77,15 +87,14 @@ function resolveKey(slug, pathname) {
   const segments = path.split('/').filter(Boolean);
   if (segments.some((s) => s === '.' || s === '..' || s.includes('\\'))) return null;
   const last = segments.at(-1) ?? '';
-  const file = last.includes('.') ? segments.join('/') : 'index.html';
-  return `live/${slug}/${file}`;
+  return last.includes('.') ? segments.join('/') : 'index.html';
 }
 
-function fileResponse(object, isHtml) {
+function fileResponse(object, cacheable) {
   const headers = new Headers();
   object.writeHttpMetadata(headers);
   headers.set('ETag', object.httpEtag);
-  headers.set('Cache-Control', isHtml ? HTML_CACHE : ASSET_CACHE);
+  headers.set('Cache-Control', cacheable ? HASHED_ASSET_CACHE : UNCACHED);
   headers.set('X-Content-Type-Options', 'nosniff');
   return new Response(object.body, { headers });
 }

@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { protectedProcedure, router } from '../trpc';
 import type { Context } from '../context';
 import type { ProjectRole } from '@app-builder/shared';
+import { env } from '@/env';
 import { requireProjectRole } from '@/server/authz';
 import { checkRateLimit } from '@/server/rate-limit';
 import {
@@ -11,6 +12,7 @@ import {
   MAX_FILES,
   MAX_LIVE_APPS,
   MAX_LIVE_APPS_PER_USER,
+  deployDomainSharesSite,
   deploySubdomain,
   deployUrl,
   isDeployConfigured,
@@ -33,6 +35,20 @@ function assertDeployConfigured(): void {
     throw new TRPCError({
       code: 'PRECONDITION_FAILED',
       message: 'App hosting is not configured (DEPLOY_DOMAIN, DEPLOY_R2_BUCKET and R2_* keys).',
+    });
+  }
+}
+
+/**
+ * Refuse to publish untrusted apps onto this app's own site. Unpublish stays
+ * allowed so existing apps can still be taken down.
+ */
+function assertDeployDomainIsolated(): void {
+  if (deployDomainSharesSite([env.NEXTAUTH_URL, env.NEXT_PUBLIC_APP_URL])) {
+    console.error('[deploy] DEPLOY_DOMAIN shares a site with the app; refusing to publish');
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'App hosting is misconfigured. Please contact support.',
     });
   }
 }
@@ -106,6 +122,7 @@ export const deploymentsRouter = router({
     .mutation(async ({ ctx, input }) => {
       await assertProjectAccess(ctx, input.projectId, 'EDITOR');
       assertDeployConfigured();
+      assertDeployDomainIsolated();
 
       const rate = await checkRateLimit('deploy', ctx.user.id);
       if (!rate.allowed) {
@@ -131,6 +148,20 @@ export const deploymentsRouter = router({
 
       const subdomain = deploySubdomain(project);
       const url = deployUrl(subdomain);
+
+      // Defense in depth: never publish over another project's live app, even
+      // if two projects ever map to the same subdomain.
+      const owner = await ctx.db.deployment.findFirst({
+        where: { url, status: 'LIVE', projectId: { not: project.id } },
+        select: { id: true },
+      });
+      if (owner) {
+        console.error(`[deploy] ${url} is live for another project; refusing ${project.id}`);
+        throw new TRPCError({
+          code: 'CONFLICT',
+          message: 'This app address is already in use. Please contact support.',
+        });
+      }
 
       // Retry loop for concurrent P2002 version race
       let deployment;

@@ -5,6 +5,10 @@
   "main": "src/index.js",
   "compatibility_date": "2026-10-01",
   "workers_dev": false,
+  // ROOT_DOMAIN must equal the web app's DEPLOY_DOMAIN, and must be a different
+  // site (registrable domain) from the web app itself: user apps run untrusted
+  // JavaScript. The web app refuses to publish when they share a site.
+  "vars": { "ROOT_DOMAIN": "edelsteinquest.store" },
   "routes": [{ "pattern": "*.edelsteinquest.store/*", "zone_name": "edelsteinquest.store" }],
   "r2_buckets": [{ "binding": "APPS", "bucket_name": "user-apps" }],
 }
