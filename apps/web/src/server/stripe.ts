@@ -54,6 +54,72 @@ const ENDED_STATUSES: ReadonlySet<Stripe.Subscription.Status> = new Set([
   'incomplete_expired',
 ]);
 
+/**
+ * Subscriptions a customer still has (or owes on), per Stripe's guide to
+ * limiting customers to one subscription. A new checkout would bill twice.
+ */
+const LIVE_STATUSES: ReadonlySet<Stripe.Subscription.Status> = new Set([
+  'active',
+  'trialing',
+  'past_due',
+  'unpaid',
+  'paused',
+]);
+
+export interface CustomerSubscriptionState {
+  /** The customer has a subscription that a new checkout would duplicate. */
+  hasLive: boolean;
+  /** The customer has ever had a subscription, so its free trial is used up. */
+  hasAny: boolean;
+}
+
+/**
+ * Ask Stripe, not our database, which lags behind until the webhook lands,
+ * whether the customer is already subscribed.
+ */
+export async function getCustomerSubscriptionState(
+  stripe: Stripe,
+  customerId: string,
+): Promise<CustomerSubscriptionState> {
+  const state: CustomerSubscriptionState = { hasLive: false, hasAny: false };
+  for await (const subscription of stripe.subscriptions.list({
+    customer: customerId,
+    status: 'all',
+    limit: 100,
+  })) {
+    state.hasAny = true;
+    if (LIVE_STATUSES.has(subscription.status)) {
+      state.hasLive = true;
+      break;
+    }
+  }
+  return state;
+}
+
+/**
+ * Expire the customer's open Checkout Sessions so at most one can ever be
+ * paid: called before creating a new one (the newest tab wins) and after one
+ * completes (stale tabs can no longer subscribe a second time).
+ */
+export async function expireOpenCheckoutSessions(
+  stripe: Stripe,
+  customerId: string,
+): Promise<void> {
+  for await (const session of stripe.checkout.sessions.list({
+    customer: customerId,
+    status: 'open',
+    limit: 100,
+  })) {
+    try {
+      await stripe.checkout.sessions.expire(session.id);
+    } catch (error) {
+      // It completed or expired since it was listed; the webhook's duplicate
+      // check reports the former.
+      console.warn(`[stripe] Could not expire checkout session ${session.id}`, error);
+    }
+  }
+}
+
 type SyncDb = Pick<Prisma.TransactionClient, 'subscription'>;
 
 /**
@@ -90,6 +156,22 @@ export async function syncSubscription(
     ENDED_STATUSES.has(subscription.status)
   ) {
     return;
+  }
+
+  // Checkout guards against a second subscription, but if two still slip
+  // through, both bill. Flag it for a refund rather than cancel automatically.
+  if (
+    row.stripeSubscriptionId &&
+    row.stripeSubscriptionId !== subscription.id &&
+    LIVE_STATUSES.has(subscription.status)
+  ) {
+    const recorded = await stripe.subscriptions.retrieve(row.stripeSubscriptionId);
+    if (LIVE_STATUSES.has(recorded.status)) {
+      console.error(
+        `[stripe] DUPLICATE SUBSCRIPTION: customer ${customerId} has live subscriptions ` +
+          `${recorded.id} and ${subscription.id}; cancel and refund one in the Stripe Dashboard`,
+      );
+    }
   }
 
   const item = subscription.items.data[0];

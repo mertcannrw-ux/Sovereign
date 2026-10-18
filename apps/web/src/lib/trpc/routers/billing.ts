@@ -4,7 +4,13 @@ import { protectedProcedure, router } from '../trpc';
 import { env } from '@/env';
 import { requireOrganizationRole } from '@/server/authz';
 import { PLAN_LIMITS, hasLiveSubscription, planFromSubscription } from '@/server/plans';
-import { getPlanPrices, getStripe, isBillingConfigured } from '@/server/stripe';
+import {
+  expireOpenCheckoutSessions,
+  getCustomerSubscriptionState,
+  getPlanPrices,
+  getStripe,
+  isBillingConfigured,
+} from '@/server/stripe';
 
 const TRIAL_DAYS = 14;
 
@@ -107,9 +113,22 @@ export const billingRouter = router({
         });
       }
 
+      // Our row only learns of a subscription once the webhook lands, so ask
+      // Stripe too: a checkout just completed in another tab must block this one.
+      const existing = await getCustomerSubscriptionState(stripe, subscription.stripeCustomerId);
+      if (existing.hasLive) {
+        throw new TRPCError({
+          code: 'CONFLICT',
+          message: 'This workspace already has a subscription. Change it from the billing portal.',
+        });
+      }
+      // Only the newest checkout can be paid, so two open tabs cannot both
+      // subscribe.
+      await expireOpenCheckoutSessions(stripe, subscription.stripeCustomerId);
+
       // One trial per organization: any earlier subscription, even a canceled
       // one, uses it up.
-      const trialEligible = !subscription.stripeSubscriptionId;
+      const trialEligible = !subscription.stripeSubscriptionId && !existing.hasAny;
       const session = await stripe.checkout.sessions.create({
         mode: 'subscription',
         customer: subscription.stripeCustomerId,

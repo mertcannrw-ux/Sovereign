@@ -2,7 +2,7 @@ import type Stripe from 'stripe';
 import { NextRequest } from 'next/server';
 import { env } from '@/env';
 import { getDb } from '@/lib/db';
-import { getStripe, syncSubscription } from '@/server/stripe';
+import { expireOpenCheckoutSessions, getStripe, syncSubscription } from '@/server/stripe';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,6 +38,14 @@ export async function POST(request: NextRequest) {
 
   try {
     await syncSubscription(getDb(), stripe, subscriptionId);
+    if (event.type === 'checkout.session.completed' && event.data.object.customer) {
+      const { customer } = event.data.object;
+      // Other tabs' sessions could otherwise still start a second subscription.
+      await expireOpenCheckoutSessions(
+        stripe,
+        typeof customer === 'string' ? customer : customer.id,
+      );
+    }
   } catch (error) {
     // A 5xx makes Stripe retry with backoff.
     console.error(`[stripe] Failed to sync ${event.type} ${event.id}`, error);
