@@ -3,35 +3,11 @@
 @tailwind utilities;
 
 /*
- * Sovereign design tokens - the single source of truth for colour.
- * Values mirror `tailwind.config.ts` (`theme.extend.colors`) so plain CSS and
- * utility classes can never drift apart. Do not add a second palette here.
+ * Colour tokens live in `src/styles/tokens.ts`. The Tailwind config emits each
+ * one as a CSS variable on :root (`--background-subtle`, `--border-strong`, ...),
+ * so do not declare a second palette here.
  */
 @layer base {
-  :root {
-    --background: #090909;
-    --background-subtle: #101010;
-    --background-muted: #171717;
-    --foreground: #d6d6d2;
-    --foreground-secondary: #b8b8b2;
-    --foreground-muted: #80807c;
-    --border: #242422;
-    --border-strong: #646460;
-    --focus-ring: #b8ff5a;
-    --primary: #b8ff5a;
-    --primary-hover: #c7ff7c;
-    --primary-light: rgba(184, 255, 90, 0.1);
-    --success: #73d86c;
-    --success-light: rgba(115, 216, 108, 0.1);
-    --warning: #e6b85c;
-    --warning-light: rgba(230, 184, 92, 0.1);
-    --error: #f06a6a;
-    --error-light: rgba(240, 106, 106, 0.1);
-    --accent-green: #b8ff5a;
-    --accent-yellow: #e6d66c;
-    --accent-amber: #e6b85c;
-  }
-
   * {
     @apply border-border;
   }
@@ -43,7 +19,7 @@
       'calt' 1;
   }
 
-  /* Scrollbar styling for dark theme - uses the border/foreground ramp. */
+  /* Scrollbar styling for dark theme. */
   ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
@@ -54,17 +30,17 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    background: var(--border-strong);
-    border-radius: 3px;
+    background: var(--scrollbar);
+    border-radius: 9999px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: var(--foreground-muted);
+    background: var(--scrollbar-hover);
   }
 
   /* Text selection uses the accent (--primary) at 30%. */
   ::selection {
-    background: rgb(184 255 90 / 0.3);
+    background: theme('colors.primary.DEFAULT / 30%');
     color: var(--foreground);
   }
 

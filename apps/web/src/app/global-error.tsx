@@ -1,11 +1,13 @@
 'use client';
 
 import { useEffect } from 'react';
+import { colors, radius } from '@/styles/tokens';
 
 /**
  * Catches errors thrown in the root layout, which `app/error.tsx` cannot.
- * Renders its own <html>/<body> and uses inline styles (not tokens/Tailwind)
- * because the root layout - and therefore globals.css - may not have loaded.
+ * Renders its own <html>/<body> and uses inline styles (token values, not
+ * Tailwind) because the root layout - and therefore globals.css - may not have
+ * loaded.
  */
 export default function GlobalError({
   error,
@@ -20,7 +22,13 @@ export default function GlobalError({
 
   return (
     <html lang="en">
-      <body style={{ margin: 0, background: '#090909', color: '#D6D6D2' }}>
+      <body
+        style={{
+          margin: 0,
+          background: colors.background.DEFAULT,
+          color: colors.foreground.DEFAULT,
+        }}
+      >
         <div
           style={{
             display: 'flex',
@@ -38,10 +46,10 @@ export default function GlobalError({
             <button
               onClick={reset}
               style={{
-                background: '#B8FF5A',
-                color: '#11140D',
+                background: colors.primary.DEFAULT,
+                color: colors.primary.foreground,
                 border: 'none',
-                borderRadius: 6,
+                borderRadius: radius.control,
                 padding: '8px 16px',
                 fontSize: 14,
                 cursor: 'pointer',

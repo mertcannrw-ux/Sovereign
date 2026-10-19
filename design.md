@@ -3,7 +3,7 @@
 > **Single source of truth for the visual language.**
 > This document describes the palette that actually ships. It supersedes the earlier "Dark Premium" brief (which specified `#202020` surfaces and a `#22C55E → #E8D33E → #F59E0B` accent gradient - that direction was abandoned and its assets have been removed from the codebase).
 >
-> Canonical values live in `apps/web/tailwind.config.ts` (`theme.extend.colors`) and `apps/web/src/app/globals.css` (`:root`). If this document and the config disagree, **the config wins** - update this file.
+> Canonical values live in `apps/web/src/styles/tokens.ts`. `apps/web/tailwind.config.ts` turns them into utilities and emits every colour as a CSS variable on `:root` (`--background-subtle`, `--accent-saas`, ...). If this document and the tokens disagree, **the tokens win** - update this file.
 
 ---
 
@@ -22,27 +22,27 @@
 
 ### 2.1 Roles
 
-| Role            | Token                  | Value                  | Used for                                              |
-| --------------- | ---------------------- | ---------------------- | ----------------------------------------------------- |
-| Page background | `background`           | `#090909`              | app and marketing canvas                              |
-| Subtle surface  | `background-subtle`    | `#101010`              | cards, popovers, inset panels                         |
-| Muted surface   | `background-muted`     | `#171717`              | input fills, raised rows, hover fills                 |
-| Inverse surface | `background-inverse`   | `#F4F4F0`              | light-on-dark inversions                              |
-| Primary text    | `foreground`           | `#D6D6D2`              | headings, body, primary labels                        |
-| Secondary text  | `foreground-secondary` | `#B8B8B2`              | supporting copy, secondary labels                     |
-| Muted text      | `foreground-muted`     | `#80807C`              | placeholders, timestamps, captions                    |
-| Inverse text    | `foreground-inverse`   | `#11110F`              | text on inverse surfaces                              |
-| Hairline border | `border`               | `#242422`              | dividers, card edges, table rules                     |
-| Strong border   | `border-strong`        | `#646460`              | control boundaries, emphasized edges                  |
-| **Focus**       | `border-focus`         | `#B8FF5A`              | focus rings - always use this, never a bespoke colour |
-| **Accent**      | `primary`              | `#B8FF5A`              | primary buttons, active states, key metrics           |
-| Accent hover    | `primary-hover`        | `#C7FF7C`              | hover on accent surfaces                              |
-| Accent tint     | `primary-light`        | `rgba(184,255,90,.10)` | selected rows, subtle accent fills                    |
-| On-accent text  | `primary-foreground`   | `#11140D`              | text/icons on the accent                              |
-| Success         | `success`              | `#73D86C`              | positive state, "generated", connected                |
-| Warning         | `warning`              | `#E6B85C`              | caution, degraded, at-limit                           |
-| Error           | `error`                | `#F06A6A`              | failures, destructive actions                         |
-| On-error text   | `error-foreground`     | `#190909`              | text on `error` fills - **not** white (see §2.3)      |
+| Role            | Token                  | Value                   | Used for                                              |
+| --------------- | ---------------------- | ----------------------- | ----------------------------------------------------- |
+| Page background | `background`           | `#08090B`               | app and marketing canvas                              |
+| Raised surface  | `background-subtle`    | `#111216`               | cards, sidebar, popovers, dialogs                     |
+| Hover surface   | `background-muted`     | `#17181D`               | input fills, hover and active fills                   |
+| Inverse surface | `background-inverse`   | `#F4F4F5`               | light-on-dark inversions                              |
+| Primary text    | `foreground`           | `#FAFAFA`               | titles, headings, values                              |
+| Secondary text  | `foreground-secondary` | `#A1A1AA`               | descriptions, supporting copy                         |
+| Tertiary text   | `foreground-muted`     | `#80808A`               | timestamps, metadata, labels, placeholders            |
+| Inverse text    | `foreground-inverse`   | `#111113`               | text on inverse surfaces                              |
+| Hairline border | `border`               | `rgba(255,255,255,.06)` | dividers, card edges, table rules                     |
+| Strong border   | `border-strong`        | `rgba(255,255,255,.10)` | hover / focus-within, control edges                   |
+| **Focus**       | `border-focus`         | `#B8FF5A`               | focus rings - always use this, never a bespoke colour |
+| **Accent**      | `primary`              | `#B8FF5A`               | primary buttons, active states, key metrics           |
+| Accent hover    | `primary-hover`        | `#C7FF7C`               | hover on accent surfaces                              |
+| Accent tint     | `primary-light`        | `rgba(184,255,90,.10)`  | selected rows, subtle accent fills                    |
+| On-accent text  | `primary-foreground`   | `#11140D`               | text/icons on the accent                              |
+| Success         | `success`              | `#73D86C`               | positive state, "generated", connected                |
+| Warning         | `warning`              | `#E6B85C`               | caution, degraded, at-limit                           |
+| Error           | `error`                | `#F06A6A`               | failures, destructive actions                         |
+| On-error text   | `error-foreground`     | `#190909`               | text on `error` fills - **not** white (see §2.3)      |
 
 Each of `success` / `warning` / `error` also has a `-light` variant (`rgba(…,0.10)`) for tinted backgrounds, and a `-foreground` for text placed on the solid colour.
 
@@ -50,25 +50,29 @@ Each of `success` / `warning` / `error` also has a `-light` variant (`rgba(…,0
 
 Ratios computed with sRGB alpha compositing against the actual surfaces:
 
-| Pair                                   | Ratio   | AA (4.5:1)           |
-| -------------------------------------- | ------- | -------------------- |
-| `foreground` on `background`           | 13.66:1 | Pass                 |
-| `foreground-secondary` on `background` | 9.99:1  | Pass                 |
-| `foreground-muted` on `background`     | 5.02:1  | Pass                 |
-| `primary` on `background`              | 16.58:1 | Pass                 |
-| `primary-foreground` on `primary`      | 15.48:1 | Pass                 |
-| `error-foreground` on `error`          | 6.43:1  | Pass                 |
-| white on `error`                       | 3.01:1  | **Fail, do not use** |
+| Pair                                     | Ratio   | AA (4.5:1)           |
+| ---------------------------------------- | ------- | -------------------- |
+| `foreground` on `background`             | 19.08:1 | Pass                 |
+| `foreground-secondary` on `background`   | 7.77:1  | Pass                 |
+| `foreground-muted` on `background`       | 5.10:1  | Pass                 |
+| `foreground-muted` on `background-muted` | 4.53:1  | Pass                 |
+| `primary` on `background`                | 16.58:1 | Pass                 |
+| `primary-foreground` on `primary`        | 15.48:1 | Pass                 |
+| `error-foreground` on `error`            | 6.43:1  | Pass                 |
+| white on `error`                         | 3.01:1  | **Fail, do not use** |
 
 ### 2.3 Rules
 
 1. **Never write a raw hex in a component.** Always use a token (`bg-background-muted`, `text-foreground-secondary`, `border-border-strong`). If you need a colour that has no token, add a token. The only sanctioned literals are the illustration/editor exceptions listed in §6.
 2. **Never use `text-white` on `error`.** `error-foreground` (`#190909`) is the correct pairing at 6.43:1; white is 3.01:1 and fails AA.
-3. **`foreground-muted` passes AA at small sizes.** It measures 5.02:1 on `background`, 4.80:1 on `background-subtle` and 4.52:1 on `background-muted`, so it may be used for small text and placeholders anywhere.
-4. **`border` is decorative.** At 1.28:1 against `background` it is a divider, not a control outline. Interactive controls must be identifiable without relying on their hairline alone.
-5. **Focus is always `border-focus`, at soft strength.** Focus indicators use the `border-focus` colour: inputs take a `border-focus` border plus a `ring-border-focus/30`–`/40` halo (≈3.3:1, above the 3:1 focus-visible minimum); buttons and other controls use `ring-border-focus/40`. Full-strength lime rings are not used - they measure 16.6:1 and read as glare on the dark surface. A focus indicator not based on `border-focus` is a bug.
-6. **Alpha steps on the marketing surface.** The floor for body-sized white text is `/48`; lower steps (`/20`–`/45`) are reserved for display type and the sanctioned illustration mock. All landing-page body copy now sits at or above `/48`.
-7. **Status colours carry meaning only with a label or icon.** Never signal success/warning/error by hue alone.
+3. **`foreground-muted` passes AA at small sizes.** It measures 5.10:1 on `background`, 4.79:1 on `background-subtle` and 4.53:1 on `background-muted`, so it may be used for small text and placeholders anywhere. (`#71717A` was considered and fails AA on every surface.)
+4. **Three surface levels, no more.** `background` → `background-subtle` → `background-muted`. Do not stack a fourth (no `subtle` box inside a `subtle` card).
+5. **No opacity modifiers on rgba tokens.** `border-border/50` replaces the alpha (it renders 50% white), it does not soften the hairline.
+6. **Lime is for action, not decoration.** `primary` marks primary buttons, active states, focus and key highlights only. Eyebrows, badges like "Featured", icon tiles and illustration accents use the neutral ramp or the `accent-*` tokens.
+7. **`border` is decorative.** At ~1.2:1 against `background` it is a divider, not a control outline. Interactive controls must be identifiable without relying on their hairline alone.
+8. **Focus is always `border-focus`, at soft strength.** Focus indicators use the `border-focus` colour: inputs take a `border-focus` border plus a `ring-border-focus/30`–`/40` halo (≈3.3:1, above the 3:1 focus-visible minimum); buttons and other controls use `ring-border-focus/40`. Full-strength lime rings are not used - they measure 16.6:1 and read as glare on the dark surface. A focus indicator not based on `border-focus` is a bug.
+9. **Alpha steps on the marketing surface.** The floor for body-sized white text is `/48`; lower steps (`/20`–`/45`) are reserved for display type and the sanctioned illustration mock. All landing-page body copy now sits at or above `/48`.
+10. **Status colours carry meaning only with a label or icon.** Never signal success/warning/error by hue alone.
 
 ---
 
@@ -100,9 +104,9 @@ Ratios computed with sRGB alpha compositing against the actual surfaces:
 
 > The numeric spacing keys (`'8': '8px'`, `'16': '16px'`, …) that previously overrode Tailwind's defaults and made the scale non-monotonic (`p-8` resolving to 8px; `max-h-96` collapsing to 96px) have been removed. The config now relies on Tailwind's native steps, which already _are_ this scale (`2 / 4 / 6 / 8 / 12 / 16` = 8/16/24/32/48/64px). Only the named layout tokens (`sidebar`, `topbar`, `panel`) are defined.
 
-**Radius.** `sm` 6px · `md` 8px · `lg` 12px · `xl` 16px · `2xl` 20px · `card` 20px · `window` 16px. Pills (`rounded-full`) are reserved for primary CTAs and status chips.
+**Radius.** App chrome uses the semantic scale: `card` 12px (cards, modals, large panels) · `control` 8px (inputs, buttons, search, toggles) · `item` 6px (nav items, menu items, small controls) · `rounded-full` for badges, pills and avatars. Nested shapes follow _inner = outer − padding_: `popover` 10px wraps `item`s with `p-1`, and `control-inner` 4px is the pill inside a `p-1` segmented `control`. Never the same radius inside and outside. The numeric steps (`sm` 6px · `md` 8px · `lg` 12px · `xl` 16px · `2xl` 20px) and `window` 16px remain for the marketing page.
 
-**Elevation.** Dark UI signals depth with surface steps before shadow, but shadows are available: `shadow-sm`, `shadow` (default), `shadow-md`, `shadow-lg`, `shadow-button`, `shadow-card`, `shadow-card-hover`. Radii and shadows must not be mixed arbitrarily - cards use `card` + `shadow-card`; windows use `window`.
+**Elevation.** Dark UI signals depth with surface steps before shadow, but shadows are available: `shadow-sm`, `shadow` (default), `shadow-md`, `shadow-lg`, `shadow-button`, `shadow-card`, `shadow-card-hover`. Raised surfaces (cards, inputs, outline buttons) use `shadow-card`, a 1px inset top highlight; hovered cards use `shadow-card-hover`; popovers and dialogs use `shadow-popover` / `shadow-dialog`; the marketing demo window uses `rounded-window` + `shadow-window`.
 
 ---
 
@@ -132,8 +136,8 @@ Historically tracked in `docs/design-accessibility-review.md` (removed from the 
    - the `.code-block` surface in `globals.css` and the code viewer in `components/project/code-pane.tsx` (`#1e1e1e` / `#d4d4d4`) - an editor surface, not app chrome;
    - the Tailwind colour-swatch list in `components/visual-editor/properties-panel.tsx` - those are the colours a _user's generated app_ may pick;
    - the CSS injected into the sandboxed `apps/web/src/lib/visual-editor.ts` overlay - it renders inside the generated app's document, not this one;
-   - per-project accent colours (`app/dashboard/page.tsx`) and per-category template palettes (`app/dashboard/templates/page.tsx`) - intentional art.
-4. ~~Orphan brand art in the abandoned palette.~~ **Removed** - `apps/web/public/logo.svg`, `logo.png` and `logo-transparent.png` (bronze "SOVEREIGN" dragon crest) are deleted; the live mark is `components/landing/logo.tsx`, which mirrors the sidebar tile so the marketing header and the signed-in app read as one product.
+   - per-project accent colours and per-category template colours are now tokens (`accent-project-1`…`8`, `accent-productivity`, `accent-commerce`, ...). Template sketches sit on `background-subtle` with a 6% wash of their category accent.
+4. ~~Orphan brand art in the abandoned palette.~~ **Removed** - `apps/web/public/logo.svg`, `logo.png` and `logo-transparent.png` (bronze "SOVEREIGN" dragon crest) are deleted; the live mark is `components/brand/logo.tsx` (`size` sm / md / lg), rendered by the marketing header, auth screens, sidebar and mobile header - swapping the mark is a one-file change.
 
 ---
 

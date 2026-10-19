@@ -167,7 +167,7 @@ export function DemoPlayer({
     <div ref={containerRef} className={cn('relative', className)} aria-label={label} role="group">
       <div
         className={cn(
-          'relative isolate overflow-hidden rounded-window border border-border bg-background shadow-card',
+          'relative isolate overflow-hidden rounded-window border border-border bg-background shadow-window',
           surfaceClassName,
         )}
       >

@@ -3,8 +3,8 @@ import { cn } from '@app-builder/ui/utils';
 import type { TemplateLayout } from '@/data/templates';
 
 /**
- * Recognizable pattern sketches. Colours are the sanctioned per-category
- * palette passed in from the templates page - not app chrome.
+ * Recognizable pattern sketches. `accent` and `surface` come from the
+ * per-category tokens on the templates page; neutrals are `foreground` tints.
  */
 export function TemplateSketch({
   layout,
@@ -41,7 +41,7 @@ function Panel({
   children?: ReactNode;
 }) {
   return (
-    <div className={cn('rounded-md bg-white/10', className)} style={style}>
+    <div className={cn('rounded-md bg-foreground/[0.07]', className)} style={style}>
       {children}
     </div>
   );
@@ -50,7 +50,7 @@ function Panel({
 function Line({ className, accent = false }: { className?: string; accent?: boolean }) {
   return (
     <span
-      className={cn('block h-1.5 rounded-full bg-white/20', className)}
+      className={cn('block h-1.5 rounded-full bg-foreground/20', className)}
       style={accent ? { backgroundColor: 'currentColor' } : undefined}
     />
   );
@@ -78,7 +78,7 @@ function Kanban() {
       {[3, 2, 1].map((count, column) => (
         <div
           key={column}
-          className="flex min-h-0 flex-col gap-1.5 rounded-md bg-white/[0.04] p-1.5"
+          className="flex min-h-0 flex-col gap-1.5 rounded-md bg-foreground/[0.04] p-1.5"
         >
           <Line className="w-1/2 shrink-0" accent={column === 1} />
           {Array.from({ length: count }, (_, card) => (
@@ -96,7 +96,7 @@ function Checklist() {
       {Array.from({ length: 5 }, (_, row) => (
         <div key={row} className="flex min-h-0 flex-1 items-center gap-2">
           <span
-            className="h-3 w-3 shrink-0 rounded-full border border-white/25"
+            className="h-3 w-3 shrink-0 rounded-full border border-foreground/25"
             style={
               row < 2 ? { backgroundColor: 'currentColor', borderColor: 'currentColor' } : undefined
             }
@@ -127,10 +127,10 @@ function Steps() {
         {Array.from({ length: 4 }, (_, step) => (
           <span key={step} className="flex flex-1 items-center gap-1">
             <span
-              className="h-2.5 w-2.5 shrink-0 rounded-full bg-white/20"
+              className="h-2.5 w-2.5 shrink-0 rounded-full bg-foreground/20"
               style={step < 2 ? { backgroundColor: 'currentColor' } : undefined}
             />
-            {step < 3 ? <span className="h-px flex-1 bg-white/20" /> : null}
+            {step < 3 ? <span className="h-px flex-1 bg-foreground/20" /> : null}
           </span>
         ))}
       </div>
@@ -159,7 +159,7 @@ function Table() {
           <Line className="w-1/3" />
           <Line className="w-1/5" />
           <span
-            className="ml-auto h-2 w-8 rounded-full bg-white/20"
+            className="ml-auto h-2 w-8 rounded-full bg-foreground/20"
             style={row === 1 ? { backgroundColor: 'currentColor' } : undefined}
           />
         </Panel>
@@ -186,7 +186,7 @@ function Admin() {
           {[40, 65, 45, 80, 55, 90].map((height, bar) => (
             <span
               key={bar}
-              className="flex-1 rounded-sm bg-white/20"
+              className="flex-1 rounded-sm bg-foreground/20"
               style={{
                 height: `${height}%`,
                 ...(bar === 5 ? { backgroundColor: 'currentColor' } : {}),
@@ -225,11 +225,11 @@ function Settings() {
         <Panel key={row} className="flex min-h-0 flex-1 items-center justify-between px-2">
           <Line className="w-1/3" />
           <span
-            className="h-3 w-7 rounded-full bg-white/20 p-0.5"
+            className="h-3 w-7 rounded-full bg-foreground/20 p-0.5"
             style={row === 1 ? { backgroundColor: 'currentColor' } : undefined}
           >
             <span
-              className={cn('block h-2 w-2 rounded-full bg-white/70', row === 1 && 'ml-auto')}
+              className={cn('block h-2 w-2 rounded-full bg-foreground/70', row === 1 && 'ml-auto')}
             />
           </span>
         </Panel>
@@ -297,7 +297,7 @@ function People() {
       </Panel>
       {Array.from({ length: 4 }, (_, row) => (
         <div key={row} className="flex min-h-0 flex-1 items-center gap-2">
-          <span className="h-4 w-4 shrink-0 rounded-full bg-white/20" />
+          <span className="h-4 w-4 shrink-0 rounded-full bg-foreground/20" />
           <Line className={row === 2 ? 'w-1/3' : 'w-1/2'} accent={row === 0} />
         </div>
       ))}
@@ -312,9 +312,9 @@ function Stock() {
       {levels.map((level, row) => (
         <div key={row} className="flex min-h-0 flex-1 items-center gap-2">
           <Line className="w-1/4 shrink-0" />
-          <span className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-white/10">
+          <span className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-foreground/10">
             <span
-              className="block h-full rounded-full bg-white/25"
+              className="block h-full rounded-full bg-foreground/25"
               style={{
                 width: `${level}%`,
                 ...(level < 30 ? { backgroundColor: 'currentColor' } : {}),
@@ -332,10 +332,10 @@ function Flow() {
     <div className="flex h-full gap-2">
       <div className="flex w-3 flex-col items-center">
         <span className="h-2.5 w-2.5 rounded-full bg-current" />
-        <span className="w-px flex-1 bg-white/20" />
-        <span className="h-2.5 w-2.5 rounded-full bg-white/30" />
-        <span className="w-px flex-1 bg-white/20" />
-        <span className="h-2.5 w-2.5 rounded-full bg-white/30" />
+        <span className="w-px flex-1 bg-foreground/20" />
+        <span className="h-2.5 w-2.5 rounded-full bg-foreground/30" />
+        <span className="w-px flex-1 bg-foreground/20" />
+        <span className="h-2.5 w-2.5 rounded-full bg-foreground/30" />
       </div>
       <div className="flex min-w-0 flex-1 flex-col justify-between gap-1.5 py-0.5">
         <Panel className="h-[28%]" />
@@ -355,7 +355,7 @@ function Chart() {
         {bars.map((height, bar) => (
           <span
             key={bar}
-            className="flex-1 rounded-sm bg-white/20"
+            className="flex-1 rounded-sm bg-foreground/20"
             style={{
               height: `${height}%`,
               ...(bar === bars.length - 1 ? { backgroundColor: 'currentColor' } : {}),
@@ -372,7 +372,7 @@ function Week() {
     <div className="grid h-full grid-cols-7 gap-1">
       {Array.from({ length: 7 }, (_, day) => (
         <div key={day} className="flex flex-col gap-1">
-          <span className="h-1 rounded-full bg-white/25" />
+          <span className="h-1 rounded-full bg-foreground/25" />
           <Panel
             className={day === 2 ? 'h-1/3' : 'h-1/4'}
             style={day === 2 ? { backgroundColor: 'currentColor', opacity: 0.45 } : undefined}
@@ -394,7 +394,7 @@ function Streaks() {
           return (
             <span
               key={day}
-              className="aspect-square rounded-full bg-white/15"
+              className="aspect-square rounded-full bg-foreground/15"
               style={marked ? { backgroundColor: 'currentColor' } : undefined}
             />
           );
@@ -407,13 +407,13 @@ function Streaks() {
 function Lessons() {
   return (
     <div className="flex h-full flex-col gap-1.5">
-      <span className="h-1.5 overflow-hidden rounded-full bg-white/15">
+      <span className="h-1.5 overflow-hidden rounded-full bg-foreground/15">
         <span className="block h-full w-2/5 bg-current" />
       </span>
       {Array.from({ length: 4 }, (_, row) => (
         <Panel key={row} className="flex min-h-0 flex-1 items-center gap-2 px-2">
           <span
-            className="h-2.5 w-2.5 shrink-0 rounded-sm bg-white/25"
+            className="h-2.5 w-2.5 shrink-0 rounded-sm bg-foreground/25"
             style={row === 1 ? { backgroundColor: 'currentColor' } : undefined}
           />
           <Line className={row === 3 ? 'w-1/2' : 'w-3/4'} />
@@ -445,7 +445,7 @@ function Portal() {
         {Array.from({ length: 16 }, (_, cell) => (
           <span
             key={cell}
-            className="rounded-sm bg-white/15"
+            className="rounded-sm bg-foreground/15"
             style={cell === 6 || cell === 10 ? { backgroundColor: 'currentColor' } : undefined}
           />
         ))}

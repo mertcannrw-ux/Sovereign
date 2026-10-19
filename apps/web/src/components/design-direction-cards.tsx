@@ -153,7 +153,7 @@ export function DesignDirectionCards({
         })}
       </div>
 
-      <div className="flex items-center justify-between border-t border-border/50 pt-3 text-xs">
+      <div className="flex items-center justify-between border-t border-border pt-3 text-xs">
         <Button
           variant="ghost"
           size="sm"

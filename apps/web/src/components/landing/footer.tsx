@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { cn } from '@app-builder/ui/utils';
-import { Logo } from './logo';
+import { Logo } from '@/components/brand/logo';
 import { COLUMN, GUTTER, RuleMarks } from './primitives';
 
 const FOOTER_COLUMNS = [

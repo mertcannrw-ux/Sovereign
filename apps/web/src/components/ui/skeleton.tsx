@@ -5,7 +5,10 @@ import { cn } from '@app-builder/ui';
 
 function Skeleton({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
-    <div className={cn('animate-pulse rounded-md bg-background-muted', className)} {...props} />
+    <div
+      className={cn('animate-pulse rounded-control bg-background-muted', className)}
+      {...props}
+    />
   );
 }
 

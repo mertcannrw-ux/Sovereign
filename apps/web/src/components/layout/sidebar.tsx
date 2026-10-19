@@ -4,6 +4,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useSession, signOut } from 'next-auth/react';
 import { cn } from '@app-builder/ui/utils';
+import { Logo } from '@/components/brand/logo';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import {
@@ -15,7 +16,6 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import {
-  Command,
   LayoutDashboard,
   LayoutTemplate,
   Settings,
@@ -51,7 +51,7 @@ export function Sidebar({ open, onClose, className }: SidebarProps) {
       {open && (
         <button
           aria-label="Close navigation"
-          className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm md:hidden"
+          className="fixed inset-0 z-40 bg-background/80 backdrop-blur-sm md:hidden"
           onClick={onClose}
         />
       )}
@@ -63,13 +63,12 @@ export function Sidebar({ open, onClose, className }: SidebarProps) {
         )}
       >
         <div className="flex h-20 items-center justify-between px-5">
-          <Link href="/dashboard" className="group flex items-center gap-3.5" onClick={onClose}>
-            <span className="grid h-10 w-10 place-items-center rounded-xl bg-primary text-primary-foreground shadow-md shadow-primary/20 ring-1 ring-primary/30 transition-transform duration-200 group-hover:scale-105">
-              <Command className="h-5 w-5" strokeWidth={2.5} />
-            </span>
-            <span className="text-base font-bold uppercase tracking-[0.22em] text-foreground transition-colors group-hover:text-primary">
-              Sovereign
-            </span>
+          <Link
+            href="/dashboard"
+            className="rounded-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40"
+            onClick={onClose}
+          >
+            <Logo size="lg" />
           </Link>
           <Button variant="ghost" size="icon-sm" onClick={onClose} className="md:hidden">
             <X className="h-4 w-4" />
@@ -108,10 +107,10 @@ export function Sidebar({ open, onClose, className }: SidebarProps) {
                 href={item.href}
                 onClick={onClose}
                 className={cn(
-                  'flex h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors',
+                  'flex h-10 items-center gap-3 rounded-item px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
                   isActive
                     ? 'bg-background-muted text-foreground'
-                    : 'text-foreground-muted hover:bg-background-subtle hover:text-foreground',
+                    : 'text-foreground-secondary hover:bg-background-muted hover:text-foreground',
                 )}
               >
                 <item.icon className={cn('h-4 w-4 shrink-0', isActive && 'text-primary')} />
@@ -127,7 +126,7 @@ export function Sidebar({ open, onClose, className }: SidebarProps) {
               <button
                 type="button"
                 aria-label="Account menu"
-                className="flex w-full items-center gap-3 rounded-xl p-2 text-left transition-colors hover:bg-background-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40 data-[state=open]:bg-background-muted"
+                className="flex w-full items-center gap-3 rounded-item p-2 text-left transition-colors hover:bg-background-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40 data-[state=open]:bg-background-muted"
               >
                 <Avatar className="h-9 w-9 border border-border">
                   {user?.image ? <AvatarImage src={user.image} alt={user?.name ?? 'User'} /> : null}

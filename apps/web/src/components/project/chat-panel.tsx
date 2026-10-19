@@ -65,7 +65,7 @@ const markdownComponents: Components = {
   ),
   pre: ({ node: _node, ...props }) => (
     <pre
-      className="my-2 overflow-x-auto rounded-lg border border-border/60 bg-background-muted/50 p-3 font-mono text-xs leading-relaxed text-foreground-secondary"
+      className="my-2 overflow-x-auto rounded-lg border border-border bg-background-muted/50 p-3 font-mono text-xs leading-relaxed text-foreground-secondary"
       {...props}
     />
   ),
@@ -109,7 +109,7 @@ const markdownComponents: Components = {
   ),
   hr: ({ node: _node, ...props }) => <hr className="my-3 border-border" {...props} />,
   table: ({ node: _node, ...props }) => (
-    <div className="my-2 overflow-x-auto rounded-lg border border-border/60">
+    <div className="my-2 overflow-x-auto rounded-lg border border-border">
       <table className="w-full border-collapse text-sm" {...props} />
     </div>
   ),
@@ -122,7 +122,7 @@ const markdownComponents: Components = {
   ),
   td: ({ node: _node, ...props }) => (
     <td
-      className="border-b border-border/50 px-2.5 py-1.5 align-top text-foreground-secondary"
+      className="border-b border-border px-2.5 py-1.5 align-top text-foreground-secondary"
       {...props}
     />
   ),
@@ -146,7 +146,7 @@ function MessageContent({ content, thinking }: { content: string; thinking?: str
   return (
     <div className="space-y-2">
       {thinking && (
-        <div className="overflow-hidden rounded-lg border border-border/50 bg-background-muted/30">
+        <div className="overflow-hidden rounded-lg border border-border bg-background-muted/30">
           <button
             type="button"
             onClick={() => setShowThinking((v) => !v)}
@@ -163,7 +163,7 @@ function MessageContent({ content, thinking }: { content: string; thinking?: str
             {showThinking ? 'Hide thinking' : 'Show thinking'}
           </button>
           {showThinking && (
-            <div className="border-t border-border/50 px-3 py-2.5">
+            <div className="border-t border-border px-3 py-2.5">
               <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-[1.6] text-foreground-muted">
                 {thinking}
               </pre>
@@ -229,7 +229,7 @@ function ToolStepsDisplay({ toolCalls }: { toolCalls: unknown }) {
     summaryParts.length > 0 ? summaryParts.join(', ') : `${steps.length} execution steps`;
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border/50 bg-background-muted/30">
+    <div className="overflow-hidden rounded-lg border border-border bg-background-muted/30">
       <button
         type="button"
         onClick={() => setIsOpen((prev) => !prev)}
@@ -247,7 +247,7 @@ function ToolStepsDisplay({ toolCalls }: { toolCalls: unknown }) {
       </button>
 
       {isOpen && (
-        <div className="space-y-1.5 border-t border-border/50 p-2.5">
+        <div className="space-y-1.5 border-t border-border p-2.5">
           {steps.map((step) => {
             const Icon =
               step.kind === 'write' || step.kind === 'edit'
@@ -542,7 +542,7 @@ export function ChatPanel({
                             </div>
                           )}
                         </div>
-                        <div className="mt-4 flex justify-between border-t border-border/50 pt-3">
+                        <div className="mt-4 flex justify-between border-t border-border pt-3">
                           <Button variant="ghost" size="sm" onClick={onCancelClarifications}>
                             Cancel
                           </Button>
@@ -585,7 +585,7 @@ export function ChatPanel({
                         </button>
                       ))}
                     </div>
-                    <div className="mt-4 flex justify-end gap-2 border-t border-border/50 pt-4">
+                    <div className="mt-4 flex justify-end gap-2 border-t border-border pt-4">
                       <Button variant="ghost" onClick={onCancelClarifications}>
                         Cancel
                       </Button>
@@ -646,7 +646,7 @@ export function ChatPanel({
                 </Badge>
               </div>
               <div className="pl-8 pt-2">
-                <div className="overflow-hidden rounded-lg border border-border/40 bg-background-muted/20">
+                <div className="overflow-hidden rounded-lg border border-border bg-background-muted/20">
                   <div className="flex items-center gap-2 px-3 py-2 text-sm text-foreground-muted">
                     <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
                     <span className="flex-1">
@@ -669,7 +669,7 @@ export function ChatPanel({
                     )}
                   </div>
                   {showLiveThinking && liveThinking && (
-                    <div className="border-t border-border/40 px-3 py-2.5">
+                    <div className="border-t border-border px-3 py-2.5">
                       <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-[1.6] text-foreground-muted">
                         {liveThinking}
                       </pre>
@@ -679,7 +679,7 @@ export function ChatPanel({
                 {liveAnswer && (
                   // The answer streams in here in the same rendering the settled
                   // message gets; `ready` replaces this with the transcript entry.
-                  <div className="animate-fade-in mt-2 rounded-lg border border-border/40 bg-background-muted/20 px-3 py-2.5">
+                  <div className="animate-fade-in mt-2 rounded-lg border border-border bg-background-muted/20 px-3 py-2.5">
                     <MessageContent content={liveAnswer} />
                   </div>
                 )}
