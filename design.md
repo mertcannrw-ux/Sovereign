@@ -131,8 +131,6 @@ Historically tracked in `docs/design-accessibility-review.md` (removed from the 
    - the landing page's light "generated site" mock (`components/landing/demo/generated-app.tsx`) - it
      depicts a _different_ website inside the dark chrome, and the visual-editor clip recolours it in
      place to show what an element edit does;
-   - the settings provider roster in `components/landing/demo/settings-window.tsx` - a transcription of
-     the real `PROVIDERS` table in `app/settings/page.tsx`;
    - the code-sample syntax colours in `components/landing/demo/workspace-panes.tsx` and `apps/web/src/components/code-editor/code-editor.tsx`;
    - the `.code-block` surface in `globals.css` and the code viewer in `components/project/code-pane.tsx` (`#1e1e1e` / `#d4d4d4`) - an editor surface, not app chrome;
    - the Tailwind colour-swatch list in `components/visual-editor/properties-panel.tsx` - those are the colours a _user's generated app_ may pick;

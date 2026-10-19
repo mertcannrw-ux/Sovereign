@@ -148,7 +148,7 @@ export const byokScenes: DemoScene[] = [
     render: ({ p }) => (
       <SettingsWindow
         tab="providers"
-        connected={p > 0.62 ? { openai: 'sk-proj-••••••••7f3a' } : {}}
+        connected={p > 0.62 ? { openai: 84 } : {}}
         typing={p > 0.3 && p <= 0.62 ? 'openai' : null}
       />
     ),
@@ -162,10 +162,10 @@ export const byokScenes: DemoScene[] = [
       <SettingsWindow
         tab="providers"
         connected={{
-          openai: 'sk-proj-••••••••7f3a',
-          anthropic: 'sk-ant-••••••••c21d',
-          groq: 'gsk_••••••••9d02',
-          ollama: 'http://localhost:11434',
+          openai: 84,
+          anthropic: 9,
+          groq: 21,
+          ollama: 3,
         }}
       />
     ),

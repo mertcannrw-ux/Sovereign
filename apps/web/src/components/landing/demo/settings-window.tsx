@@ -1,32 +1,37 @@
 'use client';
 
-import { Bot, CreditCard, ExternalLink, Key, Plus, RefreshCw, User, Users } from 'lucide-react';
+import { CircleUser, CodeXml, CreditCard, Loader2, Users } from 'lucide-react';
+import { AIKey } from '@/components/ui/ai-key-icon';
 import { cn } from '@app-builder/ui/utils';
+import { Logo } from '@/components/Logo';
+import { PROVIDER_LOGOS, ProviderMark } from '../provider-logos';
 import { AppSidebar } from './app-sidebar';
 
 /**
- * `app/settings/page.tsx`, AI Providers tab. Real tab list, real provider
- * roster (including the two OpenAI-compatible entries), real status strings
- * and the real `Add Key` / `Refresh models` affordances.
+ * `app/settings/page.tsx` with `components/settings/ai-providers-panel.tsx`.
+ * Real tab list, real provider roster and order, real status strings and the
+ * real `Connect` / `Manage` affordances.
  */
 
 const TABS = [
-  { id: 'profile', label: 'Profile', Icon: User },
-  { id: 'providers', label: 'AI Providers (BYOK)', Icon: Bot },
-  { id: 'teams', label: 'Teams', Icon: Users },
+  { id: 'profile', label: 'Profile', Icon: CircleUser },
+  { id: 'providers', label: 'AI Providers', Icon: AIKey },
+  { id: 'teams', label: 'Team', Icon: Users },
   { id: 'billing', label: 'Billing', Icon: CreditCard },
-  { id: 'api-keys', label: 'API Keys', Icon: Key },
+  { id: 'developer-api', label: 'Developer API', Icon: CodeXml },
 ] as const;
 
 const PROVIDERS = [
-  { id: 'openai', name: 'OpenAI', icon: 'O', docs: 'platform.openai.com/api-keys' },
-  { id: 'anthropic', name: 'Anthropic', icon: 'A', docs: 'console.anthropic.com/settings/keys' },
-  { id: 'google', name: 'Google Gemini', icon: 'G', docs: 'aistudio.google.com/app/apikey' },
-  { id: 'mistral', name: 'Mistral', icon: 'M', docs: 'console.mistral.ai/api-keys' },
-  { id: 'groq', name: 'Groq', icon: 'G', docs: 'console.groq.com/keys' },
-  { id: 'ollama', name: 'Ollama', icon: 'O', docs: 'ollama.ai' },
-  { id: 'custom', name: 'Custom (OpenAI Compatible)', icon: 'C', docs: '' },
+  { id: 'openai', name: 'OpenAI' },
+  { id: 'anthropic', name: 'Anthropic' },
+  { id: 'google', name: 'Google Gemini' },
+  { id: 'mistral', name: 'Mistral' },
+  { id: 'groq', name: 'Groq' },
+  { id: 'ollama', name: 'Ollama' },
+  { id: 'custom', name: 'Custom (OpenAI compatible)' },
 ];
+
+const markFor = (name: string) => PROVIDER_LOGOS.find((logo) => logo.name === name)?.d;
 
 export function SettingsWindow({
   tab = 'providers',
@@ -34,25 +39,22 @@ export function SettingsWindow({
   typing,
 }: {
   tab?: (typeof TABS)[number]['id'];
-  /** provider id → masked key suffix, as the settings query returns it. */
-  connected?: Record<string, string>;
-  /** Provider id whose key field is mid-entry. */
+  /** provider id → model count, as `apiKeys.listModels` reports it. */
+  connected?: Record<string, number>;
+  /** Provider id whose key is being verified. */
   typing?: string | null;
 }) {
+  const noneConnected = !connected || Object.keys(connected).length === 0;
+
   return (
     <div className="flex h-full bg-background">
       <AppSidebar active="Settings" />
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="shrink-0 border-b border-border px-5 py-3.5">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-muted">
-            Account
-          </p>
-          <h2 className="mt-1 text-xl font-semibold tracking-[-0.03em] text-foreground">
-            Settings
-          </h2>
+        <div className="shrink-0 px-5 pt-4">
+          <h2 className="text-xl font-semibold tracking-[-0.03em] text-foreground">Settings</h2>
         </div>
 
-        <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border px-5">
+        <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border px-5 pt-2">
           {TABS.map(({ id, label, Icon }) => (
             <div
               key={id}
@@ -70,89 +72,58 @@ export function SettingsWindow({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">
-            Model connections
-          </p>
-          <h3 className="mt-1.5 text-lg font-semibold tracking-[-0.03em] text-foreground">
-            AI providers
-          </h3>
-          <p className="mt-1.5 max-w-xl text-[13px] leading-6 text-foreground-muted">
-            Connect the providers you already use. Keys are encrypted, and model access is validated
-            directly with each provider.
+          <h3 className="text-lg font-semibold tracking-[-0.03em] text-foreground">AI providers</h3>
+          <p className="mt-1 text-[13px] text-foreground-muted">
+            Sovereign uses your own keys. They&apos;re encrypted and only sent to the provider.
           </p>
 
-          <div className="mt-4 grid gap-2.5 sm:grid-cols-2">
+          {noneConnected && !typing && (
+            <p className="mt-3 flex items-center gap-2 text-[13px] text-foreground-secondary">
+              <Logo size={16} state="idle" />I need a key first. Connect one below.
+            </p>
+          )}
+
+          <ul className="mt-3 divide-y divide-border rounded-xl border border-border">
             {PROVIDERS.map((provider) => {
-              const masked = connected?.[provider.id];
+              const models = connected?.[provider.id];
               const isTyping = typing === provider.id;
+              const mark = markFor(provider.name);
               return (
-                <div
-                  key={provider.id}
-                  className={cn(
-                    'rounded-xl border bg-background-subtle p-3 transition-all duration-500',
-                    masked || isTyping ? 'border-primary/35' : 'border-border',
-                  )}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <span
-                      className={cn(
-                        'grid h-8 w-8 shrink-0 place-items-center rounded-lg text-[13px] font-bold transition-colors duration-500',
-                        masked
-                          ? 'bg-primary text-primary-foreground'
-                          : 'bg-background-muted text-foreground-secondary',
-                      )}
-                    >
-                      {provider.icon}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-[13px] font-semibold text-foreground">
-                        {provider.name}
-                      </p>
-                      <p className="truncate text-[10px] text-foreground-muted">
-                        {masked
-                          ? `Configured · ${masked}`
-                          : isTyping
-                            ? 'Encrypting…'
-                            : 'Not configured'}
-                      </p>
-                    </div>
-                    {masked && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" />}
-                  </div>
-
-                  {provider.docs && (
-                    <p className="mt-2.5 flex items-center gap-1 truncate text-[10px] text-foreground-muted">
-                      <ExternalLink className="h-2.5 w-2.5 shrink-0" />
-                      {provider.docs}
+                <li key={provider.id} className="flex items-center gap-2.5 px-3.5 py-2.5">
+                  {mark && <ProviderMark d={mark} className="h-4 w-4 text-foreground" />}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[13px] font-medium text-foreground">
+                      {provider.name}
                     </p>
-                  )}
-
-                  <div className="mt-3 flex items-center gap-1.5">
-                    {isTyping ? (
-                      <span className="flex items-center gap-1.5 rounded-md border border-primary/30 bg-primary/[0.08] px-2 py-1 text-[10px] font-medium text-primary">
-                        <RefreshCw className="h-2.5 w-2.5 animate-spin" />
-                        Validating with provider
-                      </span>
-                    ) : masked ? (
-                      <>
-                        <span className="flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[10px] text-foreground-secondary">
-                          <RefreshCw className="h-2.5 w-2.5" />
-                          Refresh models
-                        </span>
-                        <span className="rounded-md border border-border bg-background px-2 py-1 text-[10px] text-foreground-secondary">
-                          Replace Key
-                        </span>
-                      </>
-                    ) : (
-                      <span className="flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[10px] font-medium text-foreground-secondary">
-                        <Plus className="h-2.5 w-2.5" />
-                        Add Key
-                      </span>
-                    )}
+                    <p className="flex items-center gap-1.5 truncate text-[11px] text-foreground-muted">
+                      {isTyping ? (
+                        <>
+                          <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                          Checking connection
+                        </>
+                      ) : models !== undefined ? (
+                        <>
+                          <span className="h-1.5 w-1.5 rounded-full bg-success" />
+                          Connected · {models} models
+                        </>
+                      ) : (
+                        'Not connected'
+                      )}
+                    </p>
                   </div>
-                </div>
+                  {models !== undefined && !isTyping ? (
+                    <span className="rounded-md px-2 py-1 text-[11px] font-semibold text-foreground-secondary">
+                      Manage
+                    </span>
+                  ) : (
+                    <span className="rounded-md border border-border-strong bg-background-subtle px-2 py-1 text-[11px] font-semibold text-foreground">
+                      Connect
+                    </span>
+                  )}
+                </li>
               );
             })}
-          </div>
+          </ul>
         </div>
       </div>
     </div>
