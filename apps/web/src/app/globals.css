@@ -87,12 +87,11 @@
   }
 
   /*
-   * Dot-grid surface for project thumbnails with nothing to preview. The dots
-   * live on a board (::before) that hovering inside a `.group` tints lime.
-   * `.dot-grid-tilt` also leans the board toward the cursor in perspective,
-   * so the side under the pointer comes closer, with a soft glow (::after)
-   * at the cursor. `--tilt-x`, `--tilt-y`, `--cursor-x` and `--cursor-y` are
-   * set from the pointer in the dashboard.
+   * Dot-grid surface for project thumbnails with nothing to preview; hovering
+   * the surrounding `.group` tints the dots lime. List rows use the CSS dots
+   * (`.dot-grid-dots`). Cards draw theirs on a canvas (dashboard/dot-grid.tsx)
+   * inside `.dot-grid-board`, which leans toward the cursor, with a soft glow
+   * at the cursor (`.dot-grid-glow`). The pointer variables are set there.
    */
   .dot-grid {
     --dot-color: color-mix(in srgb, var(--foreground-muted) 28%, transparent);
@@ -101,29 +100,39 @@
     background-color: var(--background-muted);
   }
 
-  .dot-grid::before {
-    content: '';
-    position: absolute;
-    /* Oversized so a tilted board never shows its edges. */
-    inset: -15%;
-    background-image: radial-gradient(circle, var(--dot-color) 0.75px, transparent 1.25px);
-    background-size: 16px 16px;
-    background-position: center;
-    transition:
-      --dot-color 300ms ease-out,
-      transform 400ms cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
   .group:hover .dot-grid {
     --dot-color: color-mix(in srgb, var(--primary) 55%, transparent);
   }
 
-  .group:hover .dot-grid-tilt::before {
-    transform: perspective(600px) translateZ(14px) rotateX(var(--tilt-x, 0deg))
+  /*
+   * Both overhang the frame by 5px (BLEED in dot-grid.tsx). With whole tiles
+   * that puts the outermost dots ~3px inside every edge, and the overhang
+   * keeps the frame covered while the board tilts.
+   */
+  .dot-grid-dots,
+  .dot-grid-board {
+    position: absolute;
+    inset: -5px;
+  }
+
+  .dot-grid-dots {
+    background-image: radial-gradient(circle, var(--dot-color) 0.75px, transparent 1.25px);
+    background-size: 16px 16px;
+    /* Stretch the tile slightly so a whole number fits: equal margins on all sides. */
+    background-repeat: round;
+    transition: --dot-color 300ms ease-out;
+  }
+
+  .dot-grid-board {
+    transition: transform 400ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .group:hover .dot-grid-board {
+    transform: perspective(600px) translateZ(16px) rotateX(var(--tilt-x, 0deg))
       rotateY(var(--tilt-y, 0deg));
   }
 
-  .dot-grid-tilt::after {
+  .dot-grid-glow::after {
     content: '';
     position: absolute;
     inset: 0;
@@ -137,17 +146,17 @@
     transition: opacity 300ms ease-out;
   }
 
-  .group:hover .dot-grid-tilt::after {
+  .group:hover .dot-grid-glow::after {
     opacity: 1;
   }
 
-  /* Reduced motion: the hover still recolours the dots, but the board stays flat. */
+  /* Reduced motion: the hover still recolours the dots; no tilt or glow. */
   @media (prefers-reduced-motion: reduce) {
-    .group:hover .dot-grid-tilt::before {
+    .group:hover .dot-grid-board {
       transform: none;
     }
 
-    .dot-grid-tilt::after {
+    .dot-grid-glow::after {
       display: none;
     }
   }

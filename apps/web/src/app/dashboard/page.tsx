@@ -6,9 +6,9 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type FormEvent,
   type KeyboardEvent,
-  type MouseEvent,
 } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -48,6 +48,7 @@ import {
 import { trpc } from '@/lib/trpc/client';
 import { motion } from 'framer-motion';
 import { cn } from '@app-builder/ui/utils';
+import { DotGrid } from './dot-grid';
 
 // Matches the `description` limit on projects.create, where the prompt is stored.
 const PROMPT_LIMIT = 500;
@@ -69,6 +70,16 @@ const promptStarters = [
     label: 'Todo app',
     prompt: 'A todo app with projects, due dates, priorities and a completed filter',
   },
+];
+
+// Cycled through the empty prompt's placeholder; module-level so the
+// typewriter effect's dependency stays stable.
+const examplePrompts = [
+  'A habit tracker with streaks, reminders and a weekly progress chart',
+  'A booking page for a hair salon with services, staff and time slots',
+  'An internal tool to approve expense reports with receipts and comments',
+  'A recipe app where I can save meals and generate a shopping list',
+  ...promptStarters.map((starter) => starter.prompt),
 ];
 
 function relativeTime(date: Date) {
@@ -95,6 +106,57 @@ function hostOf(url: string): string {
   } catch {
     return url;
   }
+}
+const REDUCED_MOTION = '(prefers-reduced-motion: reduce)';
+/**
+ * Type each phrase out, hold it, delete it, then move to the next, for an
+ * empty prompt's placeholder. Returns `fallback` while inactive or when the
+ * viewer prefers reduced motion.
+ */
+function useTypewriter(phrases: readonly string[], active: boolean, fallback: string): string {
+  const [text, setText] = useState('');
+  const reducedMotion = useSyncExternalStore(
+    (onChange) => {
+      const query = window.matchMedia(REDUCED_MOTION);
+      query.addEventListener('change', onChange);
+      return () => query.removeEventListener('change', onChange);
+    },
+    () => window.matchMedia(REDUCED_MOTION).matches,
+    () => true,
+  );
+
+  useEffect(() => {
+    if (!active || reducedMotion || phrases.length === 0) return;
+    let phrase = 0;
+    let length = 0;
+    let deleting = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const step = () => {
+      const current = phrases[phrase] ?? '';
+      if (!deleting && length < current.length) {
+        length += 1;
+        timer = setTimeout(step, 55 + Math.random() * 45);
+      } else if (!deleting) {
+        deleting = true;
+        timer = setTimeout(step, 2200);
+      } else if (length > 0) {
+        length -= 1;
+        timer = setTimeout(step, 18);
+      } else {
+        deleting = false;
+        phrase = (phrase + 1) % phrases.length;
+        timer = setTimeout(step, 500);
+      }
+      setText(current.slice(0, length));
+    };
+    timer = setTimeout(step, 600);
+    return () => {
+      clearTimeout(timer);
+      setText('');
+    };
+  }, [phrases, active, reducedMotion]);
+
+  return active && !reducedMotion && text ? text : fallback;
 }
 const statusVariant = { draft: 'secondary', published: 'success', archived: 'warning' } as const;
 type DbStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
@@ -145,7 +207,7 @@ interface ProjectActions {
 /**
  * Screenshot, else the live site in a scaled-down, inert iframe, else the
  * dot-grid surface (globals.css). `compact` thumbnails (list rows) skip the
- * iframe and the cursor tilt: at that size the iframe is unreadable, and one
+ * iframe and the interactive canvas: at that size the iframe is unreadable, and one
  * live page per row is too heavy. Every variant ignores the pointer so clicks
  * reach the card's stretched link underneath.
  */
@@ -187,34 +249,14 @@ function ProjectThumbnail({
       </div>
     );
   }
-  return (
-    <div
-      aria-hidden="true"
-      className={cn('dot-grid pointer-events-none', !compact && 'dot-grid-tilt', className)}
-    />
-  );
-}
-
-// Furthest the dot board leans toward the cursor, in degrees.
-const MAX_TILT = 10;
-const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
-
-/**
- * Lean the card's dot board toward the cursor so the side under it comes
- * closer. The pointer is measured against the thumbnail and clamped, so
- * hovering the text below the thumbnail tilts toward its bottom edge.
- */
-function tiltDotGrid(event: MouseEvent<HTMLElement>) {
-  const grid = event.currentTarget.querySelector<HTMLElement>('.dot-grid-tilt');
-  if (!grid) return;
-  const rect = grid.getBoundingClientRect();
-  const x = clamp01((event.clientX - rect.left) / rect.width);
-  const y = clamp01((event.clientY - rect.top) / rect.height);
-  grid.style.setProperty('--cursor-x', `${x * 100}%`);
-  grid.style.setProperty('--cursor-y', `${y * 100}%`);
-  // rotateX(+) brings the bottom edge forward; rotateY(-) brings the right edge forward.
-  grid.style.setProperty('--tilt-x', `${(y - 0.5) * 2 * MAX_TILT}deg`);
-  grid.style.setProperty('--tilt-y', `${(0.5 - x) * 2 * MAX_TILT}deg`);
+  if (compact) {
+    return (
+      <div aria-hidden="true" className={cn('dot-grid pointer-events-none', className)}>
+        <div className="dot-grid-dots" />
+      </div>
+    );
+  }
+  return <DotGrid className={className} />;
 }
 
 function ProjectMenu({
@@ -294,10 +336,7 @@ function LiveLink({ url }: { url: string }) {
  */
 function ProjectCard({ project, actions }: { project: ProjectSummary; actions: ProjectActions }) {
   return (
-    <div
-      onMouseMove={project.thumbnailUrl || project.liveUrl ? undefined : tiltDotGrid}
-      className="group relative min-w-0 overflow-hidden rounded-card border border-border bg-background-subtle transition-colors hover:border-border-strong has-[a[data-card-link]:focus-visible]:ring-2 has-[a[data-card-link]:focus-visible]:ring-border-focus/40"
-    >
+    <div className="group relative min-w-0 overflow-hidden rounded-card border border-border bg-background-subtle transition-colors hover:border-border-strong has-[a[data-card-link]:focus-visible]:ring-2 has-[a[data-card-link]:focus-visible]:ring-border-focus/40">
       <Link
         href={projectHref(project)}
         data-card-link
@@ -409,6 +448,11 @@ function DashboardContent() {
 
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const [prompt, setPrompt] = useState('');
+  const placeholder = useTypewriter(
+    examplePrompts,
+    prompt === '',
+    'Describe what you want to build…',
+  );
   const [view, setView] = useState<'grid' | 'list'>('grid');
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -637,7 +681,7 @@ function DashboardContent() {
                 if (createError) setCreateError(null);
               }}
               onKeyDown={handlePromptKeyDown}
-              placeholder="Describe what you want to build…"
+              placeholder={placeholder}
               rows={3}
               className="block min-h-24 w-full resize-none bg-transparent px-4 pt-4 text-sm leading-6 text-foreground placeholder:text-foreground-muted/60 focus:outline-none focus-visible:ring-0"
             />
