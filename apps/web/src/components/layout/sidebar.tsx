@@ -156,12 +156,12 @@ function subscribeCollapsed(onChange: () => void) {
 }
 
 /**
- * The desktop collapsed/expanded choice, remembered per surface: the editor
- * and the rest of the app each keep their own, since they default apart. The
- * server render uses the default.
+ * The desktop collapsed/expanded choice, one for the whole app once the user
+ * has made it. Until then each surface uses its own default (the editor starts
+ * collapsed). The server render uses the default.
  */
 function useCollapsed(defaultCollapsed: boolean) {
-  const storageKey = `sovereign:sidebar-collapsed:${defaultCollapsed ? 'editor' : 'app'}`;
+  const storageKey = 'sovereign:sidebar-collapsed';
   const stored = useSyncExternalStore(
     subscribeCollapsed,
     () => readStored(storageKey),
@@ -277,15 +277,10 @@ export function Sidebar({ open, onClose, defaultCollapsed = false, className }: 
         >
           <TooltipProvider delayDuration={300}>
             {/*
-             * The editor lines the mark up with its 68px header; elsewhere this
-             * row shares a line with the page title.
+             * The same offset on every page, so the sidebar never shifts when
+             * you navigate. It shares a line with the Projects page title.
              */}
-            <div
-              className={cn(
-                'flex h-9 shrink-0 items-center',
-                defaultCollapsed ? 'mt-4' : 'mt-8 lg:mt-10',
-              )}
-            >
+            <div className="mt-8 flex h-9 shrink-0 items-center lg:mt-10">
               <Link
                 href="/dashboard"
                 onClick={onClose}
