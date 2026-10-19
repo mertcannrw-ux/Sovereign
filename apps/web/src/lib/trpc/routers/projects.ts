@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { protectedProcedure, router } from '../trpc';
+import type { Context } from '../context';
 import { requireOrganizationRole, requireProjectRole } from '@/server/authz';
 import { assertTenantSchemaName, provisionAppDatabase } from '@/server/app-database';
 import { quotePgIdent } from '@/server/db-browser';
@@ -81,6 +82,105 @@ function paginateProjects<T extends ProjectRow>(rows: T[], limit: number) {
   };
 }
 
+interface ProjectRecordInput {
+  name: string;
+  description?: string;
+  modelProvider?: string;
+  modelName?: string;
+  organizationId: string;
+}
+
+/**
+ * Insert a project row with a unique slug, provision its app database, then
+ * let `seed` write its initial files inside the same transaction.
+ */
+async function createProjectRecord(
+  db: Context['db'],
+  userId: string,
+  input: ProjectRecordInput,
+  seed: (tx: Prisma.TransactionClient, created: Project) => Promise<void>,
+): Promise<Project> {
+  // Slug allocation must tolerate a concurrent create of the same name:
+  // check-then-create races (two creators read "free" simultaneously), and
+  // a time-based suffix can collide within the same millisecond. P2002
+  // from the projects_slug_key unique index is the arbiter - retry with
+  // fresh entropy, like deployments.create does for its version counter.
+  // The constraint name is checked so any OTHER unique violation on this
+  // multi-table tx propagates instead of silently retrying 5×.
+  const SLUG_MAX_ATTEMPTS = 5;
+  let slug = generateSlug(input.name);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await db.$transaction(
+        async (tx) => {
+          // Serialize against removeMember offboarding for this org: the
+          // pre-tx role check can race a concurrent removal, so re-verify
+          // membership while holding the same advisory lock removeMember
+          // uses. Otherwise the removed user could create (and own, via the
+          // ownerId-grants-OWNER shortcut in requireProjectRole) a project
+          // in an organization they were just removed from.
+          await lockOrganizationMembership(tx, input.organizationId);
+          const membership = await tx.organizationMember.findUnique({
+            where: {
+              organizationId_userId: { organizationId: input.organizationId, userId },
+            },
+          });
+          if (!membership) {
+            throw new TRPCError({
+              code: 'FORBIDDEN',
+              message: 'Not a member of this organization.',
+            });
+          }
+
+          // Counted under the org lock, so concurrent creates cannot both
+          // pass the plan's project limit.
+          await assertCanCreateProject(tx, input.organizationId, getPlanPrices());
+
+          // Opportunistic dedupe inside the tx; the P2002 retry below is
+          // still the arbiter under read-committed.
+          const existing = await tx.project.findUnique({ where: { slug } });
+          if (existing) {
+            slug = `${slug}-${randomUUID().slice(0, 8)}`;
+          }
+
+          const created = await tx.project.create({
+            data: {
+              ownerId: userId,
+              organizationId: input.organizationId,
+              name: input.name,
+              description: input.description ?? null,
+              slug,
+              ...(input.modelProvider !== undefined && { modelProvider: input.modelProvider }),
+              ...(input.modelName !== undefined && { modelName: input.modelName }),
+            },
+          });
+          await provisionAppDatabase(tx, created.id);
+          await seed(tx, created);
+          return created;
+        },
+        // Provisioning a tenant schema + seeding files is raw DDL + a file
+        // batch; the 5s interactive default can abort legitimate creations
+        // under load, so budget generously.
+        { timeout: 30_000 },
+      );
+    } catch (error) {
+      // Prisma reports the violated constraint in meta.target, as a
+      // string for a column-level @unique and a list for composite
+      // indexes; accept both spellings of the slug constraint.
+      const target = (
+        error instanceof Prisma.PrismaClientKnownRequestError ? error.meta?.target : undefined
+      ) as string | string[] | undefined;
+      const isSlugRace =
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002' &&
+        (target === 'slug' ||
+          (Array.isArray(target) && target.length === 1 && target[0] === 'slug'));
+      if (!isSlugRace || attempt >= SLUG_MAX_ATTEMPTS - 1) throw error;
+      slug = `${generateSlug(input.name)}-${randomUUID().slice(0, 8)}`;
+    }
+  }
+}
+
 export const projectsRouter = router({
   /**
    * List all projects the current user owns or collaborates on.
@@ -139,6 +239,13 @@ export const projectsRouter = router({
           owner: {
             select: { id: true, name: true, email: true },
           },
+          // Latest live deployment, for the dashboard card's site link.
+          deployments: {
+            where: { status: 'LIVE' },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            select: { url: true, customDomain: true },
+          },
         },
       });
       return paginateProjects(projects, input.limit);
@@ -162,104 +269,47 @@ export const projectsRouter = router({
     .mutation(async ({ ctx, input }) => {
       await requireOrganizationRole(ctx, input.organizationId, 'MEMBER');
 
-      // Slug allocation must tolerate a concurrent create of the same name:
-      // check-then-create races (two creators read "free" simultaneously), and
-      // a time-based suffix can collide within the same millisecond. P2002
-      // from the projects_slug_key unique index is the arbiter - retry with
-      // fresh entropy, like deployments.create does for its version counter.
-      // The constraint name is checked so any OTHER unique violation on this
-      // multi-table tx propagates instead of silently retrying 5×.
-      const SLUG_MAX_ATTEMPTS = 5;
-      let slug = generateSlug(input.name);
-      let project: Project | null = null;
-      for (let attempt = 0; ; attempt += 1) {
-        try {
-          project = await ctx.db.$transaction(
-            async (tx) => {
-              // Serialize against removeMember offboarding for this org: the
-              // pre-tx role check can race a concurrent removal, so re-verify
-              // membership while holding the same advisory lock removeMember
-              // uses. Otherwise the removed user could create (and own, via the
-              // ownerId-grants-OWNER shortcut in requireProjectRole) a project
-              // in an organization they were just removed from.
-              await lockOrganizationMembership(tx, input.organizationId);
-              const membership = await tx.organizationMember.findUnique({
-                where: {
-                  organizationId_userId: {
-                    organizationId: input.organizationId,
-                    userId: ctx.user.id,
-                  },
-                },
-              });
-              if (!membership) {
-                throw new TRPCError({
-                  code: 'FORBIDDEN',
-                  message: 'Not a member of this organization.',
-                });
-              }
+      return createProjectRecord(ctx.db, ctx.user.id, input, async (tx, created) => {
+        if (!input.templateId) return;
+        await persistProjectFiles(
+          tx,
+          created.id,
+          Object.entries(SEEDS).map(([path, content]) => ({
+            path,
+            content:
+              path === 'src/App.tsx' ? seedAppTsx(input.name, input.description ?? '') : content,
+          })),
+        );
+      });
+    }),
 
-              // Counted under the org lock, so concurrent creates cannot both
-              // pass the plan's project limit.
-              await assertCanCreateProject(tx, input.organizationId, getPlanPrices());
+  /**
+   * Copy a project's metadata and files into a new draft in the same
+   * organization. Chat history, deployments and app data are not copied.
+   */
+  duplicate: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      await requireProjectRole(ctx, input.id, 'VIEWER');
+      const source = await ctx.db.project.findUnique({
+        where: { id: input.id },
+        include: { files: { select: { path: true, content: true } } },
+      });
+      if (!source) throw new TRPCError({ code: 'NOT_FOUND', message: 'Project not found' });
+      await requireOrganizationRole(ctx, source.organizationId, 'MEMBER');
 
-              // Opportunistic dedupe inside the tx; the P2002 retry below is
-              // still the arbiter under read-committed.
-              const existing = await tx.project.findUnique({ where: { slug } });
-              if (existing) {
-                slug = `${slug}-${randomUUID().slice(0, 8)}`;
-              }
-
-              const created = await tx.project.create({
-                data: {
-                  ownerId: ctx.user.id,
-                  organizationId: input.organizationId,
-                  name: input.name,
-                  description: input.description ?? null,
-                  slug,
-                  ...(input.modelProvider !== undefined && { modelProvider: input.modelProvider }),
-                  ...(input.modelName !== undefined && { modelName: input.modelName }),
-                },
-              });
-              await provisionAppDatabase(tx, created.id);
-              if (input.templateId) {
-                await persistProjectFiles(
-                  tx,
-                  created.id,
-                  Object.entries(SEEDS).map(([path, content]) => ({
-                    path,
-                    content:
-                      path === 'src/App.tsx'
-                        ? seedAppTsx(input.name, input.description ?? '')
-                        : content,
-                  })),
-                );
-              }
-              return created;
-            },
-            // Provisioning a tenant schema + seeding template files is raw DDL
-            // + a file batch; the 5s interactive default can abort legitimate
-            // creations under load, so budget generously.
-            { timeout: 30_000 },
-          );
-          break;
-        } catch (error) {
-          // Prisma reports the violated constraint in meta.target, as a
-          // string for a column-level @unique and a list for composite
-          // indexes; accept both spellings of the slug constraint.
-          const target = (
-            error instanceof Prisma.PrismaClientKnownRequestError ? error.meta?.target : undefined
-          ) as string | string[] | undefined;
-          const isSlugRace =
-            error instanceof Prisma.PrismaClientKnownRequestError &&
-            error.code === 'P2002' &&
-            (target === 'slug' ||
-              (Array.isArray(target) && target.length === 1 && target[0] === 'slug'));
-          if (!isSlugRace || attempt >= SLUG_MAX_ATTEMPTS - 1) throw error;
-          slug = `${generateSlug(input.name)}-${randomUUID().slice(0, 8)}`;
-        }
-      }
-
-      return project;
+      return createProjectRecord(
+        ctx.db,
+        ctx.user.id,
+        {
+          name: `${source.name} copy`.slice(0, 100),
+          description: source.description ?? undefined,
+          modelProvider: source.modelProvider,
+          modelName: source.modelName,
+          organizationId: source.organizationId,
+        },
+        (tx, created) => persistProjectFiles(tx, created.id, source.files),
+      );
     }),
 
   /**

@@ -1,10 +1,31 @@
 'use client';
 
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import {
+  Suspense,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type FormEvent,
+  type KeyboardEvent,
+} from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowRight, Clock3, FolderKanban, Grid2X2, List, Search, Sparkles } from 'lucide-react';
+import {
+  ArrowUp,
+  Copy,
+  ExternalLink,
+  FolderKanban,
+  Grid2X2,
+  List,
+  MoreHorizontal,
+  Pencil,
+  Search,
+  SquareArrowOutUpRight,
+  Trash2,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -17,10 +38,49 @@ import {
   DialogFooter,
   DialogClose,
 } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { trpc } from '@/lib/trpc/client';
 import { motion } from 'framer-motion';
 import { cn } from '@app-builder/ui/utils';
 import { projectAccents } from '@/styles/tokens';
+
+// Matches the `description` limit on projects.create, where the prompt is stored.
+const PROMPT_LIMIT = 500;
+
+const promptStarters = [
+  {
+    label: 'Dashboard',
+    prompt: 'An analytics dashboard with KPI cards, a revenue chart and a recent orders table',
+  },
+  {
+    label: 'Blog',
+    prompt: 'A personal blog with a post list, tag filters and a clean reading view',
+  },
+  {
+    label: 'SaaS landing',
+    prompt: 'A SaaS landing page with a hero, feature grid, pricing tiers and FAQ',
+  },
+  {
+    label: 'Todo app',
+    prompt: 'A todo app with projects, due dates, priorities and a completed filter',
+  },
+];
+
+// Cycled through the empty prompt's placeholder; module-level so the
+// typewriter effect's dependency stays stable.
+const examplePrompts = [
+  'A habit tracker with streaks, reminders and a weekly progress chart',
+  'A booking page for a hair salon with services, staff and time slots',
+  'An internal tool to approve expense reports with receipts and comments',
+  'A recipe app where I can save meals and generate a shopping list',
+  ...promptStarters.map((starter) => starter.prompt),
+];
 
 // Accent colour for each project card, from the `accent-project-*` tokens.
 function accentFromName(name: string): string {
@@ -35,6 +95,75 @@ function relativeTime(date: Date) {
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
 }
+/** Name a prompt-created project after the start of its prompt; it can be renamed later. */
+function nameFromPrompt(prompt: string): string {
+  const firstLine = prompt.trim().split('\n')[0] ?? '';
+  const words = firstLine
+    .replace(/^(an?|the)\s+/i, '')
+    .split(/\s+/)
+    .slice(0, 6)
+    .join(' ');
+  const name = words.replace(/[.,;:!?]+$/, '').slice(0, 60);
+  return name ? name.charAt(0).toUpperCase() + name.slice(1) : 'Untitled Project';
+}
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+const REDUCED_MOTION = '(prefers-reduced-motion: reduce)';
+/**
+ * Type each phrase out, hold it, delete it, then move to the next, for an
+ * empty prompt's placeholder. Returns `fallback` while inactive or when the
+ * viewer prefers reduced motion.
+ */
+function useTypewriter(phrases: readonly string[], active: boolean, fallback: string): string {
+  const [text, setText] = useState('');
+  const reducedMotion = useSyncExternalStore(
+    (onChange) => {
+      const query = window.matchMedia(REDUCED_MOTION);
+      query.addEventListener('change', onChange);
+      return () => query.removeEventListener('change', onChange);
+    },
+    () => window.matchMedia(REDUCED_MOTION).matches,
+    () => true,
+  );
+
+  useEffect(() => {
+    if (!active || reducedMotion || phrases.length === 0) return;
+    let phrase = 0;
+    let length = 0;
+    let deleting = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const step = () => {
+      const current = phrases[phrase] ?? '';
+      if (!deleting && length < current.length) {
+        length += 1;
+        timer = setTimeout(step, 55 + Math.random() * 45);
+      } else if (!deleting) {
+        deleting = true;
+        timer = setTimeout(step, 2200);
+      } else if (length > 0) {
+        length -= 1;
+        timer = setTimeout(step, 18);
+      } else {
+        deleting = false;
+        phrase = (phrase + 1) % phrases.length;
+        timer = setTimeout(step, 500);
+      }
+      setText(current.slice(0, length));
+    };
+    timer = setTimeout(step, 600);
+    return () => {
+      clearTimeout(timer);
+      setText('');
+    };
+  }, [phrases, active, reducedMotion]);
+
+  return active && !reducedMotion && text ? text : fallback;
+}
 const statusVariant = { draft: 'secondary', published: 'success', archived: 'warning' } as const;
 type DbStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
 const statusMap: Record<DbStatus, 'draft' | 'published' | 'archived'> = {
@@ -42,10 +171,215 @@ const statusMap: Record<DbStatus, 'draft' | 'published' | 'archived'> = {
   PUBLISHED: 'published',
   ARCHIVED: 'archived',
 };
-/** Render the authenticated project list, initial-load recovery, and project creation dialog. */
+
+interface ProjectSummary {
+  id: string;
+  name: string;
+  status: 'draft' | 'published' | 'archived';
+  lastEdited: Date;
+  accent: string;
+  thumbnailUrl: string | null;
+  liveUrl: string | null;
+}
+
+interface ProjectActions {
+  onRename: (project: ProjectSummary) => void;
+  onDuplicate: (project: ProjectSummary) => void;
+  onDelete: (project: ProjectSummary) => void;
+}
+
+/** Screenshot when the project has one, otherwise a monogram tinted by its accent. */
+function ProjectThumbnail({
+  project,
+  className,
+  monogramClassName,
+}: {
+  project: ProjectSummary;
+  className?: string;
+  monogramClassName?: string;
+}) {
+  if (project.thumbnailUrl) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element -- thumbnails are user-app screenshots on arbitrary hosts
+      <img
+        src={project.thumbnailUrl}
+        alt=""
+        className={cn('object-cover object-top', className)}
+        loading="lazy"
+      />
+    );
+  }
+  return (
+    <div
+      aria-hidden="true"
+      className={cn('grid place-items-center bg-background-muted', className)}
+      style={{
+        backgroundImage: `linear-gradient(color-mix(in srgb, ${project.accent} 10%, transparent), color-mix(in srgb, ${project.accent} 10%, transparent))`,
+      }}
+    >
+      <span
+        className={cn('font-semibold leading-none tracking-[-0.04em]', monogramClassName)}
+        style={{ color: project.accent }}
+      >
+        {project.name.trim().charAt(0).toUpperCase() || '?'}
+      </span>
+    </div>
+  );
+}
+
+function ProjectMenu({
+  project,
+  actions,
+  className,
+}: {
+  project: ProjectSummary;
+  actions: ProjectActions;
+  className?: string;
+}) {
+  const router = useRouter();
+  return (
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Actions for ${project.name}`}
+          className={cn(
+            'grid h-7 w-7 place-items-center rounded-control-inner text-foreground-secondary transition-colors hover:bg-background-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
+            className,
+          )}
+        >
+          <MoreHorizontal className="h-4 w-4" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-44">
+        <DropdownMenuItem onSelect={() => router.push(`/project/${project.id}`)}>
+          <SquareArrowOutUpRight />
+          Open
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => actions.onRename(project)}>
+          <Pencil />
+          Rename
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => actions.onDuplicate(project)}>
+          <Copy />
+          Duplicate
+        </DropdownMenuItem>
+        {project.liveUrl ? (
+          <DropdownMenuItem asChild>
+            <a href={project.liveUrl} target="_blank" rel="noopener noreferrer">
+              <ExternalLink />
+              Visit live site
+            </a>
+          </DropdownMenuItem>
+        ) : null}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onSelect={() => actions.onDelete(project)}
+          className="text-error focus:bg-error/10 focus:text-error"
+        >
+          <Trash2 />
+          Delete
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function LiveLink({ url }: { url: string }) {
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="relative z-10 truncate text-xs text-foreground-muted transition-colors hover:text-foreground"
+    >
+      {hostOf(url)}
+    </a>
+  );
+}
+
+/**
+ * The card's link is a stretched overlay rather than a wrapper, so the menu
+ * and live-site link stay valid, independently focusable siblings.
+ */
+function ProjectCard({ project, actions }: { project: ProjectSummary; actions: ProjectActions }) {
+  return (
+    <div className="group relative overflow-hidden rounded-card border border-border bg-background-subtle transition-colors hover:border-border-strong has-[a[data-card-link]:focus-visible]:ring-2 has-[a[data-card-link]:focus-visible]:ring-border-focus/40">
+      <Link
+        href={`/project/${project.id}`}
+        data-card-link
+        aria-label={`Open ${project.name}`}
+        className="absolute inset-0 focus-visible:outline-none"
+      />
+      <ProjectThumbnail
+        project={project}
+        className="aspect-[16/10] w-full border-b border-border"
+        monogramClassName="text-5xl"
+      />
+      <ProjectMenu
+        project={project}
+        actions={actions}
+        className="absolute right-2.5 top-2.5 z-10 border border-border bg-background-subtle opacity-0 focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
+      />
+      <div className="pointer-events-none relative px-4 py-3.5 [&_a]:pointer-events-auto">
+        <div className="flex items-center gap-2">
+          <h3 className="truncate text-sm font-medium tracking-[-0.01em]">{project.name}</h3>
+          <Badge variant={statusVariant[project.status]} className="shrink-0 text-[10px]">
+            {project.status}
+          </Badge>
+        </div>
+        <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-foreground-muted">
+          <span className="shrink-0">Edited {relativeTime(project.lastEdited)}</span>
+          {project.liveUrl ? (
+            <>
+              <span aria-hidden="true">·</span>
+              <LiveLink url={project.liveUrl} />
+            </>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProjectRow({ project, actions }: { project: ProjectSummary; actions: ProjectActions }) {
+  return (
+    <div className="group relative flex items-center gap-3.5 border-b border-border px-4 py-3 transition-colors last:border-0 hover:bg-background-muted/50 has-[a[data-card-link]:focus-visible]:bg-background-muted/50">
+      <Link
+        href={`/project/${project.id}`}
+        data-card-link
+        aria-label={`Open ${project.name}`}
+        className="absolute inset-0 focus-visible:outline-none"
+      />
+      <ProjectThumbnail
+        project={project}
+        className="h-9 w-12 shrink-0 rounded-control-inner border border-border"
+        monogramClassName="text-sm"
+      />
+      <div className="pointer-events-none relative min-w-0 flex-1 [&_a]:pointer-events-auto">
+        <p className="truncate text-sm font-medium">{project.name}</p>
+        {project.liveUrl ? (
+          <div className="flex min-w-0">
+            <LiveLink url={project.liveUrl} />
+          </div>
+        ) : null}
+      </div>
+      <Badge variant={statusVariant[project.status]} className="text-[10px]">
+        {project.status}
+      </Badge>
+      <span className="hidden w-28 text-right text-xs text-foreground-muted sm:block">
+        Edited {relativeTime(project.lastEdited)}
+      </span>
+      <ProjectMenu project={project} actions={actions} className="relative z-10" />
+    </div>
+  );
+}
+
+/** Render the authenticated project list, the prompt-first project creator, and card actions. */
 function DashboardContent() {
   const { data: session, status: authStatus } = useSession();
   const router = useRouter();
+  const utils = trpc.useUtils();
   const [search, setSearch] = useState('');
   // Debounce the keystroke stream: each change creates a new infinite query
   // (search is part of the key), and firing one per character spams the
@@ -67,81 +401,144 @@ function DashboardContent() {
   const orgsQuery = trpc.organizations.list.useQuery();
 
   const createMutation = trpc.projects.create.useMutation();
-  const [showNew, setShowNew] = useState(false);
-  const [name, setName] = useState('');
+  const renameMutation = trpc.projects.update.useMutation({
+    onSuccess: () => utils.projects.list.invalidate(),
+  });
+  const duplicateMutation = trpc.projects.duplicate.useMutation({
+    onSuccess: () => utils.projects.list.invalidate(),
+  });
+  const deleteMutation = trpc.projects.delete.useMutation({
+    onSuccess: () => utils.projects.list.invalidate(),
+  });
+
+  const promptRef = useRef<HTMLTextAreaElement>(null);
   const [prompt, setPrompt] = useState('');
+  const placeholder = useTypewriter(
+    examplePrompts,
+    prompt === '',
+    'Describe what you want to build…',
+  );
   const [view, setView] = useState<'grid' | 'list'>('grid');
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<ProjectSummary | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [deleting, setDeleting] = useState<ProjectSummary | null>(null);
 
   useEffect(() => {
     if (authStatus === 'unauthenticated') router.push('/auth/signin');
   }, [authStatus, router]);
   const searchParams = useSearchParams();
 
+  // The sidebar's "New project" lands here: the prompt box is the creator.
   useEffect(() => {
-    if (searchParams.get('new') === 'true') {
-      setShowNew(true);
+    // The textarea mounts only once the session resolves.
+    if (searchParams.get('new') === 'true' && promptRef.current) {
+      promptRef.current.focus();
+      router.replace('/dashboard');
     }
-  }, [searchParams]);
+  }, [searchParams, router, authStatus]);
 
   useEffect(() => {
-    const handleOpenNew = () => setShowNew(true);
+    const handleOpenNew = () => promptRef.current?.focus();
     window.addEventListener('open-new-project', handleOpenNew);
     return () => window.removeEventListener('open-new-project', handleOpenNew);
   }, []);
 
-  const projects = useMemo(() => {
+  const projects = useMemo<ProjectSummary[]>(() => {
     const raw = projectsQuery.data?.pages.flatMap((page) => page.projects) ?? [];
-    return raw.map((p) => ({
-      id: p.id,
-      name: p.name,
-      description: p.description ?? '',
-      status: statusMap[p.status as DbStatus] ?? 'draft',
-      lastEdited: new Date(p.updatedAt),
-      accent: accentFromName(p.name),
-    }));
+    return raw.map((p) => {
+      const live = p.deployments[0];
+      return {
+        id: p.id,
+        name: p.name,
+        status: statusMap[p.status as DbStatus] ?? 'draft',
+        lastEdited: new Date(p.updatedAt),
+        accent: accentFromName(p.name),
+        thumbnailUrl: p.thumbnailUrl,
+        liveUrl: live?.customDomain ? `https://${live.customDomain}` : (live?.url ?? null),
+      };
+    });
   }, [projectsQuery.data]);
   // Fetch the next (older) page into the accumulated list.
   const loadMoreProjects = () => {
     void projectsQuery.fetchNextPage();
   };
 
-  /** Create a project in the first available workspace, then navigate to its editor. */
-  async function createProject() {
-    if (!name.trim() || isCreating) return;
+  const actions: ProjectActions = {
+    onRename: (project) => {
+      setRenameValue(project.name);
+      setRenaming(project);
+    },
+    onDuplicate: (project) => duplicateMutation.mutate({ id: project.id }),
+    onDelete: setDeleting,
+  };
+
+  /**
+   * Create a project in the first available workspace with the prompt as its
+   * brief, then open the editor, which seeds the prompt from the brief.
+   */
+  async function createProject(event?: FormEvent) {
+    event?.preventDefault();
+    const brief = prompt.trim();
+    if (!brief || isCreating) return;
     const orgId = orgsQuery.data?.[0]?.id;
     if (!orgId) {
       // `organizations.list` only feeds this lookup, so a failure here is
-      // reported in the dialog instead of blocking the whole dashboard.
+      // reported under the prompt instead of blocking the whole dashboard.
       setCreateError(
         orgsQuery.isError
           ? 'Could not load your workspaces. Check your connection and try again.'
           : 'No workspace found. Create or join an organization first.',
       );
+      if (orgsQuery.isError) void orgsQuery.refetch();
       return;
     }
     setIsCreating(true);
     setCreateError(null);
     try {
       const project = await createMutation.mutateAsync({
-        name: name.trim(),
-        description: prompt.trim() || undefined,
+        name: nameFromPrompt(brief),
+        description: brief,
         organizationId: orgId,
       });
-      setShowNew(false);
-      setName('');
-      setPrompt('');
       router.push(`/project/${project.id}`);
     } catch (error) {
-      // Keep the dialog open and explain why, instead of closing silently.
       setCreateError(
         error instanceof Error && error.message
           ? error.message
           : 'Could not create the project. Please try again.',
       );
-    } finally {
       setIsCreating(false);
+    }
+  }
+
+  function handlePromptKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      void createProject();
+    }
+  }
+
+  async function submitRename(event: FormEvent) {
+    event.preventDefault();
+    const name = renameValue.trim();
+    if (!renaming || !name) return;
+    try {
+      if (name !== renaming.name) await renameMutation.mutateAsync({ id: renaming.id, name });
+      setRenaming(null);
+    } catch {
+      // The global mutation-cache toast reports it; keep the dialog open.
+    }
+  }
+
+  async function confirmDelete() {
+    if (!deleting) return;
+    try {
+      await deleteMutation.mutateAsync({ id: deleting.id });
+      setDeleting(null);
+    } catch {
+      // The global mutation-cache toast reports it; keep the dialog open.
     }
   }
 
@@ -182,282 +579,224 @@ function DashboardContent() {
 
   return (
     <div className="min-h-full bg-background">
-      <header className="border-b border-border">
-        <div className="mx-auto max-w-[1400px] px-5 py-8 sm:px-8 lg:py-10">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-foreground-muted">
-              Workspace
-            </p>
-            <h1 className="mt-3 text-3xl font-semibold tracking-[-0.04em] sm:text-4xl">Projects</h1>
-            <p className="mt-2 text-sm text-foreground-secondary">
-              Welcome back, {session.user?.name?.split(' ')[0] ?? 'builder'}. Pick up where you left
-              off.
-            </p>
-          </div>
-        </div>
-      </header>
-
-      <Dialog
-        open={showNew}
-        onOpenChange={(open) => {
-          setShowNew(open);
-          if (!open && searchParams.get('new') === 'true') {
-            router.replace('/dashboard');
-          }
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Create a new project</DialogTitle>
-            <DialogDescription>
-              Give it a clear name and describe the outcome. You can refine everything later.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-5 py-5">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Project name</label>
+      <main className="mx-auto max-w-[1200px] px-5 py-8 sm:px-8 lg:py-10">
+        <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <h1 className="text-2xl font-semibold tracking-[-0.03em]">Projects</h1>
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1 sm:w-64 sm:flex-none">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-muted" />
               <Input
-                autoFocus
-                placeholder="Acme customer portal"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
+                placeholder="Search projects"
+                aria-label="Search projects"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="h-9 pl-9"
               />
             </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">What are you building?</label>
-              <textarea
-                className="min-h-32 w-full resize-none rounded-control border border-border bg-background-muted px-3.5 py-3 text-sm text-foreground shadow-card transition-colors placeholder:text-foreground-muted hover:border-border-strong focus:border-border-focus focus:outline-none focus:ring-2 focus:ring-border-focus/30"
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder="e.g. A task manager with drag-and-drop kanban boards"
+            <div className="relative flex shrink-0 items-center gap-0.5 rounded-control border border-border bg-background-subtle p-0.5">
+              <div
+                aria-hidden="true"
+                className="duration-280 pointer-events-none absolute bottom-0.5 top-0.5 w-8 rounded-control-inner bg-background-muted transition-all ease-[cubic-bezier(0.16,1,0.3,1)]"
+                style={{ left: `${view === 'grid' ? 2 : 36}px` }}
               />
+              {(
+                [
+                  ['grid', 'Grid view', Grid2X2],
+                  ['list', 'List view', List],
+                ] as const
+              ).map(([value, label, Icon]) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-label={label}
+                  aria-pressed={view === value}
+                  onClick={() => setView(value)}
+                  className={cn(
+                    'relative z-10 grid h-8 w-8 place-items-center rounded-control-inner transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
+                    view === value
+                      ? 'text-foreground'
+                      : 'text-foreground-muted hover:text-foreground',
+                  )}
+                >
+                  <Icon className="h-4 w-4" />
+                </button>
+              ))}
             </div>
           </div>
+        </header>
+
+        <section className="mt-6">
+          <form
+            onSubmit={createProject}
+            className="rounded-card border border-border bg-background-subtle transition-colors focus-within:border-border-strong hover:border-border-strong"
+          >
+            <textarea
+              ref={promptRef}
+              aria-label="Describe what you want to build"
+              value={prompt}
+              maxLength={PROMPT_LIMIT}
+              onChange={(e) => {
+                setPrompt(e.target.value);
+                if (createError) setCreateError(null);
+              }}
+              onKeyDown={handlePromptKeyDown}
+              placeholder={placeholder}
+              rows={3}
+              className="block min-h-24 w-full resize-none bg-transparent px-4 pt-4 text-sm leading-6 text-foreground placeholder:text-foreground-muted focus:outline-none focus-visible:ring-0"
+            />
+            <div className="flex items-center justify-end gap-3 px-3 pb-3">
+              {prompt.length > PROMPT_LIMIT * 0.8 ? (
+                <span className="text-xs tabular-nums text-foreground-muted">
+                  {prompt.length}/{PROMPT_LIMIT}
+                </span>
+              ) : null}
+              <Button
+                type="submit"
+                size="icon-sm"
+                aria-label={isCreating ? 'Creating project' : 'Create project'}
+                disabled={!prompt.trim() || isCreating}
+              >
+                {isCreating ? (
+                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary-foreground/40 border-t-primary-foreground" />
+                ) : (
+                  <ArrowUp className="h-4 w-4" />
+                )}
+              </Button>
+            </div>
+          </form>
           {createError ? (
-            <p role="alert" className="mt-4 text-sm text-error">
+            <p role="alert" className="mt-2 text-sm text-error">
               {createError}
             </p>
           ) : null}
-          <DialogFooter>
-            {createError && orgsQuery.isError && !orgsQuery.data?.[0]?.id ? (
-              <Button
-                variant="outline"
-                disabled={orgsQuery.isFetching}
-                onClick={async () => {
-                  const result = await orgsQuery.refetch();
-                  if (!result.isError) setCreateError(null);
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {promptStarters.map((starter) => (
+              <button
+                key={starter.label}
+                type="button"
+                onClick={() => {
+                  setPrompt(starter.prompt);
+                  setCreateError(null);
+                  promptRef.current?.focus();
                 }}
+                className="rounded-full border border-border px-3 py-1 text-xs text-foreground-secondary transition-colors hover:border-border-strong hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40"
               >
-                {orgsQuery.isFetching ? 'Retrying…' : 'Retry'}
+                {starter.label}
+              </button>
+            ))}
+            <Link
+              href="/dashboard/templates"
+              className="rounded-full px-2 py-1 text-xs text-foreground-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40"
+            >
+              Browse all →
+            </Link>
+          </div>
+        </section>
+
+        <section className="mt-12">
+          {projectsQuery.isLoading ? (
+            <div className="flex justify-center py-20">
+              <div className="h-7 w-7 animate-spin rounded-full border-2 border-border border-t-primary" />
+            </div>
+          ) : projects.length === 0 ? (
+            <div className="rounded-card border border-dashed border-border py-16 text-center">
+              <FolderKanban className="mx-auto h-6 w-6 text-foreground-muted" />
+              <h2 className="mt-4 text-sm font-medium">
+                {debouncedSearch ? 'No matching projects' : 'No projects yet'}
+              </h2>
+              <p className="mt-1 text-sm text-foreground-muted">
+                {debouncedSearch
+                  ? 'Try another search.'
+                  : 'Describe an app above to create your first project.'}
+              </p>
+            </div>
+          ) : (
+            <motion.div
+              key={view}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+            >
+              {view === 'grid' ? (
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                  {projects.map((project) => (
+                    <ProjectCard key={project.id} project={project} actions={actions} />
+                  ))}
+                </div>
+              ) : (
+                <div className="overflow-hidden rounded-card border border-border bg-background-subtle">
+                  {projects.map((project) => (
+                    <ProjectRow key={project.id} project={project} actions={actions} />
+                  ))}
+                </div>
+              )}
+            </motion.div>
+          )}
+          {projectsQuery.hasNextPage && !projectsQuery.isFetchingNextPage && (
+            <div className="mt-8 flex justify-center">
+              <Button variant="ghost" size="sm" onClick={loadMoreProjects}>
+                Load more
               </Button>
-            ) : null}
+            </div>
+          )}
+          {projectsQuery.isFetchingNextPage && (
+            <div className="mt-8 flex justify-center text-sm text-foreground-muted">Loading…</div>
+          )}
+        </section>
+      </main>
+
+      <Dialog open={renaming !== null} onOpenChange={(open) => !open && setRenaming(null)}>
+        <DialogContent>
+          <form onSubmit={submitRename}>
+            <DialogHeader>
+              <DialogTitle>Rename project</DialogTitle>
+            </DialogHeader>
+            <div className="py-5">
+              <Input
+                autoFocus
+                aria-label="Project name"
+                value={renameValue}
+                maxLength={100}
+                onChange={(e) => setRenameValue(e.target.value)}
+              />
+            </div>
+            <DialogFooter>
+              <DialogClose asChild>
+                <Button type="button" variant="outline">
+                  Cancel
+                </Button>
+              </DialogClose>
+              <Button type="submit" disabled={!renameValue.trim() || renameMutation.isPending}>
+                {renameMutation.isPending ? 'Saving…' : 'Save'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleting !== null} onOpenChange={(open) => !open && setDeleting(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete {deleting?.name}?</DialogTitle>
+            <DialogDescription>
+              This permanently deletes the project, its files and its app database. This cannot be
+              undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-5">
             <DialogClose asChild>
               <Button variant="outline">Cancel</Button>
             </DialogClose>
-            <Button onClick={createProject} disabled={!name.trim() || isCreating}>
-              {isCreating ? 'Creating\u2026' : 'Create project'}
+            <Button
+              variant="destructive"
+              onClick={confirmDelete}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? 'Deleting…' : 'Delete project'}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      <main className="mx-auto max-w-[1400px] px-5 py-8 sm:px-8">
-        <section className="mb-8 grid gap-4 sm:grid-cols-3">
-          {[
-            [
-              'Active projects',
-              String(projects.filter((p) => p.status !== 'archived').length),
-              'Across your workspace',
-            ],
-            [
-              'Published',
-              String(projects.filter((p) => p.status === 'published').length),
-              'Live applications',
-            ],
-            [
-              'Latest activity',
-              projects[0] ? relativeTime(projects[0].lastEdited) : '-',
-              'Since your last edit',
-            ],
-          ].map(([label, value, detail]) => (
-            <div
-              key={label}
-              className="rounded-card border border-border bg-background-subtle p-5 shadow-card"
-            >
-              <p className="text-xs text-foreground-muted">{label}</p>
-              <p className="mt-3 text-2xl font-semibold tracking-[-0.04em]">{value}</p>
-              <p className="mt-1 text-xs text-foreground-muted">{detail}</p>
-            </div>
-          ))}
-        </section>
-        <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="relative w-full sm:max-w-sm">
-            <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-muted" />
-            <Input
-              placeholder="Search projects"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-10"
-            />
-          </div>
-          <div className="relative flex items-center gap-1 rounded-control border border-border bg-background-subtle p-1">
-            <div
-              aria-hidden="true"
-              className="duration-280 pointer-events-none absolute bottom-1 top-1 w-8 rounded-control-inner bg-background-muted shadow-card transition-all ease-[cubic-bezier(0.16,1,0.3,1)]"
-              style={{
-                left: `${view === 'grid' ? 4 : 40}px`,
-              }}
-            />
-            <button
-              type="button"
-              aria-label="Grid view"
-              onClick={() => setView('grid')}
-              className={cn(
-                'relative z-10 grid h-8 w-8 place-items-center rounded-control-inner transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
-                view === 'grid' ? 'text-foreground' : 'text-foreground-muted hover:text-foreground',
-              )}
-            >
-              <Grid2X2 className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              aria-label="List view"
-              onClick={() => setView('list')}
-              className={cn(
-                'relative z-10 grid h-8 w-8 place-items-center rounded-control-inner transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
-                view === 'list' ? 'text-foreground' : 'text-foreground-muted hover:text-foreground',
-              )}
-            >
-              <List className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-
-        {projectsQuery.isLoading ? (
-          <div className="flex justify-center py-20">
-            <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-          </div>
-        ) : projects.length === 0 ? (
-          <div className="rounded-card border border-dashed border-border-strong py-20 text-center">
-            <FolderKanban className="mx-auto h-8 w-8 text-foreground-muted" />
-            <h2 className="mt-5 text-lg font-semibold">
-              {projects.length === 0 ? 'No projects yet' : 'No matching projects'}
-            </h2>
-            <p className="mt-2 text-sm text-foreground-secondary">
-              {projects.length === 0
-                ? 'Create your first project to get started.'
-                : 'Try another search or create something new.'}
-            </p>
-          </div>
-        ) : (
-          <motion.div
-            key={view}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.18, ease: 'easeOut' }}
-          >
-            {view === 'grid' ? (
-              <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-                {projects.map((project) => (
-                  <Link
-                    key={project.id}
-                    href={`/project/${project.id}`}
-                    className="group overflow-hidden rounded-card border border-border bg-background-subtle shadow-card transition-all hover:-translate-y-0.5 hover:border-border-strong hover:shadow-card-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40"
-                  >
-                    {/* Preview sits directly on the card surface: one surface per card. */}
-                    <div className="relative aspect-[16/9] overflow-hidden">
-                      <div className="absolute inset-5">
-                        <div className="flex gap-1.5">
-                          <i className="h-1.5 w-1.5 rounded-full bg-foreground/15" />
-                          <i className="h-1.5 w-1.5 rounded-full bg-foreground/15" />
-                          <i className="h-1.5 w-1.5 rounded-full bg-foreground/15" />
-                        </div>
-                        <div
-                          className="mt-5 h-2 w-1/3 rounded-full"
-                          style={{ background: project.accent }}
-                        />
-                        <div className="mt-3 h-2 w-3/4 rounded-full bg-foreground/10" />
-                        <div className="mt-2 h-2 w-1/2 rounded-full bg-foreground/10" />
-                      </div>
-                    </div>
-                    <div className="p-5">
-                      <div className="flex items-center gap-2">
-                        <h3 className="truncate text-sm font-semibold tracking-[-0.01em]">
-                          {project.name}
-                        </h3>
-                        <Badge
-                          variant={statusVariant[project.status]}
-                          className="shrink-0 text-[10px]"
-                        >
-                          {project.status}
-                        </Badge>
-                      </div>
-                      <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-foreground-secondary">
-                        {project.description}
-                      </p>
-                      <div className="mt-4 flex items-center gap-1.5 text-[10px] text-foreground-muted">
-                        <Clock3 className="h-3 w-3" />
-                        {relativeTime(project.lastEdited)}
-                      </div>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            ) : (
-              <div className="overflow-hidden rounded-card border border-border shadow-card">
-                {projects.map((project) => (
-                  <Link
-                    key={project.id}
-                    href={`/project/${project.id}`}
-                    className="flex items-center gap-4 border-b border-border bg-background-subtle px-5 py-4 last:border-0 hover:bg-background-muted"
-                  >
-                    <span className="h-9 w-1 rounded-full" style={{ background: project.accent }} />
-                    <div className="min-w-0 flex-1">
-                      <p className="font-medium">{project.name}</p>
-                      <p className="truncate text-xs text-foreground-secondary">
-                        {project.description}
-                      </p>
-                    </div>
-                    <Badge variant={statusVariant[project.status]}>{project.status}</Badge>
-                    <span className="hidden text-xs text-foreground-muted sm:block">
-                      {relativeTime(project.lastEdited)}
-                    </span>
-                  </Link>
-                ))}
-              </div>
-            )}
-          </motion.div>
-        )}
-        {projectsQuery.hasNextPage && !projectsQuery.isFetchingNextPage && (
-          <div className="mt-8 flex justify-center">
-            <button
-              onClick={loadMoreProjects}
-              className="rounded-control border border-border bg-background-subtle px-4 py-2 text-sm text-foreground-secondary transition-colors hover:border-border-strong hover:bg-background-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40"
-            >
-              Load more
-            </button>
-          </div>
-        )}
-        {projectsQuery.isFetchingNextPage && (
-          <div className="mt-8 flex justify-center text-sm text-foreground-muted">Loading…</div>
-        )}
-
-        <Link
-          href="/dashboard/templates"
-          className="group mt-10 flex flex-col gap-5 rounded-card border border-border bg-background-subtle p-6 shadow-card transition-colors hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40 sm:flex-row sm:items-center"
-        >
-          <span className="grid h-12 w-12 place-items-center rounded-control bg-background-muted text-foreground-secondary">
-            <Sparkles className="h-5 w-5" />
-          </span>
-          <div className="flex-1">
-            <h2 className="font-semibold">Start from a brief</h2>
-            <p className="mt-1 text-sm text-foreground-secondary">
-              Pick a pattern, name the project, and open it with the prompt ready.
-            </p>
-          </div>
-          <ArrowRight className="h-5 w-5 text-foreground-muted transition-colors group-hover:text-foreground" />
-        </Link>
-      </main>
     </div>
   );
 }
