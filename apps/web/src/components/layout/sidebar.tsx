@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useSession, signOut } from 'next-auth/react';
@@ -19,15 +19,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { isTypingTarget } from '@/lib/keyboard';
 import { NewProjectIcon, ProjectsIcon, TeamIcon, type NavIconProps } from './nav-icons';
-import {
-  Settings,
-  X,
-  PanelLeftClose,
-  PanelLeft,
-  PanelLeftOpen,
-  LogOut,
-  Ellipsis,
-} from 'lucide-react';
+import { Settings, X, PanelLeftClose, PanelLeft, LogOut, Ellipsis } from 'lucide-react';
 
 const navItems = [
   { href: '/dashboard', label: 'Projects', icon: ProjectsIcon },
@@ -42,34 +34,32 @@ function NavItem({
   label,
   icon: Icon,
   active,
-  collapsed,
+  rail,
   onClick,
 }: {
   href: string;
   label: string;
   icon: React.ComponentType<NavIconProps>;
   active: boolean;
-  collapsed: boolean;
+  rail: boolean;
   onClick: () => void;
 }) {
   return (
-    <RailTooltip label={label} enabled={collapsed}>
-      <Link
-        href={href}
-        onClick={onClick}
-        aria-current={active ? 'page' : undefined}
-        className={cn(
-          itemBase,
-          'px-2 text-sm font-medium',
-          active
-            ? 'bg-background-muted text-foreground'
-            : 'text-foreground-muted hover:bg-background-subtle hover:text-foreground',
-        )}
-      >
-        <Icon active={active} className={cn(active && 'text-primary')} />
-        <span className={fadeLabel(collapsed)}>{label}</span>
-      </Link>
-    </RailTooltip>
+    <Link
+      href={href}
+      onClick={onClick}
+      aria-current={active ? 'page' : undefined}
+      className={cn(
+        itemBase,
+        'px-2 text-sm font-medium',
+        active
+          ? 'bg-background-muted text-foreground'
+          : 'text-foreground-muted hover:bg-background-subtle hover:text-foreground',
+      )}
+    >
+      <Icon active={active} className={cn(active && 'text-primary')} />
+      <span className={fadeLabel(rail)}>{label}</span>
+    </Link>
   );
 }
 
@@ -82,24 +72,17 @@ function initials(name: string) {
   return (first.charAt(0) + last.charAt(0)).toUpperCase();
 }
 
-/**
- * Labels an item by tooltip while the sidebar is collapsed to its rail, where
- * only the icon shows. Expanded, the tooltip stays shut unless it carries a
- * keyboard hint.
- */
-function RailTooltip({
+function SidebarTooltip({
   label,
   hint,
-  enabled,
   children,
 }: {
   label: string;
   hint?: string;
-  enabled: boolean;
   children: React.ReactElement;
 }) {
   return (
-    <Tooltip open={enabled || hint ? undefined : false}>
+    <Tooltip>
       <TooltipTrigger asChild>{children}</TooltipTrigger>
       <TooltipContent
         side="right"
@@ -114,7 +97,8 @@ function RailTooltip({
 }
 
 /*
- * Collapsing animates the sidebar's width between 240px and the 56px rail.
+ * Collapsing animates the sidebar's width between 240px and the 56px rail,
+ * and hovering the rail expands it over the page until the pointer leaves.
  * Every row keeps its icon in a fixed 36px slot at the left, so the icons
  * hold still while the width changes and the labels fade and get clipped.
  * All of it is desktop only: below `md` the drawer is always full width.
@@ -125,10 +109,10 @@ const itemBase = cn(
 );
 
 /** Labels fade out quickly on collapse and back in once the width has grown. */
-function fadeLabel(collapsed: boolean) {
+function fadeLabel(rail: boolean) {
   return cn(
     'min-w-0 whitespace-nowrap transition-opacity',
-    collapsed ? 'duration-100 md:opacity-0' : 'delay-100 duration-200',
+    rail ? 'duration-100 md:opacity-0' : 'delay-100 duration-200',
   );
 }
 
@@ -200,6 +184,25 @@ function useCollapsed(defaultCollapsed: boolean) {
 
 export function Sidebar({ open, onClose, defaultCollapsed = false, className }: SidebarProps) {
   const [collapsed, toggleCollapsed] = useCollapsed(defaultCollapsed);
+  // Collapsed, the rail expands over the page while the pointer or keyboard
+  // focus is in it, after a short dwell so passing over it doesn't trigger it.
+  const [peek, setPeek] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const hoveringRef = useRef(false);
+  const peekTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const rail = collapsed && !peek;
+
+  const schedulePeek = useCallback((next: boolean, delay: number) => {
+    clearTimeout(peekTimerRef.current);
+    peekTimerRef.current = setTimeout(() => setPeek(next), delay);
+  }, []);
+  useEffect(() => () => clearTimeout(peekTimerRef.current), []);
+
+  const handleToggle = useCallback(() => {
+    clearTimeout(peekTimerRef.current);
+    setPeek(false);
+    toggleCollapsed();
+  }, [toggleCollapsed]);
   const pathname = usePathname();
   const router = useRouter();
   const { data: session } = useSession();
@@ -238,132 +241,140 @@ export function Sidebar({ open, onClose, defaultCollapsed = false, className }: 
           onClick={onClose}
         />
       )}
-      <aside
-        aria-label="Navigation"
+      {/* Holds the sidebar's place in the layout; the aside can expand past it. */}
+      <div
         className={cn(
-          'fixed inset-y-0 left-0 z-50 flex w-[240px] shrink-0 flex-col overflow-hidden border-r border-border bg-background px-2.5 pb-3 transition-[transform,width] duration-200 ease-out md:static md:translate-x-0',
-          open ? 'translate-x-0' : '-translate-x-full',
-          collapsed && 'md:w-14',
-          className,
+          'md:relative md:shrink-0 md:transition-[width] md:duration-200 md:ease-out',
+          collapsed ? 'md:w-14' : 'md:w-[240px]',
         )}
       >
-        <TooltipProvider delayDuration={300}>
-          {/*
-           * The editor lines the mark up with its 68px header; elsewhere this
-           * row shares a line with the page title.
-           */}
-          <div
-            className={cn(
-              'relative flex h-9 shrink-0 items-center',
-              defaultCollapsed ? 'mt-4' : 'mt-8 lg:mt-10',
-            )}
-          >
+        <aside
+          aria-label="Navigation"
+          onPointerEnter={(event) => {
+            if (event.pointerType !== 'mouse') return;
+            hoveringRef.current = true;
+            if (collapsed) schedulePeek(true, 120);
+          }}
+          onPointerLeave={(event) => {
+            if (event.pointerType !== 'mouse') return;
+            hoveringRef.current = false;
+            if (!menuOpen) schedulePeek(false, 150);
+          }}
+          onFocus={() => {
+            if (collapsed) schedulePeek(true, 0);
+          }}
+          onBlur={(event) => {
+            if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+            if (!hoveringRef.current && !menuOpen) schedulePeek(false, 0);
+          }}
+          className={cn(
+            'fixed inset-y-0 left-0 z-50 flex w-[240px] flex-col overflow-hidden border-r border-border bg-background px-2.5 pb-3 transition-[transform,width,box-shadow] duration-200 ease-out md:absolute md:z-30 md:translate-x-0',
+            open ? 'translate-x-0' : '-translate-x-full',
+            rail && 'md:w-14',
+            collapsed && peek && 'md:shadow-popover',
+            className,
+          )}
+        >
+          <TooltipProvider delayDuration={300}>
             {/*
-             * Collapsed, the mark doubles as the expand button and shows it on
-             * hover. It sits over the home link's mark, so the wordmark beside
-             * it can still fade out.
+             * The editor lines the mark up with its 68px header; elsewhere this
+             * row shares a line with the page title.
              */}
-            {collapsed ? (
-              <RailTooltip label="Expand sidebar" enabled>
-                <button
-                  type="button"
-                  aria-label="Expand sidebar"
-                  onClick={toggleCollapsed}
-                  className={cn(
-                    iconButton,
-                    'group absolute left-0 top-0 z-10 hidden bg-background md:flex',
-                  )}
-                >
-                  <Logo
-                    size={28}
-                    className="transition-opacity group-hover:opacity-0 group-focus-visible:opacity-0"
-                  />
-                  <PanelLeftOpen
-                    className="absolute h-[18px] w-[18px] opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
-                    strokeWidth={1.5}
-                  />
-                </button>
-              </RailTooltip>
-            ) : null}
-            <Link
-              href="/dashboard"
-              onClick={onClose}
-              aria-label="Sovereign home"
-              tabIndex={collapsed ? -1 : undefined}
-              className={cn('flex h-9 min-w-0 shrink-0 items-center rounded-item', focusRing)}
-            >
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center">
-                <Logo size={28} />
-              </span>
-              <span
-                className={cn(
-                  'ml-0.5 text-base font-semibold text-foreground',
-                  fadeLabel(collapsed),
-                )}
-              >
-                Sovereign
-              </span>
-            </Link>
-
-            <Button variant="ghost" size="icon-sm" onClick={onClose} className="ml-auto md:hidden">
-              <X className="h-4 w-4" />
-            </Button>
-            <RailTooltip label="Collapse sidebar" enabled={!collapsed}>
-              <button
-                type="button"
-                aria-label="Collapse sidebar"
-                onClick={toggleCollapsed}
-                tabIndex={collapsed ? -1 : undefined}
-                aria-hidden={collapsed || undefined}
-                className={cn(
-                  iconButton,
-                  'ml-auto hidden h-8 w-8 transition-[opacity,background-color,color] md:flex',
-                  collapsed ? 'pointer-events-none opacity-0' : 'delay-100',
-                )}
-              >
-                <PanelLeftClose className="h-[18px] w-[18px]" strokeWidth={1.5} />
-              </button>
-            </RailTooltip>
-          </div>
-
-          <RailTooltip label="New project" hint="N" enabled={collapsed}>
-            <Link
-              href="/dashboard?new=true"
-              aria-label="New project"
-              onClick={(event) => {
-                event.preventDefault();
-                onClose();
-                startNewProject();
-              }}
+            <div
               className={cn(
-                itemBase,
-                'mt-4 border border-border bg-background-subtle px-[7px] text-sm font-medium text-foreground-secondary hover:border-border-strong hover:bg-background-muted hover:text-foreground',
+                'flex h-9 shrink-0 items-center',
+                defaultCollapsed ? 'mt-4' : 'mt-8 lg:mt-10',
               )}
             >
-              <NewProjectIcon />
-              <span className={fadeLabel(collapsed)}>New project</span>
-            </Link>
-          </RailTooltip>
-
-          <nav aria-label="Primary" className="mt-3 flex flex-1 flex-col gap-0.5">
-            {navItems.map((item) => (
-              <NavItem
-                key={item.href}
-                {...item}
-                active={
-                  item.href === '/dashboard'
-                    ? pathname === '/dashboard'
-                    : pathname.startsWith(item.href)
-                }
-                collapsed={collapsed}
+              <Link
+                href="/dashboard"
                 onClick={onClose}
-              />
-            ))}
-          </nav>
+                aria-label="Sovereign home"
+                className={cn('flex h-9 min-w-0 shrink-0 items-center rounded-item', focusRing)}
+              >
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center">
+                  <Logo size={28} />
+                </span>
+                <span
+                  className={cn('ml-0.5 text-base font-semibold text-foreground', fadeLabel(rail))}
+                >
+                  Sovereign
+                </span>
+              </Link>
 
-          <div className="mt-2 border-t border-border pt-2">
-            <DropdownMenu>
-              <RailTooltip label={displayName} enabled={collapsed}>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={onClose}
+                className="ml-auto md:hidden"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+              {/* Expanded by hover, the same button pins the sidebar open. */}
+              <SidebarTooltip label={collapsed ? 'Keep sidebar open' : 'Collapse sidebar'}>
+                <button
+                  type="button"
+                  aria-label={collapsed ? 'Keep sidebar open' : 'Collapse sidebar'}
+                  onClick={handleToggle}
+                  tabIndex={rail ? -1 : undefined}
+                  className={cn(
+                    iconButton,
+                    'ml-auto hidden h-8 w-8 transition-[opacity,background-color,color] md:flex',
+                    rail ? 'pointer-events-none opacity-0' : 'delay-100',
+                  )}
+                >
+                  {collapsed ? (
+                    <PanelLeft className="h-[18px] w-[18px]" strokeWidth={1.5} />
+                  ) : (
+                    <PanelLeftClose className="h-[18px] w-[18px]" strokeWidth={1.5} />
+                  )}
+                </button>
+              </SidebarTooltip>
+            </div>
+
+            <SidebarTooltip label="New project" hint="N">
+              <Link
+                href="/dashboard?new=true"
+                aria-label="New project"
+                onClick={(event) => {
+                  event.preventDefault();
+                  onClose();
+                  startNewProject();
+                }}
+                className={cn(
+                  itemBase,
+                  'mt-4 border border-border bg-background-subtle px-[7px] text-sm font-medium text-foreground-secondary hover:border-border-strong hover:bg-background-muted hover:text-foreground',
+                )}
+              >
+                <NewProjectIcon />
+                <span className={fadeLabel(rail)}>New project</span>
+              </Link>
+            </SidebarTooltip>
+
+            <nav aria-label="Primary" className="mt-3 flex flex-1 flex-col gap-0.5">
+              {navItems.map((item) => (
+                <NavItem
+                  key={item.href}
+                  {...item}
+                  active={
+                    item.href === '/dashboard'
+                      ? pathname === '/dashboard'
+                      : pathname.startsWith(item.href)
+                  }
+                  rail={rail}
+                  onClick={onClose}
+                />
+              ))}
+            </nav>
+
+            <div className="mt-2 border-t border-border pt-2">
+              <DropdownMenu
+                onOpenChange={(next) => {
+                  setMenuOpen(next);
+                  // Closing the menu outside the sidebar collapses it again.
+                  if (!next && !hoveringRef.current) schedulePeek(false, 150);
+                }}
+              >
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
@@ -379,7 +390,7 @@ export function Sidebar({ open, onClose, defaultCollapsed = false, className }: 
                         {initials(displayName)}
                       </AvatarFallback>
                     </Avatar>
-                    <div className={cn('flex-1 leading-tight', fadeLabel(collapsed))}>
+                    <div className={cn('flex-1 leading-tight', fadeLabel(rail))}>
                       <p className="truncate text-sm font-medium text-foreground">{displayName}</p>
                       {user?.email && user.email !== displayName ? (
                         <p className="truncate text-xs text-foreground-muted">{user.email}</p>
@@ -388,17 +399,16 @@ export function Sidebar({ open, onClose, defaultCollapsed = false, className }: 
                     <Ellipsis className="mr-1 h-4 w-4 shrink-0 text-foreground-muted opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 group-data-[state=open]:opacity-100" />
                   </button>
                 </DropdownMenuTrigger>
-              </RailTooltip>
-              <AccountMenuContent
-                name={user?.name ?? 'Your account'}
-                email={user?.email ?? ''}
-                side={collapsed ? 'right' : 'top'}
-                onNavigate={onClose}
-              />
-            </DropdownMenu>
-          </div>
-        </TooltipProvider>
-      </aside>
+                <AccountMenuContent
+                  name={user?.name ?? 'Your account'}
+                  email={user?.email ?? ''}
+                  onNavigate={onClose}
+                />
+              </DropdownMenu>
+            </div>
+          </TooltipProvider>
+        </aside>
+      </div>
     </>
   );
 }
@@ -406,22 +416,15 @@ export function Sidebar({ open, onClose, defaultCollapsed = false, className }: 
 function AccountMenuContent({
   name,
   email,
-  side,
   onNavigate,
 }: {
   name: string;
   email: string;
-  side: 'top' | 'right';
   /** Closes the mobile drawer when a link in the menu is followed. */
   onNavigate?: () => void;
 }) {
   return (
-    <DropdownMenuContent
-      side={side}
-      align={side === 'top' ? 'start' : 'end'}
-      sideOffset={8}
-      className="w-[224px]"
-    >
+    <DropdownMenuContent side="top" align="start" sideOffset={8} className="w-[224px]">
       <DropdownMenuLabel className="px-2 py-1.5 font-normal">
         <div className="flex flex-col">
           <span className="truncate text-sm font-medium text-foreground">{name}</span>
