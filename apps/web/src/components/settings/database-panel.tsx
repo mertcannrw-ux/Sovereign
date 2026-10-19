@@ -439,7 +439,7 @@ export function DatabasePanel({ projectId }: DatabasePanelProps) {
                   </thead>
                   <tbody>
                     {tableSchema.columns.map((col) => (
-                      <tr key={col.column_name} className="border-b border-border/50">
+                      <tr key={col.column_name} className="border-b border-border">
                         <td className="py-2 pr-3 font-mono text-xs text-foreground">
                           {col.column_name}
                         </td>
@@ -548,7 +548,7 @@ export function DatabasePanel({ projectId }: DatabasePanelProps) {
                         <tr
                           key={rowIdx}
                           className={cn(
-                            'border-b border-border/50',
+                            'border-b border-border',
                             rowIdx % 2 === 0 ? 'bg-background' : 'bg-background-subtle',
                           )}
                         >

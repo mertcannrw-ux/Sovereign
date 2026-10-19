@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { cn } from '@app-builder/ui/utils';
-import { Logo } from '@/components/landing/logo';
+import { Logo } from '@/components/brand/logo';
 import {
   COLUMN,
   Eyebrow,

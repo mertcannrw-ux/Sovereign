@@ -20,22 +20,13 @@ import {
 import { trpc } from '@/lib/trpc/client';
 import { motion } from 'framer-motion';
 import { cn } from '@app-builder/ui/utils';
+import { projectAccents } from '@/styles/tokens';
 
-// Accent color palette for project cards
-const ACCENTS = [
-  '#B8FF5A',
-  '#8BC7FF',
-  '#D6A7FF',
-  '#FFBF7A',
-  '#FF8A8A',
-  '#8AFFB8',
-  '#FFD700',
-  '#FF8AD6',
-];
+// Accent colour for each project card, from the `accent-project-*` tokens.
 function accentFromName(name: string): string {
   let hash = 0;
   for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  return ACCENTS[Math.abs(hash) % ACCENTS.length] ?? ACCENTS[0]!;
+  return projectAccents[Math.abs(hash) % projectAccents.length] ?? projectAccents[0]!;
 }
 function relativeTime(date: Date) {
   const min = Math.floor((Date.now() - date.getTime()) / 60000);
@@ -180,7 +171,7 @@ function DashboardContent() {
           </p>
           <button
             onClick={() => projectsQuery.refetch()}
-            className="rounded-md bg-primary px-4 py-2 text-primary-foreground hover:bg-primary-hover"
+            className="rounded-control bg-primary px-4 py-2 text-primary-foreground hover:bg-primary-hover"
           >
             Retry
           </button>
@@ -194,11 +185,11 @@ function DashboardContent() {
       <header className="border-b border-border">
         <div className="mx-auto max-w-[1400px] px-5 py-8 sm:px-8 lg:py-10">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-foreground-muted">
               Workspace
             </p>
             <h1 className="mt-3 text-3xl font-semibold tracking-[-0.04em] sm:text-4xl">Projects</h1>
-            <p className="mt-2 text-sm text-foreground-muted">
+            <p className="mt-2 text-sm text-foreground-secondary">
               Welcome back, {session.user?.name?.split(' ')[0] ?? 'builder'}. Pick up where you left
               off.
             </p>
@@ -235,7 +226,7 @@ function DashboardContent() {
             <div className="space-y-2">
               <label className="text-sm font-medium">What are you building?</label>
               <textarea
-                className="min-h-32 w-full resize-none rounded-lg border border-border bg-background-muted px-3.5 py-3 text-sm text-foreground placeholder:text-foreground-muted focus:outline-none focus:ring-2 focus:ring-border-focus/40"
+                className="min-h-32 w-full resize-none rounded-control border border-border bg-background-muted px-3.5 py-3 text-sm text-foreground shadow-card transition-colors placeholder:text-foreground-muted hover:border-border-strong focus:border-border-focus focus:outline-none focus:ring-2 focus:ring-border-focus/30"
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 placeholder="e.g. A task manager with drag-and-drop kanban boards"
@@ -289,7 +280,10 @@ function DashboardContent() {
               'Since your last edit',
             ],
           ].map(([label, value, detail]) => (
-            <div key={label} className="rounded-xl border border-border bg-background-subtle p-5">
+            <div
+              key={label}
+              className="rounded-card border border-border bg-background-subtle p-5 shadow-card"
+            >
               <p className="text-xs text-foreground-muted">{label}</p>
               <p className="mt-3 text-2xl font-semibold tracking-[-0.04em]">{value}</p>
               <p className="mt-1 text-xs text-foreground-muted">{detail}</p>
@@ -306,10 +300,10 @@ function DashboardContent() {
               className="pl-10"
             />
           </div>
-          <div className="relative flex items-center gap-1 rounded-lg border border-border bg-background-subtle p-1">
+          <div className="relative flex items-center gap-1 rounded-control border border-border bg-background-subtle p-1">
             <div
               aria-hidden="true"
-              className="duration-280 pointer-events-none absolute bottom-1 top-1 w-8 rounded-md bg-background-muted shadow-sm transition-all ease-[cubic-bezier(0.16,1,0.3,1)]"
+              className="duration-280 pointer-events-none absolute bottom-1 top-1 w-8 rounded-control-inner bg-background-muted shadow-card transition-all ease-[cubic-bezier(0.16,1,0.3,1)]"
               style={{
                 left: `${view === 'grid' ? 4 : 40}px`,
               }}
@@ -319,7 +313,7 @@ function DashboardContent() {
               aria-label="Grid view"
               onClick={() => setView('grid')}
               className={cn(
-                'relative z-10 grid h-8 w-8 place-items-center rounded-md transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
+                'relative z-10 grid h-8 w-8 place-items-center rounded-control-inner transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
                 view === 'grid' ? 'text-foreground' : 'text-foreground-muted hover:text-foreground',
               )}
             >
@@ -330,7 +324,7 @@ function DashboardContent() {
               aria-label="List view"
               onClick={() => setView('list')}
               className={cn(
-                'relative z-10 grid h-8 w-8 place-items-center rounded-md transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
+                'relative z-10 grid h-8 w-8 place-items-center rounded-control-inner transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
                 view === 'list' ? 'text-foreground' : 'text-foreground-muted hover:text-foreground',
               )}
             >
@@ -344,12 +338,12 @@ function DashboardContent() {
             <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           </div>
         ) : projects.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-border py-20 text-center">
+          <div className="rounded-card border border-dashed border-border-strong py-20 text-center">
             <FolderKanban className="mx-auto h-8 w-8 text-foreground-muted" />
             <h2 className="mt-5 text-lg font-semibold">
               {projects.length === 0 ? 'No projects yet' : 'No matching projects'}
             </h2>
-            <p className="mt-2 text-sm text-foreground-muted">
+            <p className="mt-2 text-sm text-foreground-secondary">
               {projects.length === 0
                 ? 'Create your first project to get started.'
                 : 'Try another search or create something new.'}
@@ -368,21 +362,22 @@ function DashboardContent() {
                   <Link
                     key={project.id}
                     href={`/project/${project.id}`}
-                    className="group overflow-hidden rounded-2xl border border-border bg-background-subtle transition-all hover:-translate-y-0.5 hover:border-border-strong hover:shadow-[0_24px_60px_rgba(0,0,0,.3)]"
+                    className="group overflow-hidden rounded-card border border-border bg-background-subtle shadow-card transition-all hover:-translate-y-0.5 hover:border-border-strong hover:shadow-card-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40"
                   >
-                    <div className="relative aspect-[16/9] overflow-hidden bg-background-subtle">
-                      <div className="absolute inset-5 rounded-xl border border-white/[0.08] bg-background-subtle p-4">
+                    {/* Preview sits directly on the card surface: one surface per card. */}
+                    <div className="relative aspect-[16/9] overflow-hidden">
+                      <div className="absolute inset-5">
                         <div className="flex gap-1.5">
-                          <i className="h-1.5 w-1.5 rounded-full bg-white/15" />
-                          <i className="h-1.5 w-1.5 rounded-full bg-white/15" />
-                          <i className="h-1.5 w-1.5 rounded-full bg-white/15" />
+                          <i className="h-1.5 w-1.5 rounded-full bg-foreground/15" />
+                          <i className="h-1.5 w-1.5 rounded-full bg-foreground/15" />
+                          <i className="h-1.5 w-1.5 rounded-full bg-foreground/15" />
                         </div>
                         <div
                           className="mt-5 h-2 w-1/3 rounded-full"
                           style={{ background: project.accent }}
                         />
-                        <div className="mt-3 h-2 w-3/4 rounded-full bg-white/10" />
-                        <div className="mt-2 h-2 w-1/2 rounded-full bg-white/10" />
+                        <div className="mt-3 h-2 w-3/4 rounded-full bg-foreground/10" />
+                        <div className="mt-2 h-2 w-1/2 rounded-full bg-foreground/10" />
                       </div>
                     </div>
                     <div className="p-5">
@@ -397,7 +392,7 @@ function DashboardContent() {
                           {project.status}
                         </Badge>
                       </div>
-                      <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-foreground-muted">
+                      <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-foreground-secondary">
                         {project.description}
                       </p>
                       <div className="mt-4 flex items-center gap-1.5 text-[10px] text-foreground-muted">
@@ -409,7 +404,7 @@ function DashboardContent() {
                 ))}
               </div>
             ) : (
-              <div className="overflow-hidden rounded-xl border border-border">
+              <div className="overflow-hidden rounded-card border border-border shadow-card">
                 {projects.map((project) => (
                   <Link
                     key={project.id}
@@ -419,7 +414,7 @@ function DashboardContent() {
                     <span className="h-9 w-1 rounded-full" style={{ background: project.accent }} />
                     <div className="min-w-0 flex-1">
                       <p className="font-medium">{project.name}</p>
-                      <p className="truncate text-xs text-foreground-muted">
+                      <p className="truncate text-xs text-foreground-secondary">
                         {project.description}
                       </p>
                     </div>
@@ -437,7 +432,7 @@ function DashboardContent() {
           <div className="mt-8 flex justify-center">
             <button
               onClick={loadMoreProjects}
-              className="rounded-lg border border-border bg-background-subtle px-4 py-2 text-sm text-foreground-secondary transition-colors hover:border-border-strong hover:text-foreground"
+              className="rounded-control border border-border bg-background-subtle px-4 py-2 text-sm text-foreground-secondary transition-colors hover:border-border-strong hover:bg-background-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40"
             >
               Load more
             </button>
@@ -449,18 +444,18 @@ function DashboardContent() {
 
         <Link
           href="/dashboard/templates"
-          className="mt-10 flex flex-col gap-5 rounded-2xl border border-border bg-background-subtle p-6 transition-colors hover:border-border-strong sm:flex-row sm:items-center"
+          className="group mt-10 flex flex-col gap-5 rounded-card border border-border bg-background-subtle p-6 shadow-card transition-colors hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40 sm:flex-row sm:items-center"
         >
-          <span className="grid h-12 w-12 place-items-center rounded-xl bg-primary/10 text-primary">
+          <span className="grid h-12 w-12 place-items-center rounded-control bg-background-muted text-foreground-secondary">
             <Sparkles className="h-5 w-5" />
           </span>
           <div className="flex-1">
             <h2 className="font-semibold">Start from a brief</h2>
-            <p className="mt-1 text-sm text-foreground-muted">
+            <p className="mt-1 text-sm text-foreground-secondary">
               Pick a pattern, name the project, and open it with the prompt ready.
             </p>
           </div>
-          <ArrowRight className="h-5 w-5 text-foreground-muted" />
+          <ArrowRight className="h-5 w-5 text-foreground-muted transition-colors group-hover:text-foreground" />
         </Link>
       </main>
     </div>

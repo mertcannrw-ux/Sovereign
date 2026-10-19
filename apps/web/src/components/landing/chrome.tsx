@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { Menu, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { cn } from '@app-builder/ui/utils';
-import { Logo } from './logo';
+import { Logo } from '@/components/brand/logo';
 import { COLUMN, GUTTER } from './primitives';
 
 const NAV = [

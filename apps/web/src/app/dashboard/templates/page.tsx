@@ -52,24 +52,34 @@ import { TemplateSketch } from './template-sketch';
 const PROJECT_NAME_LIMIT = 100;
 
 /**
- * Per-category illustration colours. Sanctioned in design.md - not app chrome.
+ * Per-category sketch colours, from the `accent-*` tokens. The sketch surface
+ * is the raised card surface with a faint wash of the accent, so previews stay
+ * in the app palette while each category keeps its own colour.
  */
 const categoryMeta: Record<
   Exclude<TemplateCategory, 'All'>,
-  { icon: ComponentType<{ className?: string }>; accent: string; surface: string }
+  { icon: ComponentType<{ className?: string }>; token: string }
 > = {
-  Productivity: { icon: LayoutGrid, accent: '#B8FF5A', surface: '#1A2410' },
-  'E-commerce': { icon: ShoppingCart, accent: '#FFBF7A', surface: '#26170C' },
-  SaaS: { icon: Cloud, accent: '#8BC7FF', surface: '#0C1B26' },
-  Content: { icon: FileText, accent: '#D6A7FF', surface: '#201126' },
-  'Internal Tools': { icon: Wrench, accent: '#FFE06A', surface: '#251F09' },
-  'Health & Fitness': { icon: Heart, accent: '#FF8F9E', surface: '#270D12' },
-  Education: { icon: GraduationCap, accent: '#77E0D3', surface: '#092320' },
+  Productivity: { icon: LayoutGrid, token: 'productivity' },
+  'E-commerce': { icon: ShoppingCart, token: 'commerce' },
+  SaaS: { icon: Cloud, token: 'saas' },
+  Content: { icon: FileText, token: 'content' },
+  'Internal Tools': { icon: Wrench, token: 'tools' },
+  'Health & Fitness': { icon: Heart, token: 'health' },
+  Education: { icon: GraduationCap, token: 'education' },
 };
 
 function paletteFor(category: string) {
-  if (category in categoryMeta) return categoryMeta[category as Exclude<TemplateCategory, 'All'>];
-  return categoryMeta.Productivity;
+  const meta =
+    category in categoryMeta
+      ? categoryMeta[category as Exclude<TemplateCategory, 'All'>]
+      : categoryMeta.Productivity;
+  const accent = `var(--accent-${meta.token})`;
+  return {
+    icon: meta.icon,
+    accent,
+    surface: `color-mix(in srgb, ${accent} 6%, var(--background-subtle))`,
+  };
 }
 
 function catalogHref(state: {
@@ -282,13 +292,13 @@ function TemplatesCatalog() {
       <header className="border-b border-border">
         <div className="mx-auto flex max-w-[1400px] flex-col gap-6 px-5 py-8 sm:px-8 lg:flex-row lg:items-end lg:justify-between lg:py-10">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-foreground-muted">
               Workspace
             </p>
             <h1 className="mt-3 text-3xl font-semibold tracking-[-0.04em] sm:text-4xl">
               Templates
             </h1>
-            <p className="mt-2 max-w-xl text-sm leading-6 text-foreground-muted">
+            <p className="mt-2 max-w-xl text-sm leading-6 text-foreground-secondary">
               Choose a pattern and name the project. The brief waits in the prompt - nothing is
               generated until you send it.
             </p>
@@ -318,12 +328,12 @@ function TemplatesCatalog() {
                 type="button"
                 aria-label="Clear search"
                 onClick={() => setSearch('')}
-                className="absolute right-1.5 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-md text-foreground-muted hover:bg-background hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40"
+                className="absolute right-1.5 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-control-inner text-foreground-muted hover:bg-background-subtle hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40"
               >
                 <X className="h-4 w-4" />
               </button>
             ) : (
-              <kbd className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 rounded border border-border px-1.5 py-0.5 text-[10px] font-medium text-foreground-muted sm:block">
+              <kbd className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 rounded-control-inner border border-border-strong px-1.5 py-0.5 text-[10px] font-medium text-foreground-muted sm:block">
                 /
               </kbd>
             )}
@@ -347,13 +357,13 @@ function TemplatesCatalog() {
                 scroll={false}
                 aria-current={active ? 'page' : undefined}
                 className={cn(
-                  'flex h-10 items-center gap-2.5 rounded-lg px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
+                  'flex h-10 items-center gap-2.5 rounded-item px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
                   active
-                    ? 'bg-primary-light font-medium text-foreground'
+                    ? 'bg-background-muted font-medium text-foreground'
                     : 'text-foreground-secondary hover:bg-background-muted hover:text-foreground',
                 )}
               >
-                <Icon className="h-4 w-4 shrink-0" />
+                <Icon className={cn('h-4 w-4 shrink-0', active && 'text-primary')} />
                 <span className="min-w-0 flex-1 truncate">{item}</span>
                 <span className="text-xs tabular-nums text-foreground-muted">{count}</span>
               </Link>
@@ -371,11 +381,11 @@ function TemplatesCatalog() {
               <div
                 role="group"
                 aria-label="Sort templates"
-                className="relative flex rounded-lg border border-border bg-background-subtle p-1"
+                className="relative flex rounded-control border border-border bg-background-subtle p-1"
               >
                 <div
                   aria-hidden="true"
-                  className="duration-280 pointer-events-none absolute bottom-1 top-1 rounded-md bg-background-muted shadow-sm transition-all ease-[cubic-bezier(0.16,1,0.3,1)]"
+                  className="duration-280 pointer-events-none absolute bottom-1 top-1 rounded-control-inner bg-background-muted shadow-card transition-all ease-[cubic-bezier(0.16,1,0.3,1)]"
                   style={{
                     left: `${sortPill.left}px`,
                     width: `${sortPill.width}px`,
@@ -405,7 +415,7 @@ function TemplatesCatalog() {
                         router.replace(href({ sort: key, template: null }), { scroll: false });
                       }}
                       className={cn(
-                        'relative z-10 h-8 rounded-md px-3 text-xs font-semibold transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
+                        'relative z-10 h-8 rounded-control-inner px-3 text-xs font-semibold transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
                         isActive
                           ? 'text-foreground'
                           : 'text-foreground-muted hover:text-foreground',
@@ -416,10 +426,10 @@ function TemplatesCatalog() {
                   );
                 })}
               </div>
-              <div className="relative flex items-center gap-1 rounded-lg border border-border bg-background-subtle p-1">
+              <div className="relative flex items-center gap-1 rounded-control border border-border bg-background-subtle p-1">
                 <div
                   aria-hidden="true"
-                  className="duration-280 pointer-events-none absolute bottom-1 top-1 w-8 rounded-md bg-background-muted shadow-sm transition-all ease-[cubic-bezier(0.16,1,0.3,1)]"
+                  className="duration-280 pointer-events-none absolute bottom-1 top-1 w-8 rounded-control-inner bg-background-muted shadow-card transition-all ease-[cubic-bezier(0.16,1,0.3,1)]"
                   style={{
                     left: `${view === 'grid' ? 4 : 40}px`,
                   }}
@@ -433,7 +443,7 @@ function TemplatesCatalog() {
                     router.replace(href({ view: 'grid' }), { scroll: false });
                   }}
                   className={cn(
-                    'relative z-10 grid h-8 w-8 place-items-center rounded-md transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
+                    'relative z-10 grid h-8 w-8 place-items-center rounded-control-inner transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
                     view === 'grid'
                       ? 'text-foreground'
                       : 'text-foreground-muted hover:text-foreground',
@@ -450,7 +460,7 @@ function TemplatesCatalog() {
                     router.replace(href({ view: 'list' }), { scroll: false });
                   }}
                   className={cn(
-                    'relative z-10 grid h-8 w-8 place-items-center rounded-md transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
+                    'relative z-10 grid h-8 w-8 place-items-center rounded-control-inner transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
                     view === 'list'
                       ? 'text-foreground'
                       : 'text-foreground-muted hover:text-foreground',
@@ -463,10 +473,10 @@ function TemplatesCatalog() {
           </div>
 
           {filtered.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border px-6 py-16 text-center">
+            <div className="rounded-card border border-dashed border-border-strong px-6 py-16 text-center">
               <Search className="mx-auto h-8 w-8 text-foreground-muted" />
               <h2 className="mt-4 font-semibold">No templates match</h2>
-              <p className="mt-2 text-sm text-foreground-muted">
+              <p className="mt-2 text-sm text-foreground-secondary">
                 {search.trim()
                   ? `Nothing for “${search.trim()}”${category !== 'All' ? ` in ${category}` : ''}.`
                   : `Nothing in ${category}.`}
@@ -513,7 +523,7 @@ function TemplatesCatalog() {
               transition={{ duration: 0.18, ease: 'easeOut' }}
             >
               {view === 'list' ? (
-                <div className="overflow-hidden rounded-xl border border-border">
+                <div className="overflow-hidden rounded-card border border-border shadow-card">
                   {filtered.map((template) => (
                     <TemplateRow
                       key={template.id}
@@ -583,7 +593,7 @@ function TemplatesCatalog() {
                 <DialogHeader>
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge variant="secondary">{selected.category}</Badge>
-                    {selected.featured ? <Badge>Featured</Badge> : null}
+                    {selected.featured ? <Badge variant="outline">Featured</Badge> : null}
                   </div>
                   <DialogTitle className="mt-3 text-2xl tracking-[-0.03em]">
                     {selected.name}
@@ -597,7 +607,7 @@ function TemplatesCatalog() {
                     layout={selectedGuide.layout}
                     accent={paletteFor(selected.category).accent}
                     surface={paletteFor(selected.category).surface}
-                    className="aspect-[16/10] w-full rounded-xl"
+                    className="aspect-[16/10] w-full rounded-control"
                   />
                   <p className="mt-3 text-xs leading-5 text-foreground-muted">
                     Sketch of the pattern, not a live preview.
@@ -615,7 +625,7 @@ function TemplatesCatalog() {
                         className="flex items-start gap-2 text-sm text-foreground-secondary"
                       >
                         <Check
-                          className="mt-0.5 h-4 w-4 shrink-0 text-primary"
+                          className="mt-0.5 h-4 w-4 shrink-0 text-foreground-muted"
                           aria-hidden="true"
                         />
                         {item}
@@ -669,7 +679,7 @@ function TemplatesCatalog() {
                           value={orgId}
                           disabled={creating}
                           onChange={(event) => setPickedOrgId(event.target.value)}
-                          className="flex h-11 w-full rounded-lg border border-border bg-background-muted px-3.5 text-sm text-foreground focus-visible:border-border-focus focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/30"
+                          className="flex h-11 w-full rounded-control border border-border bg-background-muted px-3.5 text-sm text-foreground shadow-card transition-colors hover:border-border-strong focus-visible:border-border-focus focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/30"
                         >
                           {orgs.map((org: { id: string; name: string }) => (
                             <option key={org.id} value={org.id}>
@@ -736,7 +746,7 @@ function TemplateCard({ template, href }: { template: Template; href: string }) 
     <Link
       href={href}
       scroll={false}
-      className="group flex flex-col overflow-hidden rounded-2xl border border-border bg-background-subtle text-left transition-colors hover:border-border-strong hover:shadow-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40"
+      className="group flex flex-col overflow-hidden rounded-card border border-border bg-background-subtle text-left shadow-card transition-all hover:border-border-strong hover:shadow-card-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40"
     >
       <TemplateSketch
         layout={guide.layout}
@@ -747,12 +757,12 @@ function TemplateCard({ template, href }: { template: Template; href: string }) 
       <div className="flex flex-1 flex-col p-5">
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="secondary">{template.category}</Badge>
-          {template.featured ? <Badge>Featured</Badge> : null}
+          {template.featured ? <Badge variant="outline">Featured</Badge> : null}
         </div>
         <h2 className="mt-3 truncate text-base font-semibold tracking-[-0.02em]">
           {template.name}
         </h2>
-        <p className="mt-1.5 line-clamp-2 flex-1 text-sm leading-6 text-foreground-muted">
+        <p className="mt-1.5 line-clamp-2 flex-1 text-sm leading-6 text-foreground-secondary">
           {template.description}
         </p>
         <span className="mt-4 inline-flex items-center text-xs font-semibold text-foreground-secondary group-hover:text-foreground">
@@ -778,7 +788,7 @@ function TemplateRow({ template, href }: { template: Template; href: string }) {
         layout={guide.layout}
         accent={meta.accent}
         surface={meta.surface}
-        className="hidden h-14 w-24 shrink-0 rounded-lg sm:block"
+        className="hidden h-14 w-24 shrink-0 rounded-item sm:block"
       />
       <span
         className="h-9 w-1 shrink-0 rounded-full sm:hidden"
@@ -787,7 +797,11 @@ function TemplateRow({ template, href }: { template: Template; href: string }) {
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-2">
           <span className="truncate font-medium">{template.name}</span>
-          {template.featured ? <Badge className="shrink-0">Featured</Badge> : null}
+          {template.featured ? (
+            <Badge variant="outline" className="shrink-0">
+              Featured
+            </Badge>
+          ) : null}
         </span>
         <span className="mt-0.5 block truncate text-xs text-foreground-muted">
           {template.category}
