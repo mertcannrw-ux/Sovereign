@@ -44,6 +44,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { trpc } from '@/lib/trpc/client';
+import { isTypingTarget } from '@/lib/keyboard';
 import { motion } from 'framer-motion';
 import { cn } from '@app-builder/ui/utils';
 import { templateGuides, templates } from '@/data/templates';
@@ -74,14 +75,6 @@ const examplePrompts = [
 function templateBrief(templateId: string): string {
   const template = templates.find((item) => item.id === templateId);
   return templateGuides[templateId]?.brief ?? template?.description ?? '';
-}
-
-/** Whether a keystroke is going into a text field rather than the page. */
-function isTypingTarget(target: EventTarget | null): boolean {
-  return (
-    target instanceof HTMLElement &&
-    (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
-  );
 }
 
 function relativeTime(date: Date) {

@@ -1,5 +1,6 @@
 'use client';
 
+import { useCallback, useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useSession, signOut } from 'next-auth/react';
@@ -15,6 +16,8 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { isTypingTarget } from '@/lib/keyboard';
 import {
   LayoutDashboard,
   Settings,
@@ -25,12 +28,57 @@ import {
   LogOut,
   Plus,
   Ellipsis,
+  type LucideIcon,
 } from 'lucide-react';
 
 const navItems = [
   { href: '/dashboard', label: 'Projects', icon: LayoutDashboard },
   { href: '/dashboard/team', label: 'Team', icon: Users },
 ];
+
+const focusRing =
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40';
+
+function NavItem({
+  href,
+  label,
+  icon: Icon,
+  active,
+  onClick,
+}: {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Link
+      href={href}
+      onClick={onClick}
+      aria-current={active ? 'page' : undefined}
+      className={cn(
+        'flex h-9 items-center gap-2.5 rounded-item px-2 text-sm font-medium transition-colors',
+        focusRing,
+        active
+          ? 'bg-background-muted text-foreground'
+          : 'text-foreground-muted hover:bg-background-subtle hover:text-foreground',
+      )}
+    >
+      <Icon className={cn('h-[18px] w-[18px] shrink-0', active && 'text-primary')} />
+      {label}
+    </Link>
+  );
+}
+
+/** Up to two initials: "Ada Lovelace" -> "AL", "ada@x.dev" -> "A". */
+function initials(name: string) {
+  const words = name.split(/\s+/).filter(Boolean);
+  const first = words[0] ?? 'U';
+  const last = words.at(-1) ?? '';
+  if (name.includes('@') || words.length < 2) return first.charAt(0).toUpperCase();
+  return (first.charAt(0) + last.charAt(0)).toUpperCase();
+}
 
 interface SidebarProps {
   open: boolean;
@@ -43,6 +91,30 @@ export function Sidebar({ open, onClose, className }: SidebarProps) {
   const router = useRouter();
   const { data: session } = useSession();
   const user = session?.user;
+  const displayName = user?.name ?? user?.email ?? 'Your account';
+
+  // The Projects page's prompt box is the project creator: focus it in place,
+  // or navigate there and let the page focus it once it mounts.
+  const startNewProject = useCallback(() => {
+    if (pathname === '/dashboard') {
+      window.dispatchEvent(new CustomEvent('open-new-project'));
+    } else {
+      router.push('/dashboard?new=true');
+    }
+  }, [pathname, router]);
+
+  // "N" starts a new project unless something else has the keyboard.
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== 'n' || event.defaultPrevented || event.repeat) return;
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      if (isTypingTarget(event.target) || document.querySelector('[role="dialog"]')) return;
+      event.preventDefault();
+      startNewProject();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [startNewProject]);
 
   return (
     <>
@@ -55,90 +127,101 @@ export function Sidebar({ open, onClose, className }: SidebarProps) {
       )}
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-50 flex w-[256px] shrink-0 flex-col border-r border-border bg-background-subtle transition-transform duration-200 md:static md:translate-x-0',
+          'fixed inset-y-0 left-0 z-50 flex w-[240px] shrink-0 flex-col border-r border-border bg-background px-3 pb-3 transition-transform duration-200 md:static md:translate-x-0',
           open ? 'translate-x-0' : '-translate-x-full',
           className,
         )}
       >
-        <div className="flex h-20 items-center justify-between px-5">
-          <Link
-            href="/dashboard"
-            className="rounded-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40"
-            onClick={onClose}
-          >
-            <Logo size="lg" />
+        {/* Same top offset and height as the Projects title row, so they share a line. */}
+        <div className="mt-8 flex h-9 shrink-0 items-center justify-between px-2 lg:mt-10">
+          <Link href="/dashboard" className={cn('rounded-item', focusRing)} onClick={onClose}>
+            <Logo size="nav" />
           </Link>
           <Button variant="ghost" size="icon-sm" onClick={onClose} className="md:hidden">
             <X className="h-4 w-4" />
           </Button>
         </div>
 
-        <div className="px-3 pt-4">
-          <Button className="w-full justify-start gap-2" asChild>
-            <Link
-              href="/dashboard?new=true"
-              onClick={() => {
-                onClose();
-                if (pathname === '/dashboard') {
-                  window.dispatchEvent(new CustomEvent('open-new-project'));
-                }
-              }}
-            >
-              <Plus className="h-4 w-4" />
-              New project
-            </Link>
-          </Button>
-        </div>
-
-        <nav className="flex-1 space-y-1 px-3 py-6">
-          {navItems.map((item) => {
-            const isActive =
-              item.href === '/dashboard'
-                ? pathname === '/dashboard'
-                : pathname.startsWith(item.href);
-            return (
+        <TooltipProvider delayDuration={400}>
+          <Tooltip>
+            <TooltipTrigger asChild>
               <Link
-                key={item.href}
-                href={item.href}
-                onClick={onClose}
+                href="/dashboard?new=true"
+                onClick={(event) => {
+                  event.preventDefault();
+                  onClose();
+                  startNewProject();
+                }}
                 className={cn(
-                  'flex h-10 items-center gap-3 rounded-item px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
-                  isActive
-                    ? 'bg-background-muted text-foreground'
-                    : 'text-foreground-secondary hover:bg-background-muted hover:text-foreground',
+                  'mt-4 flex h-9 shrink-0 items-center gap-2 rounded-item border border-border bg-background-subtle px-2 text-sm font-medium text-foreground-secondary transition-colors hover:border-border-strong hover:bg-background-muted hover:text-foreground',
+                  focusRing,
                 )}
               >
-                <item.icon className={cn('h-4 w-4 shrink-0', isActive && 'text-primary')} />
-                {item.label}
+                <Plus className="h-4 w-4 shrink-0" />
+                New project
               </Link>
-            );
-          })}
+            </TooltipTrigger>
+            <TooltipContent
+              side="right"
+              sideOffset={8}
+              className="flex items-center gap-3 shadow-none"
+            >
+              New project
+              <kbd className="font-sans text-foreground-muted">N</kbd>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+
+        <nav className="mt-3 flex flex-1 flex-col gap-0.5">
+          {navItems.map((item) => (
+            <NavItem
+              key={item.href}
+              {...item}
+              active={
+                item.href === '/dashboard'
+                  ? pathname === '/dashboard'
+                  : pathname.startsWith(item.href)
+              }
+              onClick={onClose}
+            />
+          ))}
         </nav>
 
-        <div className="border-t border-border p-3">
+        <NavItem
+          href="/settings"
+          label="Settings"
+          icon={Settings}
+          active={pathname.startsWith('/settings')}
+          onClick={onClose}
+        />
+
+        <div className="mt-2 border-t border-border pt-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
                 aria-label="Account menu"
-                className="flex w-full items-center gap-3 rounded-item p-2 text-left transition-colors hover:bg-background-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40 data-[state=open]:bg-background-muted"
+                className={cn(
+                  'group flex h-11 w-full items-center gap-2 rounded-item px-2 text-left transition-colors hover:bg-background-subtle data-[state=open]:bg-background-subtle',
+                  focusRing,
+                )}
               >
-                <Avatar className="h-9 w-9 border border-border">
-                  {user?.image ? <AvatarImage src={user.image} alt={user?.name ?? 'User'} /> : null}
-                  <AvatarFallback className="bg-background-muted text-xs text-foreground-secondary">
-                    {(user?.name ?? user?.email ?? 'U').charAt(0).toUpperCase()}
+                <Avatar className="h-7 w-7">
+                  {user?.image ? <AvatarImage src={user.image} alt={displayName} /> : null}
+                  <AvatarFallback className="bg-background-muted text-[11px] font-medium text-foreground-secondary">
+                    {initials(displayName)}
                   </AvatarFallback>
                 </Avatar>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-foreground">
-                    {user?.name ?? 'Your account'}
-                  </p>
-                  <p className="truncate text-xs text-foreground-muted">{user?.email ?? ''}</p>
+                <div className="min-w-0 flex-1 leading-tight">
+                  <p className="truncate text-sm font-medium text-foreground">{displayName}</p>
+                  {user?.email && user.email !== displayName ? (
+                    <p className="truncate text-xs text-foreground-muted">{user.email}</p>
+                  ) : null}
                 </div>
-                <Ellipsis className="h-4 w-4 shrink-0 text-foreground-muted" />
+                <Ellipsis className="h-4 w-4 shrink-0 text-foreground-muted opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 group-data-[state=open]:opacity-100" />
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent side="top" align="start" sideOffset={8} className="w-[232px]">
+            <DropdownMenuContent side="top" align="start" sideOffset={8} className="w-[224px]">
               <DropdownMenuLabel className="px-2 py-1.5 font-normal">
                 <div className="flex flex-col">
                   <span className="truncate text-sm font-medium text-foreground">
@@ -149,16 +232,6 @@ export function Sidebar({ open, onClose, className }: SidebarProps) {
                   </span>
                 </div>
               </DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={() => {
-                  onClose();
-                  router.push('/settings');
-                }}
-              >
-                <Settings className="text-foreground-muted" />
-                Settings
-              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => signOut({ callbackUrl: '/' })}>
                 <LogOut className="text-foreground-muted" />
