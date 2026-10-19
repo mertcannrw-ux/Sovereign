@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { ArrowRight, MousePointerClick, Sparkles } from 'lucide-react';
-import { TemplateSketch } from '@/app/dashboard/templates/template-sketch';
+import { TemplateSketch } from '@/components/templates/template-sketch';
 import { templateCategories, templateGuides, templates } from '@/data/templates';
 import { Section, SectionHeading } from '../primitives';
 import { VisualEditorFilm } from '../demo/films';

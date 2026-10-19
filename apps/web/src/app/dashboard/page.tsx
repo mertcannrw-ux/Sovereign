@@ -46,28 +46,19 @@ import {
 import { trpc } from '@/lib/trpc/client';
 import { motion } from 'framer-motion';
 import { cn } from '@app-builder/ui/utils';
+import { templateGuides, templates } from '@/data/templates';
 import { DotGrid } from './dot-grid';
+import { TemplatePicker } from './template-picker';
 
 // Matches the `description` limit on projects.create, where the prompt is stored.
 const PROMPT_LIMIT = 500;
 
+// Shortcuts to catalog templates; each inserts that template's brief.
 const promptStarters = [
-  {
-    label: 'Dashboard',
-    prompt: 'An analytics dashboard with KPI cards, a revenue chart and a recent orders table',
-  },
-  {
-    label: 'Blog',
-    prompt: 'A personal blog with a post list, tag filters and a clean reading view',
-  },
-  {
-    label: 'SaaS landing',
-    prompt: 'A SaaS landing page with a hero, feature grid, pricing tiers and FAQ',
-  },
-  {
-    label: 'Todo app',
-    prompt: 'A todo app with projects, due dates, priorities and a completed filter',
-  },
+  { label: 'Dashboard', templateId: 'tpl-admin-panel' },
+  { label: 'Blog', templateId: 'tpl-blog' },
+  { label: 'SaaS landing', templateId: 'tpl-landing-page' },
+  { label: 'Todo app', templateId: 'tpl-task-tracker' },
 ];
 
 // Cycled through the empty prompt's placeholder; module-level so the
@@ -77,8 +68,21 @@ const examplePrompts = [
   'A booking page for a hair salon with services, staff and time slots',
   'An internal tool to approve expense reports with receipts and comments',
   'A recipe app where I can save meals and generate a shopping list',
-  ...promptStarters.map((starter) => starter.prompt),
 ];
+
+/** The starting prompt for a template, falling back to its description. */
+function templateBrief(templateId: string): string {
+  const template = templates.find((item) => item.id === templateId);
+  return templateGuides[templateId]?.brief ?? template?.description ?? '';
+}
+
+/** Whether a keystroke is going into a text field rather than the page. */
+function isTypingTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
+  );
+}
 
 function relativeTime(date: Date) {
   const min = Math.floor((Date.now() - date.getTime()) / 60000);
@@ -404,6 +408,34 @@ function DashboardContent() {
   const [renaming, setRenaming] = useState<ProjectSummary | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [deleting, setDeleting] = useState<ProjectSummary | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  // "/" opens the template picker unless something else has the keyboard.
+  const otherDialogOpen = renaming !== null || deleting !== null;
+  useEffect(() => {
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== '/' || event.defaultPrevented || otherDialogOpen) return;
+      if (event.metaKey || event.ctrlKey || event.altKey || isTypingTarget(event.target)) return;
+      event.preventDefault();
+      setPickerOpen(true);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [otherDialogOpen]);
+
+  /** Put a brief in the prompt and leave the caret after it; never submits. */
+  function insertBrief(brief: string) {
+    setPrompt(brief);
+    setCreateError(null);
+    // Wait for the new value to render before placing the caret.
+    requestAnimationFrame(() => {
+      const textarea = promptRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      textarea.scrollTop = textarea.scrollHeight;
+    });
+  }
 
   useEffect(() => {
     if (authStatus === 'unauthenticated') router.push('/auth/signin');
@@ -633,23 +665,27 @@ function DashboardContent() {
               <button
                 key={starter.label}
                 type="button"
-                onClick={() => {
-                  setPrompt(starter.prompt);
-                  setCreateError(null);
-                  promptRef.current?.focus();
-                }}
+                onClick={() => insertBrief(templateBrief(starter.templateId))}
                 className="rounded-full border border-border px-3 py-1 text-xs text-foreground-secondary transition-colors hover:border-border-strong hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40"
               >
                 {starter.label}
               </button>
             ))}
-            <Link
-              href="/dashboard/templates"
+            <button
+              type="button"
+              aria-haspopup="dialog"
+              aria-keyshortcuts="/"
+              onClick={() => setPickerOpen(true)}
               className="rounded-full px-2 py-1 text-xs text-foreground-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40"
             >
               Browse all →
-            </Link>
+            </button>
           </div>
+          <TemplatePicker
+            open={pickerOpen}
+            onOpenChange={setPickerOpen}
+            onPick={(template) => insertBrief(templateBrief(template.id))}
+          />
         </section>
 
         <section className="mt-12">

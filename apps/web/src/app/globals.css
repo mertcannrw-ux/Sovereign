@@ -148,6 +148,22 @@
   .animate-fade-in {
     animation: fadeIn 0.2s ease-out;
   }
+  /*
+   * Dialogs are centred with translate(-50%, -50%), so their keyframes carry
+   * that offset; a plain transform would pull them off-centre mid-animation.
+   */
+  .animate-dialog-in {
+    animation: dialogIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .animate-dialog-out {
+    animation: dialogOut 0.15s ease-in forwards;
+  }
+  .animate-overlay-in {
+    animation: overlayIn 0.2s ease-out;
+  }
+  .animate-overlay-out {
+    animation: overlayOut 0.15s ease-in forwards;
+  }
   .animate-spin {
     animation: spin 1s linear infinite !important;
   }
@@ -208,6 +224,40 @@
     to {
       opacity: 1;
       transform: translateY(0);
+    }
+  }
+
+  @keyframes dialogIn {
+    from {
+      opacity: 0;
+      transform: translate(-50%, calc(-50% + 8px)) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
+  }
+
+  @keyframes dialogOut {
+    from {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
+    to {
+      opacity: 0;
+      transform: translate(-50%, calc(-50% + 4px)) scale(0.98);
+    }
+  }
+
+  @keyframes overlayIn {
+    from {
+      opacity: 0;
+    }
+  }
+
+  @keyframes overlayOut {
+    to {
+      opacity: 0;
     }
   }
 

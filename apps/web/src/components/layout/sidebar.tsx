@@ -17,7 +17,6 @@ import {
 } from '@/components/ui/dropdown-menu';
 import {
   LayoutDashboard,
-  LayoutTemplate,
   Settings,
   Users,
   X,
@@ -30,7 +29,6 @@ import {
 
 const navItems = [
   { href: '/dashboard', label: 'Projects', icon: LayoutDashboard },
-  { href: '/dashboard/templates', label: 'Templates', icon: LayoutTemplate },
   { href: '/dashboard/team', label: 'Team', icon: Users },
 ];
 

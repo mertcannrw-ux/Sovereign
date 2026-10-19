@@ -3,8 +3,8 @@ import { cn } from '@app-builder/ui/utils';
 import type { TemplateLayout } from '@/data/templates';
 
 /**
- * Recognizable pattern sketches. `accent` and `surface` come from the
- * per-category tokens on the templates page; neutrals are `foreground` tints.
+ * Recognizable pattern sketches. `accent` and `surface` are set by the caller;
+ * neutrals are `foreground` tints.
  */
 export function TemplateSketch({
   layout,
