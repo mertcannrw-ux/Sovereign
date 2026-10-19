@@ -7,6 +7,7 @@ import { checkRateLimit } from '@/server/rate-limit';
 import { ensurePersonalOrganization } from '@/server/onboarding';
 import { oauthProvidersEnabled } from '@/lib/auth';
 import { env } from '@/env';
+import { appUrl, isEmailConfigured, sendEmail } from '@/server/email';
 
 export const authRouter = router({
   providers: publicProcedure.query(() => oauthProvidersEnabled()),
@@ -162,7 +163,7 @@ export const authRouter = router({
       // password account 500s while every other address returns ok:true.
       // Failing uniformly for all inputs keeps the enumeration signal gone
       // while still surfacing the misconfiguration loudly.
-      if (process.env.NODE_ENV === 'production' && !(env.RESEND_API_KEY && env.EMAIL_FROM)) {
+      if (process.env.NODE_ENV === 'production' && !isEmailConfigured()) {
         console.error(
           '[auth] password reset requested but RESEND_API_KEY/EMAIL_FROM are not configured',
         );
@@ -193,42 +194,18 @@ export const authRouter = router({
           }),
         ]);
 
-        const baseUrl = env.NEXTAUTH_URL ?? env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
-        const resetUrl = `${baseUrl.replace(/\/+$/, '')}/auth/reset-password?token=${rawToken}`;
-
-        if (env.RESEND_API_KEY && env.EMAIL_FROM) {
-          let sent = false;
-          try {
-            const response = await fetch('https://api.resend.com/emails', {
-              method: 'POST',
-              headers: {
-                Authorization: `Bearer ${env.RESEND_API_KEY}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                from: env.EMAIL_FROM,
-                to: email,
-                subject: 'Reset your Sovereign password',
-                html: `<p>Reset your password:</p><p><a href="${resetUrl}">${resetUrl}</a></p><p>This link expires in 1 hour.</p>`,
-              }),
-            });
-            sent = response.ok;
-            if (!sent) {
-              console.error('[auth] password reset email rejected', response.status);
-            }
-          } catch (error) {
-            console.error('[auth] failed to send password reset email', error);
-          }
-          if (!sent && process.env.NODE_ENV === 'production') {
-            throw new TRPCError({
-              code: 'INTERNAL_SERVER_ERROR',
-              message: 'Could not send the reset email. Try again later.',
-            });
-          }
-        } else {
-          // Non-production with the mailer unconfigured: log the link so the
-          // reset flow stays usable locally. Production is rejected above.
-          console.info('[auth] password reset URL (email not configured):', resetUrl);
+        const resetUrl = appUrl(`/auth/reset-password?token=${rawToken}`);
+        const sent = await sendEmail({
+          to: email,
+          subject: 'Reset your Sovereign password',
+          html: `<p>Reset your password:</p><p><a href="${resetUrl}">${resetUrl}</a></p><p>This link expires in 1 hour.</p>`,
+          devLink: resetUrl,
+        });
+        if (!sent && process.env.NODE_ENV === 'production') {
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: 'Could not send the reset email. Try again later.',
+          });
         }
       }
 

@@ -1,5 +1,6 @@
 import { router } from './trpc';
 import { authRouter } from './routers/auth';
+import { accountRouter } from './routers/account';
 import { apiKeysRouter } from './routers/apiKeys';
 import { projectsRouter } from './routers/projects';
 import { chatRouter } from './routers/chat';
@@ -16,6 +17,7 @@ import { billingRouter } from './routers/billing';
 
 export const appRouter = router({
   auth: authRouter,
+  account: accountRouter,
   apiKeys: apiKeysRouter,
   projects: projectsRouter,
   chat: chatRouter,

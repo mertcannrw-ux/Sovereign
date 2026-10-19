@@ -219,6 +219,7 @@ Every animation maps to a real state. No decorative motion.
 - Blink timing is always randomized, never a fixed loop.
 - The cursor's hard on/off blink is reserved for the trailer opening and the favicon; inside the app, the mouth mumbles instead.
 - `prefers-reduced-motion`: eye blink only; no mumble, the mouth stays still.
+- Settings > Profile > **Mascot animations** (per user, default on): off applies the same reduced-motion behaviour everywhere, via `data-mascot-motion="off"` on `<html>` (`components/mascot-motion.tsx`).
 - **In-product status row:** mascot (20px) + "Sovereign is building…" above the prompt bar while working.
 
 ### 9.3 Sound

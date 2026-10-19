@@ -109,8 +109,18 @@ model User {
   email         String    @unique
   name          String?
   avatarUrl     String?   @map("avatar_url")
+  // Uploaded avatar bytes (square, cropped client-side), served by
+  // /api/avatar/[id]. avatarUrl then points at that route; an OAuth picture
+  // URL is stored in avatarUrl alone.
+  avatarImage   Bytes?    @map("avatar_image")
+  avatarMime    String?   @map("avatar_mime")
   passwordHash  String?   @map("password_hash")
   emailVerified Boolean?  @default(false) @map("email_verified")
+  // Requested new address, waiting on its verification link. `email` keeps
+  // working until the link is opened.
+  pendingEmail  String?   @map("pending_email")
+  // Preferences. Off makes every Logo/Mascot use reduced-motion behaviour.
+  mascotAnimations Boolean @default(true) @map("mascot_animations")
   // Bumped whenever every existing session for this user must stop working
   // (password reset, "sign out everywhere", suspected compromise). JWTs carry
   // the value they were minted with; a mismatch invalidates the token even
@@ -185,6 +195,8 @@ model EmailVerificationToken {
   id        String   @id @default(uuid())
   userId    String   @map("user_id")
   token     String   @unique
+  // The address this token confirms (an email change), lower-cased.
+  email     String?
   expiresAt DateTime @map("expires_at")
   createdAt DateTime @default(now()) @map("created_at")
 

@@ -273,6 +273,20 @@
       animation: logo-blink 120ms ease-in-out 1 !important;
     }
   }
+
+  /*
+   * Settings > Profile > "Mascot animations" off: the same reduced-motion
+   * behaviour, for that user only (components/mascot-motion.tsx sets it).
+   */
+  :root[data-mascot-motion='off'] .logo,
+  :root[data-mascot-motion='off'] .logo-cursor,
+  :root[data-mascot-motion='off'] .logo-caret {
+    animation: none !important;
+  }
+
+  :root[data-mascot-motion='off'] .logo.logo--blink .logo-caret {
+    animation: logo-blink 120ms ease-in-out 1 !important;
+  }
 }
 
 @layer utilities {

@@ -10,6 +10,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@app-builder/ui/utils';
 import { AIProvidersPanel } from '@/components/settings/ai-providers-panel';
 import { BillingPanel } from '@/components/settings/billing-panel';
+import { ProfilePanel } from '@/components/settings/profile-panel';
 
 /* ── Tab Navigation ───────────────────────────────────────── */
 
@@ -30,7 +31,8 @@ export default function SettingsPage() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<SettingsTabId>('providers');
 
-  // Stripe Checkout and the Customer Portal return to `?tab=billing`.
+  // Stripe Checkout and the Customer Portal return to `?tab=billing`; connecting
+  // a sign-in provider returns to `?tab=profile`.
   useEffect(() => {
     const tab = new URLSearchParams(window.location.search).get('tab');
     if (SETTINGS_TABS.some((t) => t.id === tab)) setActiveTab(tab as SettingsTabId);
@@ -75,12 +77,7 @@ export default function SettingsPage() {
             ))}
           </nav>
           <div className="min-w-0 flex-1">
-            {activeTab === 'profile' && (
-              <Placeholder
-                title="Profile"
-                desc="Manage your account identity and personal preferences."
-              />
-            )}
+            {activeTab === 'profile' && <ProfilePanel />}
             {activeTab === 'providers' && <AIProvidersPanel />}
             {activeTab === 'teams' && (
               <Card className="border-border bg-background-subtle">

@@ -35,7 +35,11 @@ function makeQueryClient() {
     toast.error(getErrorMessage(error), { id: `trpc-error:${getErrorMessage(error)}` });
   };
   queryClient.getQueryCache().config.onError = notify;
-  queryClient.getMutationCache().config.onError = notify;
+  // `meta: { inlineError: true }` marks a mutation whose caller shows the
+  // error next to the control instead, so it is not reported twice.
+  queryClient.getMutationCache().config.onError = (error, _variables, _context, mutation) => {
+    if (!mutation.meta?.inlineError) notify(error);
+  };
 
   return queryClient;
 }
