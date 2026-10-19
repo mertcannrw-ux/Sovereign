@@ -246,6 +246,9 @@ export const projectsRouter = router({
             take: 1,
             select: { url: true, customDomain: true },
           },
+          // Zero files means the project was never built: the dashboard
+          // shows an empty card instead of a preview.
+          _count: { select: { files: true } },
         },
       });
       return paginateProjects(projects, input.limit);

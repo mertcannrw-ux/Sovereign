@@ -374,6 +374,15 @@ function ProjectWorkspace() {
     if (brief) setInput((current) => (current.trim() ? current : brief));
   }
 
+  // The dashboard's "Start building" on an empty project lands here with
+  // ?focus=prompt. The prompt bar mounts only once the session resolves.
+  useEffect(() => {
+    if (status !== 'authenticated' || !inputRef.current) return;
+    if (new URLSearchParams(window.location.search).get('focus') !== 'prompt') return;
+    inputRef.current.focus();
+    router.replace(`/project/${projectId}`);
+  }, [status, projectId, router]);
+
   useEffect(() => {
     if (availableModels.length === 0) {
       setSelectedModelKey('');

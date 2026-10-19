@@ -57,7 +57,7 @@ export function Sidebar({ open, onClose, className }: SidebarProps) {
       )}
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-50 flex w-[256px] flex-col border-r border-border bg-background-subtle transition-transform duration-200 md:static md:translate-x-0',
+          'fixed inset-y-0 left-0 z-50 flex w-[256px] shrink-0 flex-col border-r border-border bg-background-subtle transition-transform duration-200 md:static md:translate-x-0',
           open ? 'translate-x-0' : '-translate-x-full',
           className,
         )}
@@ -93,9 +93,6 @@ export function Sidebar({ open, onClose, className }: SidebarProps) {
         </div>
 
         <nav className="flex-1 space-y-1 px-3 py-6">
-          <p className="mb-3 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-muted">
-            Workspace
-          </p>
           {navItems.map((item) => {
             const isActive =
               item.href === '/dashboard'

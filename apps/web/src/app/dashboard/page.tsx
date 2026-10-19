@@ -6,9 +6,9 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
   type FormEvent,
   type KeyboardEvent,
+  type MouseEvent,
 } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -48,7 +48,6 @@ import {
 import { trpc } from '@/lib/trpc/client';
 import { motion } from 'framer-motion';
 import { cn } from '@app-builder/ui/utils';
-import { projectAccents } from '@/styles/tokens';
 
 // Matches the `description` limit on projects.create, where the prompt is stored.
 const PROMPT_LIMIT = 500;
@@ -72,22 +71,6 @@ const promptStarters = [
   },
 ];
 
-// Cycled through the empty prompt's placeholder; module-level so the
-// typewriter effect's dependency stays stable.
-const examplePrompts = [
-  'A habit tracker with streaks, reminders and a weekly progress chart',
-  'A booking page for a hair salon with services, staff and time slots',
-  'An internal tool to approve expense reports with receipts and comments',
-  'A recipe app where I can save meals and generate a shopping list',
-  ...promptStarters.map((starter) => starter.prompt),
-];
-
-// Accent colour for each project card, from the `accent-project-*` tokens.
-function accentFromName(name: string): string {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  return projectAccents[Math.abs(hash) % projectAccents.length] ?? projectAccents[0]!;
-}
 function relativeTime(date: Date) {
   const min = Math.floor((Date.now() - date.getTime()) / 60000);
   if (min < 60) return `${Math.max(1, min)}m ago`;
@@ -113,57 +96,6 @@ function hostOf(url: string): string {
     return url;
   }
 }
-const REDUCED_MOTION = '(prefers-reduced-motion: reduce)';
-/**
- * Type each phrase out, hold it, delete it, then move to the next, for an
- * empty prompt's placeholder. Returns `fallback` while inactive or when the
- * viewer prefers reduced motion.
- */
-function useTypewriter(phrases: readonly string[], active: boolean, fallback: string): string {
-  const [text, setText] = useState('');
-  const reducedMotion = useSyncExternalStore(
-    (onChange) => {
-      const query = window.matchMedia(REDUCED_MOTION);
-      query.addEventListener('change', onChange);
-      return () => query.removeEventListener('change', onChange);
-    },
-    () => window.matchMedia(REDUCED_MOTION).matches,
-    () => true,
-  );
-
-  useEffect(() => {
-    if (!active || reducedMotion || phrases.length === 0) return;
-    let phrase = 0;
-    let length = 0;
-    let deleting = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const step = () => {
-      const current = phrases[phrase] ?? '';
-      if (!deleting && length < current.length) {
-        length += 1;
-        timer = setTimeout(step, 55 + Math.random() * 45);
-      } else if (!deleting) {
-        deleting = true;
-        timer = setTimeout(step, 2200);
-      } else if (length > 0) {
-        length -= 1;
-        timer = setTimeout(step, 18);
-      } else {
-        deleting = false;
-        phrase = (phrase + 1) % phrases.length;
-        timer = setTimeout(step, 500);
-      }
-      setText(current.slice(0, length));
-    };
-    timer = setTimeout(step, 600);
-    return () => {
-      clearTimeout(timer);
-      setText('');
-    };
-  }, [phrases, active, reducedMotion]);
-
-  return active && !reducedMotion && text ? text : fallback;
-}
 const statusVariant = { draft: 'secondary', published: 'success', archived: 'warning' } as const;
 type DbStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
 const statusMap: Record<DbStatus, 'draft' | 'published' | 'archived'> = {
@@ -176,10 +108,32 @@ interface ProjectSummary {
   id: string;
   name: string;
   status: 'draft' | 'published' | 'archived';
+  createdAt: Date;
   lastEdited: Date;
-  accent: string;
   thumbnailUrl: string | null;
   liveUrl: string | null;
+  /** Never built: no generated files and nothing to preview. */
+  isEmpty: boolean;
+}
+
+/** A project is empty until a build writes files or gives it something to preview. */
+function isEmptyProject(project: {
+  fileCount: number;
+  thumbnailUrl: string | null;
+  liveUrl: string | null;
+}): boolean {
+  return project.fileCount === 0 && !project.thumbnailUrl && !project.liveUrl;
+}
+
+/** Empty projects open the editor with its prompt focused, ready for the first build. */
+function projectHref(project: ProjectSummary): string {
+  return project.isEmpty ? `/project/${project.id}?focus=prompt` : `/project/${project.id}`;
+}
+
+function activityLabel(project: ProjectSummary): string {
+  return project.isEmpty
+    ? `Created ${relativeTime(project.createdAt)}`
+    : `Edited ${relativeTime(project.lastEdited)}`;
 }
 
 interface ProjectActions {
@@ -188,15 +142,21 @@ interface ProjectActions {
   onDelete: (project: ProjectSummary) => void;
 }
 
-/** Screenshot when the project has one, otherwise a monogram tinted by its accent. */
+/**
+ * Screenshot, else the live site in a scaled-down, inert iframe, else the
+ * dot-grid surface (globals.css). `compact` thumbnails (list rows) skip the
+ * iframe and the cursor tilt: at that size the iframe is unreadable, and one
+ * live page per row is too heavy. Every variant ignores the pointer so clicks
+ * reach the card's stretched link underneath.
+ */
 function ProjectThumbnail({
   project,
   className,
-  monogramClassName,
+  compact = false,
 }: {
   project: ProjectSummary;
   className?: string;
-  monogramClassName?: string;
+  compact?: boolean;
 }) {
   if (project.thumbnailUrl) {
     return (
@@ -204,27 +164,57 @@ function ProjectThumbnail({
       <img
         src={project.thumbnailUrl}
         alt=""
-        className={cn('object-cover object-top', className)}
+        className={cn('pointer-events-none object-cover object-top', className)}
         loading="lazy"
       />
+    );
+  }
+  if (project.liveUrl && !compact) {
+    return (
+      <div
+        aria-hidden="true"
+        className={cn('pointer-events-none relative overflow-hidden bg-background', className)}
+      >
+        {/* Rendered at 4x and scaled down so the site lays out at desktop width. */}
+        <iframe
+          src={project.liveUrl}
+          title=""
+          tabIndex={-1}
+          loading="lazy"
+          sandbox="allow-scripts allow-same-origin"
+          className="pointer-events-none absolute left-0 top-0 h-[400%] w-[400%] origin-top-left scale-[0.25] border-0"
+        />
+      </div>
     );
   }
   return (
     <div
       aria-hidden="true"
-      className={cn('grid place-items-center bg-background-muted', className)}
-      style={{
-        backgroundImage: `linear-gradient(color-mix(in srgb, ${project.accent} 10%, transparent), color-mix(in srgb, ${project.accent} 10%, transparent))`,
-      }}
-    >
-      <span
-        className={cn('font-semibold leading-none tracking-[-0.04em]', monogramClassName)}
-        style={{ color: project.accent }}
-      >
-        {project.name.trim().charAt(0).toUpperCase() || '?'}
-      </span>
-    </div>
+      className={cn('dot-grid pointer-events-none', !compact && 'dot-grid-tilt', className)}
+    />
   );
+}
+
+// Furthest the dot board leans toward the cursor, in degrees.
+const MAX_TILT = 10;
+const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
+
+/**
+ * Lean the card's dot board toward the cursor so the side under it comes
+ * closer. The pointer is measured against the thumbnail and clamped, so
+ * hovering the text below the thumbnail tilts toward its bottom edge.
+ */
+function tiltDotGrid(event: MouseEvent<HTMLElement>) {
+  const grid = event.currentTarget.querySelector<HTMLElement>('.dot-grid-tilt');
+  if (!grid) return;
+  const rect = grid.getBoundingClientRect();
+  const x = clamp01((event.clientX - rect.left) / rect.width);
+  const y = clamp01((event.clientY - rect.top) / rect.height);
+  grid.style.setProperty('--cursor-x', `${x * 100}%`);
+  grid.style.setProperty('--cursor-y', `${y * 100}%`);
+  // rotateX(+) brings the bottom edge forward; rotateY(-) brings the right edge forward.
+  grid.style.setProperty('--tilt-x', `${(y - 0.5) * 2 * MAX_TILT}deg`);
+  grid.style.setProperty('--tilt-y', `${(0.5 - x) * 2 * MAX_TILT}deg`);
 }
 
 function ProjectMenu({
@@ -304,17 +294,19 @@ function LiveLink({ url }: { url: string }) {
  */
 function ProjectCard({ project, actions }: { project: ProjectSummary; actions: ProjectActions }) {
   return (
-    <div className="group relative overflow-hidden rounded-card border border-border bg-background-subtle transition-colors hover:border-border-strong has-[a[data-card-link]:focus-visible]:ring-2 has-[a[data-card-link]:focus-visible]:ring-border-focus/40">
+    <div
+      onMouseMove={project.thumbnailUrl || project.liveUrl ? undefined : tiltDotGrid}
+      className="group relative min-w-0 overflow-hidden rounded-card border border-border bg-background-subtle transition-colors hover:border-border-strong has-[a[data-card-link]:focus-visible]:ring-2 has-[a[data-card-link]:focus-visible]:ring-border-focus/40"
+    >
       <Link
-        href={`/project/${project.id}`}
+        href={projectHref(project)}
         data-card-link
-        aria-label={`Open ${project.name}`}
+        aria-label={project.isEmpty ? `Start building ${project.name}` : `Open ${project.name}`}
         className="absolute inset-0 focus-visible:outline-none"
       />
       <ProjectThumbnail
         project={project}
         className="aspect-[16/10] w-full border-b border-border"
-        monogramClassName="text-5xl"
       />
       <ProjectMenu
         project={project}
@@ -324,12 +316,14 @@ function ProjectCard({ project, actions }: { project: ProjectSummary; actions: P
       <div className="pointer-events-none relative px-4 py-3.5 [&_a]:pointer-events-auto">
         <div className="flex items-center gap-2">
           <h3 className="truncate text-sm font-medium tracking-[-0.01em]">{project.name}</h3>
-          <Badge variant={statusVariant[project.status]} className="shrink-0 text-[10px]">
-            {project.status}
-          </Badge>
+          {project.isEmpty ? null : (
+            <Badge variant={statusVariant[project.status]} className="shrink-0 text-[10px]">
+              {project.status}
+            </Badge>
+          )}
         </div>
         <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-foreground-muted">
-          <span className="shrink-0">Edited {relativeTime(project.lastEdited)}</span>
+          <span className="shrink-0">{activityLabel(project)}</span>
           {project.liveUrl ? (
             <>
               <span aria-hidden="true">·</span>
@@ -346,15 +340,15 @@ function ProjectRow({ project, actions }: { project: ProjectSummary; actions: Pr
   return (
     <div className="group relative flex items-center gap-3.5 border-b border-border px-4 py-3 transition-colors last:border-0 hover:bg-background-muted/50 has-[a[data-card-link]:focus-visible]:bg-background-muted/50">
       <Link
-        href={`/project/${project.id}`}
+        href={projectHref(project)}
         data-card-link
-        aria-label={`Open ${project.name}`}
+        aria-label={project.isEmpty ? `Start building ${project.name}` : `Open ${project.name}`}
         className="absolute inset-0 focus-visible:outline-none"
       />
       <ProjectThumbnail
         project={project}
         className="h-9 w-12 shrink-0 rounded-control-inner border border-border"
-        monogramClassName="text-sm"
+        compact
       />
       <div className="pointer-events-none relative min-w-0 flex-1 [&_a]:pointer-events-auto">
         <p className="truncate text-sm font-medium">{project.name}</p>
@@ -364,11 +358,13 @@ function ProjectRow({ project, actions }: { project: ProjectSummary; actions: Pr
           </div>
         ) : null}
       </div>
-      <Badge variant={statusVariant[project.status]} className="text-[10px]">
-        {project.status}
-      </Badge>
+      {project.isEmpty ? null : (
+        <Badge variant={statusVariant[project.status]} className="text-[10px]">
+          {project.status}
+        </Badge>
+      )}
       <span className="hidden w-28 text-right text-xs text-foreground-muted sm:block">
-        Edited {relativeTime(project.lastEdited)}
+        {activityLabel(project)}
       </span>
       <ProjectMenu project={project} actions={actions} className="relative z-10" />
     </div>
@@ -413,11 +409,6 @@ function DashboardContent() {
 
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const [prompt, setPrompt] = useState('');
-  const placeholder = useTypewriter(
-    examplePrompts,
-    prompt === '',
-    'Describe what you want to build…',
-  );
   const [view, setView] = useState<'grid' | 'list'>('grid');
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -449,14 +440,20 @@ function DashboardContent() {
     const raw = projectsQuery.data?.pages.flatMap((page) => page.projects) ?? [];
     return raw.map((p) => {
       const live = p.deployments[0];
+      const liveUrl = live?.customDomain ? `https://${live.customDomain}` : (live?.url ?? null);
       return {
         id: p.id,
         name: p.name,
         status: statusMap[p.status as DbStatus] ?? 'draft',
+        createdAt: new Date(p.createdAt),
         lastEdited: new Date(p.updatedAt),
-        accent: accentFromName(p.name),
         thumbnailUrl: p.thumbnailUrl,
-        liveUrl: live?.customDomain ? `https://${live.customDomain}` : (live?.url ?? null),
+        liveUrl,
+        isEmpty: isEmptyProject({
+          fileCount: p._count.files,
+          thumbnailUrl: p.thumbnailUrl,
+          liveUrl,
+        }),
       };
     });
   }, [projectsQuery.data]);
@@ -578,12 +575,12 @@ function DashboardContent() {
   }
 
   return (
-    <div className="min-h-full bg-background">
-      <main className="mx-auto max-w-[1200px] px-5 py-8 sm:px-8 lg:py-10">
+    <div className="min-h-full min-w-0 bg-background">
+      <main className="mx-auto w-full min-w-0 max-w-[1200px] px-5 py-8 sm:px-8 lg:py-10">
         <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <h1 className="text-2xl font-semibold tracking-[-0.03em]">Projects</h1>
-          <div className="flex items-center gap-2">
-            <div className="relative flex-1 sm:w-64 sm:flex-none">
+          <h1 className="shrink-0 text-2xl font-semibold tracking-[-0.03em]">Projects</h1>
+          <div className="flex min-w-0 items-center gap-2 sm:flex-1 sm:justify-end">
+            <div className="relative min-w-0 flex-1 sm:max-w-64">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-muted" />
               <Input
                 placeholder="Search projects"
@@ -640,9 +637,9 @@ function DashboardContent() {
                 if (createError) setCreateError(null);
               }}
               onKeyDown={handlePromptKeyDown}
-              placeholder={placeholder}
+              placeholder="Describe what you want to build…"
               rows={3}
-              className="block min-h-24 w-full resize-none bg-transparent px-4 pt-4 text-sm leading-6 text-foreground placeholder:text-foreground-muted focus:outline-none focus-visible:ring-0"
+              className="block min-h-24 w-full resize-none bg-transparent px-4 pt-4 text-sm leading-6 text-foreground placeholder:text-foreground-muted/60 focus:outline-none focus-visible:ring-0"
             />
             <div className="flex items-center justify-end gap-3 px-3 pb-3">
               {prompt.length > PROMPT_LIMIT * 0.8 ? (
@@ -655,6 +652,8 @@ function DashboardContent() {
                 size="icon-sm"
                 aria-label={isCreating ? 'Creating project' : 'Create project'}
                 disabled={!prompt.trim() || isCreating}
+                // Dim only while there is nothing to send, not while creating.
+                className={cn('shrink-0', isCreating && 'disabled:opacity-100')}
               >
                 {isCreating ? (
                   <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary-foreground/40 border-t-primary-foreground" />
@@ -701,14 +700,16 @@ function DashboardContent() {
           ) : projects.length === 0 ? (
             <div className="rounded-card border border-dashed border-border py-16 text-center">
               <FolderKanban className="mx-auto h-6 w-6 text-foreground-muted" />
-              <h2 className="mt-4 text-sm font-medium">
-                {debouncedSearch ? 'No matching projects' : 'No projects yet'}
-              </h2>
-              <p className="mt-1 text-sm text-foreground-muted">
-                {debouncedSearch
-                  ? 'Try another search.'
-                  : 'Describe an app above to create your first project.'}
-              </p>
+              {debouncedSearch ? (
+                <>
+                  <h2 className="mt-4 text-sm font-medium">No matching projects</h2>
+                  <p className="mt-1 text-sm text-foreground-muted">Try another search.</p>
+                </>
+              ) : (
+                <p className="mt-4 text-sm text-foreground-muted">
+                  Your projects will show up here.
+                </p>
+              )}
             </div>
           ) : (
             <motion.div
@@ -718,7 +719,7 @@ function DashboardContent() {
               transition={{ duration: 0.18, ease: 'easeOut' }}
             >
               {view === 'grid' ? (
-                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
                   {projects.map((project) => (
                     <ProjectCard key={project.id} project={project} actions={actions} />
                   ))}

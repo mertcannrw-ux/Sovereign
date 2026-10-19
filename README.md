@@ -74,7 +74,7 @@ Then open [http://localhost:3000](http://localhost:3000).
 | `npm run db:migrate`      | Create and apply a migration (see below)         |
 | `npm run db:deploy`       | Apply pending migrations                         |
 | `npm run db:status`       | Show which migrations are applied                |
-| `npm run db:seed`         | Seed the admin user and demo projects            |
+| `npm run db:seed`         | Seed the admin user and personal organization    |
 | `npm run db:studio`       | Open Prisma Studio                               |
 | `npm run interest:report` | List users who tried to subscribe to a paid plan |
 

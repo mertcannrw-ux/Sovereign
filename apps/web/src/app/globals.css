@@ -85,6 +85,79 @@
   .chat-message--assistant {
     @apply bg-background;
   }
+
+  /*
+   * Dot-grid surface for project thumbnails with nothing to preview. The dots
+   * live on a board (::before) that hovering inside a `.group` tints lime.
+   * `.dot-grid-tilt` also leans the board toward the cursor in perspective,
+   * so the side under the pointer comes closer, with a soft glow (::after)
+   * at the cursor. `--tilt-x`, `--tilt-y`, `--cursor-x` and `--cursor-y` are
+   * set from the pointer in the dashboard.
+   */
+  .dot-grid {
+    --dot-color: color-mix(in srgb, var(--foreground-muted) 28%, transparent);
+    position: relative;
+    overflow: hidden;
+    background-color: var(--background-muted);
+  }
+
+  .dot-grid::before {
+    content: '';
+    position: absolute;
+    /* Oversized so a tilted board never shows its edges. */
+    inset: -15%;
+    background-image: radial-gradient(circle, var(--dot-color) 0.75px, transparent 1.25px);
+    background-size: 16px 16px;
+    background-position: center;
+    transition:
+      --dot-color 300ms ease-out,
+      transform 400ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .group:hover .dot-grid {
+    --dot-color: color-mix(in srgb, var(--primary) 55%, transparent);
+  }
+
+  .group:hover .dot-grid-tilt::before {
+    transform: perspective(600px) translateZ(14px) rotateX(var(--tilt-x, 0deg))
+      rotateY(var(--tilt-y, 0deg));
+  }
+
+  .dot-grid-tilt::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    pointer-events: none;
+    background: radial-gradient(
+      200px circle at var(--cursor-x, 50%) var(--cursor-y, 50%),
+      color-mix(in srgb, var(--primary) 8%, transparent),
+      transparent 70%
+    );
+    transition: opacity 300ms ease-out;
+  }
+
+  .group:hover .dot-grid-tilt::after {
+    opacity: 1;
+  }
+
+  /* Reduced motion: the hover still recolours the dots, but the board stays flat. */
+  @media (prefers-reduced-motion: reduce) {
+    .group:hover .dot-grid-tilt::before {
+      transform: none;
+    }
+
+    .dot-grid-tilt::after {
+      display: none;
+    }
+  }
+}
+
+/* Registered so `--dot-color` interpolates instead of snapping on hover. */
+@property --dot-color {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: transparent;
 }
 
 @layer utilities {
