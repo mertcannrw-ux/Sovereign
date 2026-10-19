@@ -13,7 +13,8 @@
 - **Monochrome base, one accent.** Near-black surfaces and off-white text carry the interface; a single lime accent marks actions and status. Colour is never used decoratively.
 - **Editorial, typography-first.** Large negative space, tight tracking on display sizes, flat surfaces, no glassmorphism or neumorphism.
 - **Restraint in motion.** Short transitions (150–300ms) on colour, border and opacity. No looping
-  background gradients anywhere, the marketing page included (§7).
+  background gradients anywhere, the marketing page included (§7). The one sanctioned character
+  motion is the Sovereign mascot, and only when a real state drives it (§9.2).
 - **8px spatial rhythm.** All spacing derives from the 8px step (see §4).
 
 ---
@@ -68,7 +69,7 @@ Ratios computed with sRGB alpha compositing against the actual surfaces:
 3. **`foreground-muted` passes AA at small sizes.** It measures 5.10:1 on `background`, 4.79:1 on `background-subtle` and 4.53:1 on `background-muted`, so it may be used for small text and placeholders anywhere. (`#71717A` was considered and fails AA on every surface.)
 4. **Three surface levels, no more.** `background` → `background-subtle` → `background-muted`. Do not stack a fourth (no `subtle` box inside a `subtle` card).
 5. **No opacity modifiers on rgba tokens.** `border-border/50` replaces the alpha (it renders 50% white), it does not soften the hairline.
-6. **Lime is for action, not decoration.** `primary` marks primary buttons, active states, focus and key highlights only. Eyebrows, badges like "Featured", icon tiles and illustration accents use the neutral ramp or the `accent-*` tokens.
+6. **Lime is for action, not decoration.** `primary` marks primary buttons, active states, focus and key highlights only. Eyebrows, badges like "Featured", icon tiles and illustration accents use the neutral ramp or the `accent-*` tokens. The one exception is the brand mark, which is always lime on dark (§9.1).
 7. **`border` is decorative.** At ~1.2:1 against `background` it is a divider, not a control outline. Interactive controls must be identifiable without relying on their hairline alone.
 8. **Focus is always `border-focus`, at soft strength.** Focus indicators use the `border-focus` colour: inputs take a `border-focus` border plus a `ring-border-focus/30`–`/40` halo (≈3.3:1, above the 3:1 focus-visible minimum); buttons and other controls use `ring-border-focus/40`. Full-strength lime rings are not used - they measure 16.6:1 and read as glare on the dark surface. A focus indicator not based on `border-focus` is a bug.
 9. **Alpha steps on the marketing surface.** The floor for body-sized white text is `/48`; lower steps (`/20`–`/45`) are reserved for display type and the sanctioned illustration mock. All landing-page body copy now sits at or above `/48`.
@@ -137,7 +138,15 @@ Historically tracked in `docs/design-accessibility-review.md` (removed from the 
    - the Tailwind colour-swatch list in `components/visual-editor/properties-panel.tsx` - those are the colours a _user's generated app_ may pick;
    - the CSS injected into the sandboxed `apps/web/src/lib/visual-editor.ts` overlay - it renders inside the generated app's document, not this one;
    - per-project accent colours and per-category template colours are now tokens (`accent-project-1`…`8`, `accent-productivity`, `accent-commerce`, ...). Template sketches sit on `background-subtle` with a 6% wash of their category accent.
-4. ~~Orphan brand art in the abandoned palette.~~ **Removed** - `apps/web/public/logo.svg`, `logo.png` and `logo-transparent.png` (bronze "SOVEREIGN" dragon crest) are deleted; the live mark is `components/brand/logo.tsx` (`size` sm / md / lg), rendered by the marketing header, auth screens, sidebar and mobile header - swapping the mark is a one-file change.
+4. ~~Orphan brand art in the abandoned palette.~~ **Removed** - `apps/web/public/logo.svg`, `logo.png` and `logo-transparent.png` (bronze "SOVEREIGN" dragon crest) are deleted; the live mark is the Prompt Shield in `components/Logo.tsx` (`Logo` for the bare mark, `LogoLockup` for mark + wordmark), rendered by the marketing header, auth screens, sidebar and mobile header. `components/brand/logo.tsx` (the ⌘ tile) is deleted. See §9.
+
+---
+
+5. **Mascot spec ahead of the code (§9).** What ships today is a subset of the motion spec; until each item below lands, §9 is the target and the code is behind it:
+   - `Logo` states are `idle` / `working` / `done` / `error`. `working` has the mouth mumble but no bob or tilt; `done` is the squint without the hop. `Mascot` adds the random eye blink (idle and working) and is what the editor uses; the dashboard's build marks use the bare `Logo`, so they don't blink.
+   - One instance per screen: the editor holds to it (the chat empty state, then only the status row above the prompt box). The sidebar logo is treated as the brand mark, not a mascot instance. The dashboard still shows one mark per building card.
+   - `public/favicon.svg` uses the 3.2 caret stroke, not the thicker ~3.6.
+   - `public/apple-touch-icon.png` (the reversed mark) uses `#BEF264` / `#0A0A0B` literals instead of `primary` / `primary-foreground`.
 
 ---
 
@@ -147,7 +156,7 @@ Historically tracked in `docs/design-accessibility-review.md` (removed from the 
 
 **Visual rules.** The marketing page follows the same rules as the app, with no exception:
 
-- **Flat and monochrome.** No gradients, glows, blurs-as-decoration, grain or ambient animation. The accent fills primary buttons and marks the small square in section labels; everything else is the neutral ramp.
+- **Flat and monochrome.** No gradients, glows, blurs-as-decoration, grain or ambient animation. The accent fills primary buttons, marks the small square in section labels and colours the brand mark (§9); everything else is the neutral ramp. The mascot may animate here, but only per its motion spec (§9.2).
 - **Structure from hairlines.** The page column (`COLUMN`, 1240px) is framed by vertical rails on `xl` screens. Every `Section` opens on a full-bleed `border` rule, with registration crosshairs where it crosses the rails. Grids of cells share borders (`gap-px` over `bg-border`) instead of floating as separate cards.
 - **Type.** Display sizes are semibold (600) with `-0.035em` to `-0.045em` tracking. Labels, indices and metadata are mono uppercase at 11px, `0.08em` tracking. Sections are numbered `01`–`08`.
 - **Controls.** `primaryButton` and `secondaryButton` in `primitives.tsx` are the only two button styles: 8px radius, 44px tall.
@@ -180,6 +189,75 @@ components/landing/
 
 `/auth/signin`, `/auth/signup`, `/auth/forgot-password` and `/auth/reset-password` share `components/auth/auth-shell.tsx`, which reuses the marketing primitives so the flow reads as a continuation of `/`:
 
-- Same frame: hairline header with the `Logo`, `FrameRails` on `xl`, a footer rule with `RuleMarks`. No background grid, gradient or glow.
+- Same frame: hairline header with the `LogoLockup`, `FrameRails` on `xl`, a footer rule with `RuleMarks`. No background grid, gradient or glow.
 - A two-cell `COLUMN` split by a hairline on `lg`: a fixed context panel (mono `Eyebrow`, display line and one line of copy) and the form. Below `lg` only the form shows.
 - Submit is `primaryButton`, OAuth is `secondaryButton` with monochrome provider marks. Inputs and alerts take the 8px control radius.
+
+---
+
+## 9. Brand mark & mascot
+
+**Concept.** A shield (ownership, sovereignty, your own keys) containing a terminal prompt `>_` (you build by typing). The same mark is both the logo and the character: the caret `>` is its eye, the cursor `_` is its mouth. The brand name and the character name are the same: **Sovereign**.
+
+**Personality.** Calm, capable, a little cheeky. A serious tool with a small spark of character. Never goofy, never in the way.
+
+### 9.1 The mark
+
+- **Geometry.** `apps/web/src/components/Logo.tsx` is the single source of truth: 32×32 viewBox, flat-top shield with a tight corner radius, caret stroke 3.2 with round caps, the prompt cut out of the shield via a mask (so the mark is transparent on any background). **Never redraw the mark** - always use the component or the exported SVG (`apps/web/public/favicon.svg`).
+- **Colour.** The mark is lime (`primary`) on dark backgrounds; `Logo` takes `currentColor` and the `.logo` rule in `globals.css` defaults it to `var(--primary)`. The reversed version is a dark shield on a lime tile, with the prompt cut through to the lime (the app icon). Single colour only: no gradients, no outlines, no shadows.
+- **Minimum size.** 16px. The favicon may use a thicker caret stroke (~3.6) for legibility.
+
+### 9.2 Motion spec
+
+Every animation maps to a real state. No decorative motion.
+
+| State   | Behavior                                                                                                                                                 |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| idle    | Still. Random blink every 4–8s: caret `scaleY` → 0.1 for ~120ms                                                                                          |
+| working | Bob `translateY` 0 → −1.5px, 1.2s loop; mouth mumbles (cursor stretches and shifts irregularly, 1.6s loop); eye keeps random blinks; occasional ±4° tilt |
+| done    | One hop (−4px, 300ms) + happy squint (caret `scaleY` 0.4, 400ms), then idle                                                                              |
+| error   | One head shake (`translateX` ±2px, 400ms), then idle                                                                                                     |
+
+- Blink timing is always randomized, never a fixed loop.
+- The cursor's hard on/off blink is reserved for the trailer opening and the favicon; inside the app, the mouth mumbles instead.
+- `prefers-reduced-motion`: eye blink only; no mumble, the mouth stays still.
+- **In-product status row:** mascot (20px) + "Sovereign is building…" above the prompt bar while working.
+
+### 9.3 Sound
+
+- One signature sound: a short soft synth blip (~80ms sine pitch-up), synced to the blink.
+- Used in trailers, videos and launch content only.
+- Never on by default in the app.
+
+### 9.4 Trailer ident
+
+- **Opening:** black screen, lime `_` blinking alone (≈2s), then cut to the product.
+- **Closing ident (<3s):** `_` blinks → `>` slides in → shield snaps closed → 0.5s stillness → blink + blip → small hop → "Sovereign" wordmark fades in → cut.
+- Identical timing and sound every time. Export as a standalone reusable clip.
+
+### 9.5 Usage rules
+
+**Do:**
+
+- Use the mascot for status (working / done / error), empty states, error pages, onboarding and marketing.
+- Keep it small and quiet inside the product.
+
+**Don't:**
+
+- Add arms, legs, extra facial features, speech bubbles or emoji.
+- Stretch, rotate permanently, recolour outside the palette, or add effects.
+- Animate it without a real state behind the motion.
+- Use more than one mascot instance on a screen.
+
+### 9.6 Character family (future: super agents)
+
+Future characters are variants of Sovereign, never new designs.
+
+- **Fixed for all characters:** the shield silhouette, the `>_` face, the motion spec (§9.2), the sound family (§9.3).
+- **Each variant changes exactly one trait:** its colour, **or** its eye glyph (the caret), **or** a single small accessory.
+- Each variant is named after its role, and its one distinct trait should hint at what it does.
+- Add each new variant to this section with its trait and purpose before it ships.
+
+| Variant | Changed trait | Purpose |
+| ------- | ------------- | ------- |
+| -       | -             | -       |

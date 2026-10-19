@@ -126,6 +126,10 @@ export interface UseGenerationResult {
     attachments?: GenerationAttachment[],
   ) => Promise<void>;
   stop: () => void;
+  /** The last run ended in an error (not a stop). Cleared when the next run starts. */
+  lastRunFailed: boolean;
+  /** Re-sends the run that failed, with the same prompt and attachments. */
+  retry: () => void;
   answerClarification: (answer: string) => void;
   cancelClarifications: () => void;
   submitClarifications: () => void;
@@ -197,6 +201,7 @@ export function useGeneration({
   onRestoreInput,
 }: UseGenerationOptions): UseGenerationResult {
   const [isSending, setIsSending] = useState(false);
+  const [lastRunFailed, setLastRunFailed] = useState(false);
   const [localMessages, setLocalMessages] = useState<ChatMessage[]>([]);
   const [currentVersion, setCurrentVersion] = useState(0);
   const [generationPhase, setGenerationPhase] = useState<GenerationPhaseEvent | null>(null);
@@ -222,6 +227,8 @@ export function useGeneration({
   // survive the history refetch that the same failure triggers. Without this the
   // notice would flash and be wiped by the next history sync.
   const runFailureRef = useRef<ChatMessage | null>(null);
+  // The arguments of the run that failed, for `retry`.
+  const failedSendRef = useRef<Parameters<UseGenerationResult['send']> | null>(null);
   const seenProjectIdRef = useRef(projectId);
   const previewRef = useRef(preview);
   previewRef.current = preview;
@@ -249,6 +256,8 @@ export function useGeneration({
     // the in-flight flag has to be released here or every later send is rejected.
     inFlightRef.current = false;
     runFailureRef.current = null;
+    failedSendRef.current = null;
+    setLastRunFailed(false);
     setIsSending(false);
     setGenerationPhase(null);
     setActiveFile(null);
@@ -381,6 +390,8 @@ export function useGeneration({
       onClearInputRef.current?.();
       if (!editTargetOverride) onClearEditTargetRef.current?.();
       runFailureRef.current = null;
+      failedSendRef.current = null;
+      setLastRunFailed(false);
       setIsSending(true);
       setAgentLiveMessage('Agent started');
       setGenerationPhase({ phase: 'planning', label: 'Planning your app' });
@@ -614,6 +625,13 @@ export function useGeneration({
           };
           runFailureRef.current = failureMessage;
           setLocalMessages((previous) => [...previous, failureMessage]);
+          failedSendRef.current = [
+            messageOverride,
+            directionResponseOverride,
+            editTargetOverride,
+            attachments,
+          ];
+          setLastRunFailed(true);
         }
         // The server commits files and versions mid-run and keeps them on failure
         // ("Completed changes were kept"), so the code pane, preview and version
@@ -647,6 +665,11 @@ export function useGeneration({
     },
     [isSending, selectedModel, selectedProvider, projectId, reasoningEffort],
   );
+
+  const retry = useCallback(() => {
+    const failed = failedSendRef.current;
+    if (failed) void send(...failed);
+  }, [send]);
 
   const answerClarification = useCallback(
     (answer: string) => {
@@ -709,6 +732,8 @@ export function useGeneration({
     setActiveDesignDirections,
     send,
     stop,
+    lastRunFailed,
+    retry,
     answerClarification,
     cancelClarifications,
     submitClarifications,

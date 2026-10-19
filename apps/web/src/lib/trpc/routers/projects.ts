@@ -24,6 +24,9 @@ function generateSlug(name: string): string {
   );
 }
 
+/** A generation run counts as in flight for this long: the generate route's 800s cap, rounded up. */
+const ACTIVE_RUN_WINDOW_MS = 15 * 60 * 1000;
+
 type ProjectRow = { id: string; updatedAt: Date };
 interface ProjectListCursor {
   u: string;
@@ -249,6 +252,17 @@ export const projectsRouter = router({
           // Zero files means the project was never built: the dashboard
           // shows an empty card instead of a preview.
           _count: { select: { files: true } },
+          // An in-flight build, for the card's generating mark. Runs older
+          // than the generate route's maxDuration (800s) were killed without
+          // settling their status, so they don't count.
+          generationRuns: {
+            where: {
+              status: { in: ['RUNNING', 'WAITING_RUNTIME', 'VERIFYING'] },
+              startedAt: { gte: new Date(Date.now() - ACTIVE_RUN_WINDOW_MS) },
+            },
+            take: 1,
+            select: { id: true },
+          },
         },
       });
       return paginateProjects(projects, input.limit);

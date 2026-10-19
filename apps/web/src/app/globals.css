@@ -88,7 +88,7 @@
 
   /*
    * Dot-grid surface for project thumbnails with nothing to preview. The dots
-   * are drawn on a canvas (dashboard/dot-grid.tsx) inside `.dot-grid-board`,
+   * are drawn on a canvas (components/dot-grid.tsx) inside `.dot-grid-board`,
    * which leans toward the cursor while the surrounding `.group` is hovered,
    * with a soft glow at the cursor (`.dot-grid-glow`). The pointer variables
    * are set there.
@@ -132,6 +132,25 @@
     opacity: 1;
   }
 
+  /*
+   * The empty preview while the first build runs: the card hover glow, held
+   * centred and breathing at low strength (the dots pulse in dot-grid.tsx).
+   */
+  .dot-grid--pulse.dot-grid-glow::after {
+    background: radial-gradient(
+      60% 60% at 50% 50%,
+      color-mix(in srgb, var(--primary) 6%, transparent),
+      transparent 70%
+    );
+    animation: dot-grid-pulse 2.4s ease-in-out infinite;
+  }
+
+  @keyframes dot-grid-pulse {
+    50% {
+      opacity: 1;
+    }
+  }
+
   /* Reduced motion: the hover still recolours the dots; no tilt or glow. */
   @media (prefers-reduced-motion: reduce) {
     .group:hover .dot-grid-board {
@@ -140,6 +159,118 @@
 
     .dot-grid-glow::after {
       display: none;
+    }
+  }
+
+  /*
+   * The Prompt Shield mark (components/Logo.tsx). Lime by default; a text-*
+   * utility overrides it. The mouth (cursor) mumbles while working, the
+   * caret squints once when a build finishes and the mark shakes once on an
+   * error. `Mascot` adds `.logo--blink` for its random eye blink. The
+   * cursor's hard on/off blink is reserved for the favicon
+   * (use-favicon-blink.ts) and the trailer.
+   */
+  .logo {
+    color: var(--primary);
+  }
+
+  .logo-caret {
+    transform-origin: 13px 14.5px;
+    transform-box: view-box;
+  }
+
+  .logo-cursor {
+    transform-origin: 20.25px 18.5px;
+    transform-box: view-box;
+  }
+
+  .logo--working .logo-cursor {
+    animation: logo-mumble 1.6s ease-in-out infinite;
+  }
+
+  .logo--done .logo-caret {
+    animation: logo-squint 400ms ease-out 1;
+  }
+
+  .logo--blink .logo-caret {
+    animation: logo-blink 120ms ease-in-out 1;
+  }
+
+  .logo--error {
+    animation: logo-shake 400ms ease-in-out 1;
+  }
+
+  @keyframes logo-mumble {
+    0% {
+      transform: translateX(0) scaleX(1);
+    }
+    18% {
+      transform: translateX(-0.6px) scaleX(0.6);
+    }
+    32% {
+      transform: translateX(0.4px) scaleX(1.15);
+    }
+    50% {
+      transform: translateX(0) scaleX(0.85);
+    }
+    68% {
+      transform: translateX(0.8px) scaleX(1.1);
+    }
+    82% {
+      transform: translateX(-0.3px) scaleX(0.7);
+    }
+    100% {
+      transform: translateX(0) scaleX(1);
+    }
+  }
+
+  @keyframes logo-squint {
+    40% {
+      transform: scaleY(0.4);
+    }
+  }
+
+  @keyframes logo-blink {
+    50% {
+      transform: scaleY(0.1);
+    }
+  }
+
+  @keyframes logo-shake {
+    20%,
+    60% {
+      transform: translateX(-2px);
+    }
+    40%,
+    80% {
+      transform: translateX(2px);
+    }
+  }
+
+  /* The editor's mascot status row: done plays, then the row fades out. */
+  .logo-status--done {
+    animation: logo-status-out 300ms ease-out 500ms both;
+  }
+
+  @keyframes logo-status-out {
+    to {
+      opacity: 0;
+    }
+  }
+
+  /*
+   * Reduced motion keeps only the eye blink (design.md §9.2). The selector
+   * outranks the blanket 0.01ms rule at the end of this file.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    .logo,
+    .logo-cursor,
+    .logo-caret {
+      animation: none !important;
+    }
+
+    .logo.logo--blink .logo-caret {
+      animation: logo-blink 120ms ease-in-out 1 !important;
     }
   }
 }

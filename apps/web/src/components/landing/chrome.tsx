@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { Menu, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { cn } from '@app-builder/ui/utils';
-import { Logo } from '@/components/brand/logo';
+import { LogoLockup } from '@/components/Logo';
 import { COLUMN, GUTTER } from './primitives';
 
 const NAV = [
@@ -36,7 +36,7 @@ export function SiteHeader() {
             aria-label="Sovereign home"
             className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40"
           >
-            <Logo />
+            <LogoLockup />
           </Link>
 
           <nav aria-label="Primary" className="hidden items-center gap-1 lg:flex">

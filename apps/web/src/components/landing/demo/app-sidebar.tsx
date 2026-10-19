@@ -1,20 +1,12 @@
 'use client';
 
-import {
-  Command,
-  LayoutDashboard,
-  LayoutTemplate,
-  LogOut,
-  Plus,
-  Settings,
-  Users,
-} from 'lucide-react';
+import { LayoutDashboard, LayoutTemplate, LogOut, Plus, Settings, Users } from 'lucide-react';
 import { cn } from '@app-builder/ui/utils';
+import { LogoLockup } from '@/components/Logo';
 
 /**
  * The signed-in sidebar, rebuilt from `components/layout/sidebar.tsx`:
- * 256px, `bg-background-subtle`, the accent Command tile + uppercase
- * wordmark, a `New project` button, the `Workspace` section label, and the
+ * 256px, `bg-background-subtle`, the logo lockup, a `New project` button, the `Workspace` section label, and the
  * four real nav routes. Label, icon and active treatment are the shipped ones.
  */
 const NAV_ITEMS = [
@@ -27,13 +19,8 @@ const NAV_ITEMS = [
 export function AppSidebar({ active = 'Projects' }: { active?: string }) {
   return (
     <aside className="hidden w-[200px] shrink-0 flex-col border-r border-border bg-background-subtle lg:flex xl:w-[212px]">
-      <div className="flex h-16 shrink-0 items-center gap-3 px-4">
-        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground shadow-[0_0_0_1px_rgba(184,255,90,0.3)]">
-          <Command className="h-4 w-4" strokeWidth={2.5} />
-        </span>
-        <span className="text-[13px] font-bold uppercase tracking-[0.2em] text-foreground">
-          Sovereign
-        </span>
+      <div className="flex h-16 shrink-0 items-center px-4">
+        <LogoLockup size="nav" />
       </div>
 
       <div className="px-3 pt-1">

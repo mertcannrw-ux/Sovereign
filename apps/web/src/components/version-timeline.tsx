@@ -18,7 +18,7 @@ export interface VersionTimelineEntry {
   isRestore?: boolean;
 }
 
-interface VersionTimelineProps {
+export interface VersionTimelineProps {
   /** Every version, ascending. Nothing is hidden - a long history scrolls. */
   versions: VersionTimelineEntry[];
   /** The version the project is currently at. */

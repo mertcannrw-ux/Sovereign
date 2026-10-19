@@ -4,11 +4,11 @@ import { useMemo, useState, type ReactNode, type RefObject } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { cn } from '@app-builder/ui/utils';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import type { ChatMessage } from '@app-builder/shared';
 import { DesignDirectionCards } from '@/components/design-direction-cards';
+import { Mascot, useLogoState, type LogoState } from '@/components/Logo';
 import type {
   DesignDirectionsEventData,
   ActiveFileState,
@@ -21,13 +21,11 @@ import {
   AlertCircle,
   Bot,
   ChevronRight,
-  Clock,
   Eye,
   FileCode2,
   Image as ImageIcon,
   Loader2,
   Trash2,
-  User,
 } from 'lucide-react';
 
 function formatTime(date: Date): string {
@@ -294,6 +292,59 @@ function ToolStepsDisplay({ toolCalls }: { toolCalls: unknown }) {
   );
 }
 
+// The status row holds "done" this long; it starts fading at 500ms (.logo-status--done).
+const STATUS_DONE_MS = 800;
+
+/**
+ * The mascot status row above the prompt box, and the only mascot once the
+ * conversation has started: working while a run streams, done (then fades
+ * out) when it succeeds, error with a retry when it fails.
+ */
+function MascotStatus({
+  isSending,
+  failed,
+  onRetry,
+}: {
+  isSending: boolean;
+  failed: boolean;
+  onRetry: () => void;
+}) {
+  const progress = useLogoState(isSending, STATUS_DONE_MS);
+  // A failed run skips "done": the failure flag lands in the same render that
+  // ends the run.
+  const state: LogoState = failed && !isSending ? 'error' : progress;
+
+  return (
+    <div role="status" aria-live="polite">
+      {state === 'idle' ? null : (
+        <div
+          className={cn(
+            'flex items-center gap-2 px-1 pb-2.5 text-sm',
+            state === 'done' && 'logo-status--done',
+          )}
+        >
+          <Mascot size={20} state={state} />
+          <p className="min-w-0 flex-1 truncate">
+            <span className="text-foreground">Sovereign</span>{' '}
+            <span className="text-foreground-muted">
+              {state === 'error' ? 'hit a problem' : state === 'done' ? 'is done' : 'is building…'}
+            </span>
+          </p>
+          {state === 'error' ? (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="shrink-0 rounded-item px-1.5 py-0.5 text-xs font-medium text-foreground-secondary transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40"
+            >
+              Retry
+            </button>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export interface ChatPanelProps {
   messages: ChatMessage[];
   historyLoading: boolean;
@@ -302,7 +353,12 @@ export interface ChatPanelProps {
   isLoadingOlder: boolean;
   onLoadOlder?: () => void;
   isSending: boolean;
-  selectedModel: string;
+  /** The last run ended in an error; the status row offers `onRetry`. */
+  lastRunFailed: boolean;
+  onRetry: () => void;
+  /** Whether the user has an AI provider key; undefined while it loads. */
+  hasApiKey: boolean | undefined;
+  onAddApiKey: () => void;
   generationPhase: GenerationPhaseEvent | null;
   liveThinking: string | null;
   liveAnswer: string;
@@ -337,7 +393,10 @@ export function ChatPanel({
   isLoadingOlder,
   onLoadOlder,
   isSending,
-  selectedModel,
+  lastRunFailed,
+  onRetry,
+  hasApiKey,
+  onAddApiKey,
   generationPhase,
   liveThinking,
   liveAnswer,
@@ -391,14 +450,30 @@ export function ChatPanel({
         )}
 
         {!historyLoading && !historyErrorMessage && messages.length === 0 && (
-          <div className="flex flex-col items-center justify-center px-6 py-20 text-center">
-            <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
-              <Bot className="h-6 w-6" />
-            </div>
-            <p className="text-sm font-medium text-foreground-secondary">Ready to build</p>
-            <p className="mt-1 max-w-xs text-xs text-foreground-muted">
-              Add your API keys in Settings, then describe the app you want to create.
-            </p>
+          <div className="flex min-h-full flex-col items-center justify-center px-6 py-12 text-center">
+            <Mascot size={48} state="idle" />
+            {hasApiKey === false ? (
+              <>
+                <h2 className="mt-5 text-base font-semibold text-foreground">
+                  I need a key first.
+                </h2>
+                <p className="mt-1.5 max-w-xs text-sm text-foreground-muted">
+                  Sovereign runs on your own API key. Add one and we&apos;re ready.
+                </p>
+                <Button className="mt-5" onClick={onAddApiKey}>
+                  Add API key
+                </Button>
+              </>
+            ) : hasApiKey ? (
+              <>
+                <h2 className="mt-5 text-base font-semibold text-foreground">
+                  What are we building?
+                </h2>
+                <p className="mt-1.5 max-w-xs text-sm text-foreground-muted">
+                  Describe it below. I&apos;ll take it from there.
+                </p>
+              </>
+            ) : null}
           </div>
         )}
 
@@ -413,59 +488,36 @@ export function ChatPanel({
             </button>
           </div>
         )}
-        {messages.map((msg) => (
-          <div
-            key={msg.id}
-            className={cn(
-              'chat-message',
-              msg.role === 'user' ? 'chat-message--user' : 'chat-message--assistant',
-            )}
-          >
-            <div className="mx-auto max-w-3xl space-y-2">
-              <div className="flex items-center gap-2">
+        {messages.map((msg) =>
+          msg.role === 'user' ? (
+            <div key={msg.id} className="px-4 py-2">
+              <div className="mx-auto flex max-w-3xl justify-end">
                 <div
-                  className={cn(
-                    'flex h-6 w-6 items-center justify-center rounded-full',
-                    msg.role === 'user'
-                      ? 'bg-background-muted text-foreground-secondary'
-                      : 'bg-primary/10 text-primary',
-                  )}
+                  className="min-w-0 max-w-[85%] rounded-2xl rounded-br-md border border-border bg-background-subtle px-3.5 py-2"
+                  title={formatTime(new Date(msg.timestamp))}
                 >
-                  {msg.role === 'user' ? (
-                    <User className="h-3.5 w-3.5" />
-                  ) : (
-                    <Bot className="h-3.5 w-3.5" />
-                  )}
+                  <MessageContent content={msg.content} />
                 </div>
-                <span className="text-xs font-medium text-foreground-secondary">
-                  {msg.role === 'user' ? 'You' : 'Assistant'}
-                </span>
-                <span className="flex items-center gap-1 text-xs text-foreground-muted">
-                  <Clock className="h-3 w-3" />
-                  {formatTime(new Date(msg.timestamp))}
-                </span>
-                <Badge variant="outline" className="ml-auto px-1.5 py-0 text-[10px]">
-                  {msg.model}
-                </Badge>
               </div>
-              <div className="space-y-2 pl-8">
+            </div>
+          ) : (
+            <div key={msg.id} className="px-4 py-3">
+              <div className="mx-auto max-w-3xl space-y-2">
                 {msg.toolCalls && <ToolStepsDisplay toolCalls={msg.toolCalls} />}
                 <MessageContent content={msg.content} thinking={msg.thinking} />
-              </div>
-              {msg.tokenUsage && (
-                <div className="pl-8 pt-1">
-                  <span className="text-[10px] text-foreground-muted">
+                {msg.tokenUsage && (
+                  <p className="text-[10px] text-foreground-muted">
                     {msg.tokenUsage.totalTokens} tokens
-                  </span>
-                </div>
-              )}
+                  </p>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          ),
+        )}
 
         {clarifyingQuestions.length > 0 && !isSending && (
-          <div className="chat-message chat-message--assistant">
-            <div className="mx-auto max-w-3xl pl-8">
+          <div className="px-4 py-3">
+            <div className="mx-auto max-w-3xl">
               <div className="overflow-hidden rounded-xl border border-primary/30 bg-primary/5">
                 {!isReviewingClarifications ? (
                   (() => {
@@ -599,8 +651,8 @@ export function ChatPanel({
         )}
 
         {activeDesignDirections && !isSending && (
-          <div className="chat-message chat-message--assistant">
-            <div className="mx-auto max-w-3xl pl-8">
+          <div className="px-4 py-3">
+            <div className="mx-auto max-w-3xl">
               <DesignDirectionCards
                 data={activeDesignDirections}
                 onSelect={async (directionId) => {
@@ -634,67 +686,53 @@ export function ChatPanel({
         )}
 
         {isSending && (
-          <div className="chat-message chat-message--assistant">
-            <div className="mx-auto max-w-3xl">
-              <div className="flex items-center gap-2">
-                <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-primary">
-                  <Bot className="h-3.5 w-3.5" />
-                </div>
-                <span className="text-xs font-medium text-foreground-secondary">Assistant</span>
-                <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
-                  {selectedModel}
-                </Badge>
-              </div>
-              <div className="pl-8 pt-2">
-                <div className="overflow-hidden rounded-lg border border-border bg-background-muted/20">
-                  <div className="flex items-center gap-2 px-3 py-2 text-sm text-foreground-muted">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                    <span className="flex-1">
-                      {generationPhase?.label ?? 'Starting generation'}
-                    </span>
-                    {liveThinking && (
-                      <button
-                        type="button"
-                        onClick={() => setShowLiveThinking((v) => !v)}
-                        className="flex items-center gap-1 text-xs font-medium text-foreground-muted transition-colors hover:text-foreground-secondary"
-                      >
-                        <ChevronRight
-                          className={cn(
-                            'h-3.5 w-3.5 transition-transform duration-200',
-                            showLiveThinking && 'rotate-90',
-                          )}
-                        />
-                        {showLiveThinking ? 'Hide reasoning' : 'Show reasoning'}
-                      </button>
-                    )}
-                  </div>
-                  {showLiveThinking && liveThinking && (
-                    <div className="border-t border-border px-3 py-2.5">
-                      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-[1.6] text-foreground-muted">
-                        {liveThinking}
-                      </pre>
-                    </div>
-                  )}
-                </div>
-                {liveAnswer && (
-                  // The answer streams in here in the same rendering the settled
-                  // message gets; `ready` replaces this with the transcript entry.
-                  <div className="animate-fade-in mt-2 rounded-lg border border-border bg-background-muted/20 px-3 py-2.5">
-                    <MessageContent content={liveAnswer} />
-                  </div>
-                )}
-                {activeFile && (
-                  <div className="mt-2 flex items-center gap-2 rounded-md border border-border bg-background-muted px-2.5 py-2 font-mono text-[11px]">
-                    <FileCode2 className="h-3.5 w-3.5 text-primary" />
-                    <span className="min-w-0 flex-1 truncate text-foreground-secondary">
-                      {activeFile.path}
-                    </span>
-                    <span className="text-foreground-muted">
-                      Ln {activeFile.line}, Col {activeFile.column}
-                    </span>
-                  </div>
+          <div className="px-4 py-3">
+            <div className="mx-auto max-w-3xl space-y-2">
+              <div className="flex items-center gap-2 text-xs text-foreground-muted">
+                <span className="min-w-0 flex-1 truncate">
+                  {generationPhase?.label ?? 'Starting generation'}
+                </span>
+                {liveThinking && (
+                  <button
+                    type="button"
+                    onClick={() => setShowLiveThinking((v) => !v)}
+                    className="flex shrink-0 items-center gap-1 font-medium transition-colors hover:text-foreground-secondary"
+                  >
+                    <ChevronRight
+                      className={cn(
+                        'h-3.5 w-3.5 transition-transform duration-200',
+                        showLiveThinking && 'rotate-90',
+                      )}
+                    />
+                    {showLiveThinking ? 'Hide reasoning' : 'Show reasoning'}
+                  </button>
                 )}
               </div>
+              {showLiveThinking && liveThinking && (
+                <div className="rounded-lg border border-border bg-background-muted/20 px-3 py-2.5">
+                  <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-[1.6] text-foreground-muted">
+                    {liveThinking}
+                  </pre>
+                </div>
+              )}
+              {liveAnswer && (
+                // The answer streams in here in the same rendering the settled
+                // message gets; `ready` replaces this with the transcript entry.
+                <div className="animate-fade-in">
+                  <MessageContent content={liveAnswer} />
+                </div>
+              )}
+              {activeFile && (
+                <div className="flex items-center gap-2 rounded-md border border-border bg-background-muted px-2.5 py-2 font-mono text-[11px]">
+                  <FileCode2 className="h-3.5 w-3.5 text-primary" />
+                  <span className="min-w-0 flex-1 truncate text-foreground-secondary">
+                    {activeFile.path}
+                  </span>
+                  <span className="text-foreground-muted">
+                    Ln {activeFile.line}, Col {activeFile.column}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -702,7 +740,10 @@ export function ChatPanel({
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="border-t border-border bg-background-subtle p-2.5 sm:p-3">{footer}</div>
+      <div className="px-2.5 pb-2.5 pt-1 sm:px-3 sm:pb-3">
+        <MascotStatus isSending={isSending} failed={lastRunFailed} onRetry={onRetry} />
+        {footer}
+      </div>
     </div>
   );
 }

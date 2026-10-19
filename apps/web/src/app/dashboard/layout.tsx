@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Logo } from '@/components/brand/logo';
+import { LogoLockup } from '@/components/Logo';
 import { Sidebar, SidebarToggle } from '@/components/layout/sidebar';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -17,7 +17,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         {/* Mobile header with toggle */}
         <div className="flex h-16 shrink-0 items-center gap-3 border-b border-border bg-background px-4 md:hidden">
           <SidebarToggle open={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
-          <Logo size="md" />
+          <LogoLockup size="md" />
         </div>
 
         {/* Page content */}

@@ -43,16 +43,20 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Logo, useLogoState } from '@/components/Logo';
 import { trpc } from '@/lib/trpc/client';
 import { isTypingTarget } from '@/lib/keyboard';
 import { motion } from 'framer-motion';
 import { cn } from '@app-builder/ui/utils';
 import { templateGuides, templates } from '@/data/templates';
-import { DotGrid } from './dot-grid';
+import { DotGrid } from '@/components/dot-grid';
 import { TemplatePicker } from './template-picker';
 
 // Matches the `description` limit on projects.create, where the prompt is stored.
 const PROMPT_LIMIT = 500;
+
+// How often the list refetches while a project is building.
+const BUILD_POLL_MS = 5000;
 
 // Shortcuts to catalog templates; each inserts that template's brief.
 const promptStarters = [
@@ -171,6 +175,8 @@ interface ProjectSummary {
   liveUrl: string | null;
   /** Never built: no generated files and nothing to preview. */
   isEmpty: boolean;
+  /** A build is running right now. */
+  isGenerating: boolean;
 }
 
 /** A project is empty until a build writes files or gives it something to preview. */
@@ -308,6 +314,13 @@ function LiveLink({ url }: { url: string }) {
   );
 }
 
+/** Blinks while the project builds, squints once when it finishes, then goes away. */
+function BuildMark({ isGenerating }: { isGenerating: boolean }) {
+  const state = useLogoState(isGenerating);
+  if (state === 'idle') return null;
+  return <Logo size={20} state={state} className="shrink-0" />;
+}
+
 /**
  * The card's link is a stretched overlay rather than a wrapper, so the menu
  * and live-site link stay valid, independently focusable siblings.
@@ -332,6 +345,7 @@ function ProjectCard({ project, actions }: { project: ProjectSummary; actions: P
       />
       <div className="pointer-events-none relative px-4 py-3.5 [&_a]:pointer-events-auto">
         <div className="flex items-center gap-2">
+          <BuildMark isGenerating={project.isGenerating} />
           <h3 className="truncate text-sm font-medium tracking-[-0.01em]">{project.name}</h3>
           {project.isEmpty ? null : (
             <Badge variant={statusVariant[project.status]} className="shrink-0 text-[10px]">
@@ -374,6 +388,13 @@ function DashboardContent() {
     { search: debouncedSearch || undefined },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+      // Poll while a card is building, so it flips back when the build ends.
+      refetchInterval: (query) =>
+        query.state.data?.pages.some((page) =>
+          page.projects.some((p) => p.generationRuns.length > 0),
+        )
+          ? BUILD_POLL_MS
+          : false,
     },
   );
   const orgsQuery = trpc.organizations.list.useQuery();
@@ -468,6 +489,7 @@ function DashboardContent() {
           thumbnailUrl: p.thumbnailUrl,
           liveUrl,
         }),
+        isGenerating: p.generationRuns.length > 0,
       };
     });
   }, [projectsQuery.data]);

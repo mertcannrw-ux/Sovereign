@@ -8,12 +8,13 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { VersionTimeline } from '@/components/version-timeline';
 import type { VersionTimelineEntry } from '@/components/version-timeline';
+import { VersionHistoryMenu } from '@/components/project/version-history-menu';
 import { trpc } from '@/lib/trpc/client';
 import { getPreviewCursorTarget, useSmoothCursor } from '@/lib/use-smooth-cursor';
 import { sortPreviewFiles, usePreviewRuntime } from '@/lib/use-preview-runtime';
 import { useGeneration } from '@/lib/use-generation';
+import { useFaviconBlink } from '@/lib/use-favicon-blink';
 import { ChatPanel } from '@/components/project/chat-panel';
 import {
   PromptBar,
@@ -39,6 +40,8 @@ import {
 const LEFT_PANEL_MIN = 20;
 const LEFT_PANEL_MAX = 75;
 const LEFT_PANEL_DEFAULT = 38;
+// The chat column never gets narrower than this, whatever the percentage says.
+const CHAT_MIN_PX = 360;
 
 export default function ProjectPage() {
   const params = useParams<{ id: string }>();
@@ -54,6 +57,8 @@ function ProjectWorkspace() {
   const projectQuery = trpc.projects.getById.useQuery({ id: projectId });
   const utils = trpc.useUtils();
   const modelsQuery = trpc.apiKeys.listModels.useQuery();
+  // Drives the chat's empty state: "I need a key first" vs "What are we building?".
+  const apiKeysQuery = trpc.apiKeys.list.useQuery();
   // Newest page first; older pages append via loadOlderMessages below.
   const historyQuery = trpc.chat.getHistory.useInfiniteQuery(
     {
@@ -115,6 +120,7 @@ function ProjectWorkspace() {
       setTabPill({ left: el.offsetLeft, width: el.offsetWidth });
     }
   }, [activeTab]);
+  const panelsRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const lastMessageTailRef = useRef<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -135,10 +141,12 @@ function ProjectWorkspace() {
 
     const applyWidth = () => {
       frame = 0;
-      const totalWidth = window.innerWidth;
-      if (totalWidth <= 0) return;
-      const newWidthPercent = (pendingClientX / totalWidth) * 100;
-      const clamped = Math.min(Math.max(newWidthPercent, LEFT_PANEL_MIN), LEFT_PANEL_MAX);
+      // Measured against the panels row, which starts after the sidebar rail.
+      const rect = panelsRef.current?.getBoundingClientRect();
+      if (!rect || rect.width <= 0) return;
+      const newWidthPercent = ((pendingClientX - rect.left) / rect.width) * 100;
+      const min = Math.max(LEFT_PANEL_MIN, (CHAT_MIN_PX / rect.width) * 100);
+      const clamped = Math.min(Math.max(newWidthPercent, min), LEFT_PANEL_MAX);
       setLeftPanelWidth(clamped);
     };
 
@@ -276,6 +284,7 @@ function ProjectWorkspace() {
     onClearInput: () => setInput(''),
     onRestoreInput: (text) => setInput(text),
   });
+  useFaviconBlink(generation.isSending);
 
   const handleQuickEdit = useCallback(
     (prompt: string, element: SelectedPreviewElement) => {
@@ -468,6 +477,14 @@ function ProjectWorkspace() {
     [versionsQuery.data],
   );
 
+  const hasVersions = versionTimelineEntries.length > 0;
+  const canDeploy = hasVersions && preview.status === 'ready';
+  // Never built: no saved files and no version. The preview shows a bare dot
+  // grid until the first build lands (files stream into the sandbox mid-run,
+  // but the server copy only refetches when it ends).
+  const isEmptyProject =
+    filesQuery.isSuccess && filesQuery.data.length === 0 && versionsQuery.isSuccess && !hasVersions;
+
   if (status === 'loading') {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
@@ -510,6 +527,15 @@ function ProjectWorkspace() {
         />
 
         <div className="ml-auto flex items-center gap-3">
+          <VersionHistoryMenu
+            versions={versionTimelineEntries}
+            currentVersion={generation.currentVersion}
+            selectedVersion={selectedVersion}
+            onSelectVersion={handleSelectVersion}
+            onRestoreVersion={handleRestoreVersion}
+            isLoading={versionsQuery.isLoading}
+          />
+
           {deployError && (
             <span
               role="alert"
@@ -555,8 +581,10 @@ function ProjectWorkspace() {
               <TooltipTrigger asChild>
                 <Button
                   size="default"
+                  // Lime only when there is something to ship; muted until then.
+                  variant={canDeploy || deployPhase !== 'idle' ? 'default' : 'secondary'}
                   className="h-9 gap-2 rounded-lg px-4 text-xs font-semibold shadow-sm sm:text-sm"
-                  disabled={deployPhase !== 'idle' || preview.status !== 'ready'}
+                  disabled={!canDeploy || deployPhase !== 'idle'}
                   onClick={() => void handleDeploy()}
                 >
                   <Rocket className="h-4 w-4" />
@@ -570,7 +598,12 @@ function ProjectWorkspace() {
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
-                {deployError ?? (liveUrl ? `Live at ${liveUrl}` : 'Publish this app to the web.')}
+                {deployError ??
+                  (liveUrl
+                    ? `Live at ${liveUrl}`
+                    : hasVersions
+                      ? 'Publish this app to the web.'
+                      : 'Build something first, then deploy it.')}
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
@@ -587,18 +620,7 @@ function ProjectWorkspace() {
         </div>
       </header>
 
-      <div className="border-b border-border bg-background-subtle">
-        <VersionTimeline
-          versions={versionTimelineEntries}
-          currentVersion={generation.currentVersion}
-          selectedVersion={selectedVersion}
-          onSelectVersion={handleSelectVersion}
-          onRestoreVersion={handleRestoreVersion}
-          isLoading={versionsQuery.isLoading}
-        />
-      </div>
-
-      <div className="relative flex flex-1 overflow-hidden">
+      <div ref={panelsRef} className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
         {isResizing && (
           <div
             className="fixed inset-0 z-50 cursor-col-resize select-none"
@@ -608,7 +630,7 @@ function ProjectWorkspace() {
 
         <div
           className={cn(
-            'flex flex-col border-r border-border bg-background',
+            'flex min-w-0 flex-col bg-background md:min-w-[360px]',
             // The 75ms width transition smooths keyboard/double-click jumps but
             // fights the cursor while dragging, so it is disabled during a drag
             // (the preview still reflows live at every intermediate width).
@@ -626,7 +648,10 @@ function ProjectWorkspace() {
             isLoadingOlder={historyQuery.isFetchingNextPage}
             onLoadOlder={generation.isSending ? undefined : loadOlderMessages}
             isSending={generation.isSending}
-            selectedModel={selectedModel}
+            lastRunFailed={generation.lastRunFailed}
+            onRetry={generation.retry}
+            hasApiKey={apiKeysQuery.data ? apiKeysQuery.data.length > 0 : undefined}
+            onAddApiKey={() => router.push('/settings?tab=providers')}
             generationPhase={generation.generationPhase}
             liveThinking={generation.liveThinking}
             liveAnswer={generation.liveAnswer}
@@ -687,16 +712,12 @@ function ProjectWorkspace() {
           onDoubleClick={() => setLeftPanelWidth(LEFT_PANEL_DEFAULT)}
           onKeyDown={onResizeKeyDown}
           className={cn(
-            'group relative hidden w-1.5 shrink-0 cursor-col-resize select-none bg-border transition-colors hover:bg-primary/50 md:block',
-            isResizing && 'bg-primary',
+            'relative z-10 hidden w-px shrink-0 cursor-col-resize select-none bg-border transition-colors hover:bg-border-strong focus-visible:bg-border-focus focus-visible:outline-none md:block',
+            isResizing && 'bg-primary hover:bg-primary',
           )}
           title="Drag to resize panels • Double-click to reset"
         >
-          <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col gap-1 rounded bg-border p-1 opacity-0 transition-opacity group-hover:opacity-100">
-            <div className="h-1.5 w-1.5 rounded-full bg-foreground-muted" />
-            <div className="h-1.5 w-1.5 rounded-full bg-foreground-muted" />
-            <div className="h-1.5 w-1.5 rounded-full bg-foreground-muted" />
-          </div>
+          <span aria-hidden="true" className="absolute inset-y-0 -left-1.5 -right-1.5" />
         </div>
 
         <div
@@ -705,7 +726,7 @@ function ProjectWorkspace() {
             mobilePane === 'chat' ? 'hidden md:flex' : 'flex',
           )}
         >
-          <div className="flex items-center gap-3 border-b border-border bg-background-subtle px-4 py-2.5">
+          <div className="flex min-w-0 items-center gap-3 border-b border-border bg-background px-4 py-2.5">
             <Tabs
               value={activeTab}
               onValueChange={(val) => {
@@ -715,7 +736,7 @@ function ProjectWorkspace() {
                   setTabPill({ left: el.offsetLeft, width: el.offsetWidth });
                 }
               }}
-              className="flex-1"
+              className="min-w-0 flex-1"
             >
               <TabsList className="relative h-8">
                 <div
@@ -748,7 +769,7 @@ function ProjectWorkspace() {
                 </TabsTrigger>
               </TabsList>
             </Tabs>
-            <div className="inline-flex h-8 items-center rounded-md bg-background-muted p-1">
+            <div className="inline-flex h-8 shrink-0 items-center rounded-md bg-background-muted p-1">
               <button
                 type="button"
                 className={cn(
@@ -770,7 +791,7 @@ function ProjectWorkspace() {
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8"
+              className="h-8 w-8 shrink-0"
               onClick={() => preview.refreshPreview()}
               aria-label="Refresh preview"
             >
@@ -787,8 +808,8 @@ function ProjectWorkspace() {
                 >
                   <History className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                   <p>
-                    The preview shows your current files. Use Restore v{selectedVersion} in the
-                    version bar to apply this snapshot.
+                    The preview shows your current files. Use Restore v{selectedVersion} in version
+                    history to apply this snapshot.
                   </p>
                 </div>
               ) : null}
@@ -812,6 +833,7 @@ function ProjectWorkspace() {
                 onElementSelected={() => requestAnimationFrame(() => inputRef.current?.focus())}
                 onQuickEdit={handleQuickEdit}
                 onRetry={filesQuery.isError ? () => void filesQuery.refetch() : preview.retry}
+                isEmpty={isEmptyProject}
               />
             </>
           )}

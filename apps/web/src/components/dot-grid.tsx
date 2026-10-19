@@ -17,6 +17,9 @@ const LENS_RADIUS = 36;
 const SPRING = 0.12;
 const DAMPING = 0.78;
 const HOVER_FADE_MS = 300;
+// `pulse`: the dots breathe between gray and this much lime over PULSE_MS.
+const PULSE_PEAK = 0.4;
+const PULSE_MS = 2400;
 // Per dot: home x, home y, offset x, offset y, velocity x, velocity y.
 const STRIDE = 6;
 
@@ -32,13 +35,15 @@ function tokenColor(name: string): Rgb {
 const mix = (from: number, to: number, t: number) => from + (to - from) * t;
 
 /**
- * The interactive dot grid behind a project card with nothing to preview.
- * While its `.group` card is hovered the dots turn lime, the ones near the
- * cursor are pushed away from it on springs and swell, and the board leans
- * toward the cursor (`.dot-grid-board` in globals.css). The animation loop
- * runs only while something is still moving.
+ * The dot grid behind anything with nothing to preview: an empty project card
+ * and the editor's empty preview. Inside a `.group` card it is interactive:
+ * while hovered the dots turn lime, the ones near the cursor are pushed away
+ * from it on springs and swell, and the board leans toward the cursor
+ * (`.dot-grid-board` in globals.css). With `pulse` (a first build running)
+ * the dots breathe slowly toward lime instead. The animation loop runs only
+ * while something is still moving.
  */
-export function DotGrid({ className }: { className?: string }) {
+export function DotGrid({ className, pulse = false }: { className?: string; pulse?: boolean }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -47,7 +52,7 @@ export function DotGrid({ className }: { className?: string }) {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
     const card = root?.closest<HTMLElement>('.group');
-    if (!root || !canvas || !ctx || !card) return;
+    if (!root || !canvas || !ctx) return;
 
     const gray = tokenColor('--foreground-muted');
     const lime = tokenColor('--primary');
@@ -106,6 +111,17 @@ export function DotGrid({ className }: { className?: string }) {
     function step(now: number) {
       const dt = lastTime ? Math.min(now - lastTime, 50) : 16;
       lastTime = now;
+      if (pulse) {
+        // Reduced motion holds a steady low tint instead of breathing.
+        const wave = reducedMotion.matches
+          ? 0.5
+          : (1 - Math.cos((now / PULSE_MS) * Math.PI * 2)) / 2;
+        hover = PULSE_PEAK * wave;
+        draw();
+        frame = reducedMotion.matches ? 0 : requestAnimationFrame(step);
+        if (!frame) lastTime = 0;
+        return;
+      }
       hover = Math.min(1, Math.max(0, hover + ((hovered ? 1 : -1) * dt) / HOVER_FADE_MS));
       const pushing = hovered && !reducedMotion.matches;
       let moving = false;
@@ -162,21 +178,26 @@ export function DotGrid({ className }: { className?: string }) {
 
     const resizeObserver = new ResizeObserver(layout);
     resizeObserver.observe(canvas);
-    card.addEventListener('mousemove', onMove);
-    card.addEventListener('mouseleave', onLeave);
+    if (pulse) wake();
+    card?.addEventListener('mousemove', onMove);
+    card?.addEventListener('mouseleave', onLeave);
     return () => {
       cancelAnimationFrame(frame);
       resizeObserver.disconnect();
-      card.removeEventListener('mousemove', onMove);
-      card.removeEventListener('mouseleave', onLeave);
+      card?.removeEventListener('mousemove', onMove);
+      card?.removeEventListener('mouseleave', onLeave);
     };
-  }, []);
+  }, [pulse]);
 
   return (
     <div
       ref={rootRef}
       aria-hidden="true"
-      className={cn('dot-grid dot-grid-glow pointer-events-none', className)}
+      className={cn(
+        'dot-grid dot-grid-glow pointer-events-none',
+        pulse && 'dot-grid--pulse',
+        className,
+      )}
     >
       <div className="dot-grid-board">
         <canvas ref={canvasRef} className="block h-full w-full" />
