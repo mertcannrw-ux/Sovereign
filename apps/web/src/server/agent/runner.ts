@@ -12,7 +12,7 @@ import { getR2ConfigStatus } from '@/server/assets/r2';
 import type { AIProvider } from '@app-builder/shared';
 import { decryptApiKey } from '@/lib/crypto';
 import { getDb } from '@/lib/db';
-import { requireProjectRole } from '@/server/authz';
+import { requireProjectAccess } from '@/server/authz';
 import {
   applyAgentEdit,
   cursorPositionAt,
@@ -109,7 +109,7 @@ export async function createAgentStream(params: AgentExecutionParams): Promise<A
   const db = getDb();
 
   try {
-    await requireProjectRole({ user, db }, projectId, 'EDITOR');
+    await requireProjectAccess({ user, db }, projectId);
   } catch (error) {
     if (error instanceof TRPCError) {
       return { ok: false, status: 404, body: { error: 'Project not found' } };
@@ -172,19 +172,23 @@ export async function createAgentStream(params: AgentExecutionParams): Promise<A
       );
     }
 
+    // Builds use the project Realm's keys, whoever asked for the build.
     const storedKey = await db.apiKey.findFirst({
-      where: { userId: user.id, provider: providerName },
+      where: { realmId: project.realmId, provider: providerName },
+      orderBy: { createdAt: 'desc' },
     });
     if (!storedKey) {
       return await failWithLeaseReleased(
-        { error: `No API key configured for ${providerName}` },
+        {
+          error: `This Realm has no ${providerName} key. An owner or admin can add one in Settings.`,
+        },
         400,
       );
     }
 
     const apiKey = decryptApiKey(storedKey.encryptedKey);
     const imageConfig = await db.imageProviderConfig.findFirst({
-      where: { userId: user.id, enabled: true },
+      where: { realmId: project.realmId, enabled: true },
     });
     const r2Status = getR2ConfigStatus();
     const isAssetStorageDurable = r2Status.isConfigured || process.env.NODE_ENV !== 'production';

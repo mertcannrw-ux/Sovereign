@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import { TRPCError } from '@trpc/server';
 import { publicProcedure, protectedProcedure, router } from '../trpc';
 import { checkRateLimit } from '@/server/rate-limit';
-import { ensurePersonalOrganization } from '@/server/onboarding';
+import { ensurePersonalRealm } from '@/server/onboarding';
 import { oauthProvidersEnabled } from '@/lib/auth';
 import { env } from '@/env';
 import { appUrl, isEmailConfigured, sendEmail } from '@/server/email';
@@ -61,14 +61,14 @@ export const authRouter = router({
       });
 
       try {
-        // A fresh account owns no organization and projects.create requires one,
-        // so without this the new user dead-ends at "No workspace found".
+        // A fresh account has no Realm and projects.create requires one, so
+        // without this the new user has nowhere to build.
         // Best-effort: the account already exists, so failing here must not turn
         // a successful signup into an error. The idempotent version in the
         // sign-in callback repairs the account on the next successful login.
-        await ensurePersonalOrganization(ctx.db, user.id, user.name, ctx.ipHash);
+        await ensurePersonalRealm(ctx.db, user.id, ctx.ipHash);
       } catch (error) {
-        console.error('[auth] failed to provision personal organization for new user', error);
+        console.error('[auth] failed to provision personal Realm for new user', error);
       }
 
       return {

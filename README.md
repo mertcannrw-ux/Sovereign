@@ -6,7 +6,7 @@ A bring-your-own-key (BYOK) AI app builder. Sovereign generates full-stack web a
 
 - **Code generation.** Generate, iterate on, and patch React and Next.js applications with the model of your choice.
 - **Visual editing.** Inspect and modify elements directly in the live preview.
-- **Multi-tenancy.** Organizations, members, projects, and roles (Owner, Editor, Viewer).
+- **Realms.** Shared workspaces where people and the Sovereign agent build from the same context: members with Owner, Admin and Member roles, the Realm's provider keys, a brief, readable memory, project comments, an activity feed, and rules with approvals. See [docs/specs/realms.md](docs/specs/realms.md).
 - **BYOK.** Provider API keys are encrypted at rest with AES-256-GCM.
 - **Persistence.** PostgreSQL through Prisma.
 
@@ -74,7 +74,7 @@ Then open [http://localhost:3000](http://localhost:3000).
 | `npm run db:migrate`      | Create and apply a migration (see below)         |
 | `npm run db:deploy`       | Apply pending migrations                         |
 | `npm run db:status`       | Show which migrations are applied                |
-| `npm run db:seed`         | Seed the admin user and personal organization    |
+| `npm run db:seed`         | Seed the admin user and their personal Realm     |
 | `npm run db:studio`       | Open Prisma Studio                               |
 | `npm run interest:report` | List users who tried to subscribe to a paid plan |
 

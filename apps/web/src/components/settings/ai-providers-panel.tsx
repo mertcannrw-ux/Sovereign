@@ -17,6 +17,7 @@ import { Logo } from '@/components/Logo';
 import { PROVIDER_LOGOS, ProviderMark } from '@/components/landing/provider-logos';
 import { cn } from '@app-builder/ui/utils';
 import { trpc } from '@/lib/trpc/client';
+import { canManageRealm, useCurrentRealm } from '@/lib/use-current-realm';
 
 /* ── Providers ───────────────────────────────────────────── */
 
@@ -52,9 +53,24 @@ type RowStatus =
 /* ── Panel ───────────────────────────────────────────────── */
 
 export function AIProvidersPanel() {
+  const { realm } = useCurrentRealm();
+  if (!realm) {
+    return <Loader2 className="h-6 w-6 animate-spin text-foreground-muted" />;
+  }
+  // Keyed so switching Realms drops the previous Realm's open dialogs.
+  return (
+    <RealmProviders key={realm.id} realmId={realm.id} canManage={canManageRealm(realm.role)} />
+  );
+}
+
+/** The current Realm's keys. Everyone sees what is connected; Owner/Admin change it. */
+function RealmProviders({ realmId, canManage }: { realmId: string; canManage: boolean }) {
   const utils = trpc.useUtils();
-  const keysQuery = trpc.apiKeys.list.useQuery();
-  const modelsQuery = trpc.apiKeys.listModels.useQuery(undefined, { enabled: keysQuery.isSuccess });
+  const keysQuery = trpc.apiKeys.list.useQuery({ realmId });
+  const modelsQuery = trpc.apiKeys.listModels.useQuery(
+    { realmId },
+    { enabled: keysQuery.isSuccess },
+  );
   const [connecting, setConnecting] = useState<ProviderInfo | null>(null);
   const [managing, setManaging] = useState<ProviderInfo | null>(null);
 
@@ -78,7 +94,9 @@ export function AIProvidersPanel() {
       <section>
         <h2 className="text-2xl font-semibold tracking-[-0.035em] text-foreground">AI providers</h2>
         <p className="mt-2 text-sm text-foreground-muted">
-          Sovereign uses your own keys. They&apos;re encrypted and only sent to the provider.
+          {canManage
+            ? 'Everyone in this Realm builds with these keys. They are encrypted and only sent to the provider.'
+            : 'Everyone in this Realm builds with these keys. Only owners and admins can change them.'}
         </p>
 
         {keysQuery.isLoading ? (
@@ -89,7 +107,10 @@ export function AIProvidersPanel() {
           <>
             {keys.length === 0 && (
               <p className="mt-6 flex items-center gap-2.5 text-sm text-foreground-secondary">
-                <Logo size={20} state="idle" />I need a key first. Connect one below.
+                <Logo size={20} state="idle" />
+                {canManage
+                  ? 'I need a key first. Connect one below.'
+                  : 'I need a key first. Ask an owner or admin to connect one.'}
               </p>
             )}
             <ul className="mt-6 divide-y divide-border rounded-card border border-border">
@@ -98,6 +119,7 @@ export function AIProvidersPanel() {
                   key={provider.id}
                   provider={provider}
                   status={statusFor(provider.id)}
+                  canManage={canManage}
                   onConnect={() => setConnecting(provider)}
                   onManage={() => setManaging(provider)}
                 />
@@ -107,15 +129,17 @@ export function AIProvidersPanel() {
         )}
       </section>
 
-      <ImageGenerationSection />
+      <ImageGenerationSection realmId={realmId} canManage={canManage} />
 
       <ConnectDialog
+        realmId={realmId}
         provider={connecting}
         existing={connecting ? keyFor(connecting.id) : undefined}
         onClose={() => setConnecting(null)}
         onConnected={refresh}
       />
       <ManageDialog
+        realmId={realmId}
         provider={managing}
         apiKey={managing ? keyFor(managing.id) : undefined}
         status={managing ? statusFor(managing.id) : { kind: 'disconnected' }}
@@ -135,11 +159,13 @@ export function AIProvidersPanel() {
 function ProviderRow({
   provider,
   status,
+  canManage,
   onConnect,
   onManage,
 }: {
   provider: ProviderInfo;
   status: RowStatus;
+  canManage: boolean;
   onConnect: () => void;
   onManage: () => void;
 }) {
@@ -152,6 +178,22 @@ function ProviderRow({
         <p className="truncate text-sm font-medium text-foreground">{provider.name}</p>
         <StatusLine status={status} isOllama={provider.id === 'ollama'} />
       </div>
+      {canManage && <RowAction status={status} onConnect={onConnect} onManage={onManage} />}
+    </li>
+  );
+}
+
+function RowAction({
+  status,
+  onConnect,
+  onManage,
+}: {
+  status: RowStatus;
+  onConnect: () => void;
+  onManage: () => void;
+}) {
+  return (
+    <>
       {status.kind === 'disconnected' && (
         <Button variant="outline" size="sm" onClick={onConnect}>
           Connect
@@ -167,7 +209,7 @@ function ProviderRow({
           Manage
         </Button>
       )}
-    </li>
+    </>
   );
 }
 
@@ -203,11 +245,13 @@ function StatusLine({ status, isOllama }: { status: RowStatus; isOllama: boolean
 /* ── Connect ─────────────────────────────────────────────── */
 
 function ConnectDialog({
+  realmId,
   provider,
   existing,
   onClose,
   onConnected,
 }: {
+  realmId: string;
   provider: ProviderInfo | null;
   existing?: { label: string | null; baseUrl: string | null };
   onClose: () => void;
@@ -220,6 +264,7 @@ function ConnectDialog({
           // Keyed so each open starts from a clean form.
           <ConnectForm
             key={provider.id}
+            realmId={realmId}
             provider={provider}
             existing={existing}
             onDone={() => {
@@ -234,10 +279,12 @@ function ConnectDialog({
 }
 
 function ConnectForm({
+  realmId,
   provider,
   existing,
   onDone,
 }: {
+  realmId: string;
   provider: ProviderInfo;
   existing?: { label: string | null; baseUrl: string | null };
   onDone: () => void;
@@ -261,6 +308,7 @@ function ConnectForm({
     setError(null);
     try {
       await saveMutation.mutateAsync({
+        realmId,
         provider: provider.id,
         key: needsKey ? apiKey.trim() : undefined,
         // Keep the existing label so replacing a key updates it instead of adding a second one.
@@ -355,6 +403,7 @@ function ConnectForm({
 /* ── Manage ──────────────────────────────────────────────── */
 
 function ManageDialog({
+  realmId,
   provider,
   apiKey,
   status,
@@ -362,8 +411,9 @@ function ManageDialog({
   onReplace,
   onRemoved,
 }: {
+  realmId: string;
   provider: ProviderInfo | null;
-  apiKey?: { id: string; maskedKey: string; baseUrl: string | null };
+  apiKey?: { id: string; maskedKey: string | null; baseUrl: string | null };
   status: RowStatus;
   onClose: () => void;
   onReplace: () => void;
@@ -380,7 +430,7 @@ function ManageDialog({
 
   const remove = async () => {
     if (!apiKey) return;
-    await deleteMutation.mutateAsync({ id: apiKey.id });
+    await deleteMutation.mutateAsync({ realmId, id: apiKey.id });
     onRemoved();
     close();
   };
@@ -404,7 +454,7 @@ function ManageDialog({
             <div className="flex items-center justify-between gap-4 px-4 py-3">
               <dt className="text-foreground-muted">{isOllama ? 'Server URL' : 'API key'}</dt>
               <dd className="truncate font-mono text-foreground">
-                {isOllama ? (apiKey.baseUrl ?? OLLAMA_DEFAULT_URL) : apiKey.maskedKey}
+                {isOllama ? (apiKey.baseUrl ?? OLLAMA_DEFAULT_URL) : (apiKey.maskedKey ?? '****')}
               </dd>
             </div>
           </dl>
@@ -443,8 +493,8 @@ function ManageDialog({
 
 /* ── Image generation ────────────────────────────────────── */
 
-function ImageGenerationSection() {
-  const configQuery = trpc.imageProvider.get.useQuery();
+function ImageGenerationSection({ realmId, canManage }: { realmId: string; canManage: boolean }) {
+  const configQuery = trpc.imageProvider.get.useQuery({ realmId });
   const saveMutation = trpc.imageProvider.save.useMutation();
   const testMutation = trpc.imageProvider.test.useMutation();
   const deleteMutation = trpc.imageProvider.delete.useMutation();
@@ -468,7 +518,12 @@ function ImageGenerationSection() {
     event.preventDefault();
     setResult(null);
     try {
-      await saveMutation.mutateAsync({ baseUrl: endpoint, apiKey: key || undefined, model });
+      await saveMutation.mutateAsync({
+        realmId,
+        baseUrl: endpoint,
+        apiKey: key || undefined,
+        model,
+      });
       await configQuery.refetch();
       setOpen(false);
     } catch (err) {
@@ -482,7 +537,7 @@ function ImageGenerationSection() {
   const test = async () => {
     setResult(null);
     try {
-      setResult(await testMutation.mutateAsync());
+      setResult(await testMutation.mutateAsync({ realmId }));
     } catch (err) {
       setResult({
         success: false,
@@ -493,7 +548,7 @@ function ImageGenerationSection() {
 
   const remove = async () => {
     if (!config) return;
-    await deleteMutation.mutateAsync({ id: config.id });
+    await deleteMutation.mutateAsync({ realmId, id: config.id });
     await configQuery.refetch();
     setOpen(false);
   };
@@ -518,15 +573,16 @@ function ImageGenerationSection() {
             )}
           </p>
         </div>
-        {config ? (
-          <Button variant="ghost" size="sm" onClick={openDialog}>
-            Manage
-          </Button>
-        ) : (
-          <Button variant="outline" size="sm" onClick={openDialog}>
-            Set up
-          </Button>
-        )}
+        {canManage &&
+          (config ? (
+            <Button variant="ghost" size="sm" onClick={openDialog}>
+              Manage
+            </Button>
+          ) : (
+            <Button variant="outline" size="sm" onClick={openDialog}>
+              Set up
+            </Button>
+          ))}
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>

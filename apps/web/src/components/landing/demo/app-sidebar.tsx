@@ -1,18 +1,17 @@
 'use client';
 
-import { LayoutDashboard, LayoutTemplate, LogOut, Plus, Settings, Users } from 'lucide-react';
+import { LayoutDashboard, LayoutTemplate, LogOut, Plus, Settings } from 'lucide-react';
 import { cn } from '@app-builder/ui/utils';
 import { LogoLockup } from '@/components/Logo';
 
 /**
  * The signed-in sidebar, rebuilt from `components/layout/sidebar.tsx`:
- * 256px, `bg-background-subtle`, the logo lockup, a `New project` button, the `Workspace` section label, and the
- * four real nav routes. Label, icon and active treatment are the shipped ones.
+ * 256px, `bg-background-subtle`, the logo lockup, a `New project` button, the current Realm's name as the section
+ * label, and the real nav routes. Label, icon and active treatment are the shipped ones.
  */
 const NAV_ITEMS = [
   { label: 'Projects', icon: LayoutDashboard },
   { label: 'Templates', icon: LayoutTemplate },
-  { label: 'Team', icon: Users },
   { label: 'Settings', icon: Settings },
 ];
 
@@ -32,7 +31,7 @@ export function AppSidebar({ active = 'Projects' }: { active?: string }) {
 
       <nav className="flex-1 space-y-1 px-3 py-5">
         <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-muted">
-          Workspace
+          Personal
         </p>
         {NAV_ITEMS.map((item) => {
           const isActive = item.label === active;

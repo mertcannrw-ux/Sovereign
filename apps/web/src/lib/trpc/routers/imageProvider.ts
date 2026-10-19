@@ -9,45 +9,53 @@ import {
 import { protectedProcedure, router } from '../trpc';
 import { encryptApiKey, decryptApiKey, maskApiKey } from '@/lib/crypto';
 import { checkRateLimit } from '@/server/rate-limit';
+import { hasRealmRole, requireRealmRole } from '@/server/authz';
 
 export const imageProviderRouter = router({
   /**
-   * Get the current user's image provider config.
+   * The Realm's image provider config. Any member can see whether one is set
+   * up; only Owner/Admin see its endpoint and masked key.
    */
-  get: protectedProcedure.query(async ({ ctx }) => {
-    const config = await ctx.db.imageProviderConfig.findFirst({
-      where: { userId: ctx.user.id },
-      orderBy: { createdAt: 'desc' },
-    });
+  get: protectedProcedure
+    .input(z.object({ realmId: z.string().uuid() }))
+    .query(async ({ ctx, input }) => {
+      const { role } = await requireRealmRole(ctx, input.realmId, 'MEMBER');
+      const canManage = hasRealmRole(role, 'ADMIN');
+      const config = await ctx.db.imageProviderConfig.findFirst({
+        where: { realmId: input.realmId },
+        orderBy: { createdAt: 'desc' },
+      });
 
-    if (!config) return null;
+      if (!config) return null;
 
-    let maskedKey = '****';
-    try {
-      const plaintext = decryptApiKey(config.encryptedKey);
-      maskedKey = maskApiKey(plaintext);
-    } catch {
-      // Keep masked fallback
-    }
+      let maskedKey: string | null = null;
+      if (canManage) {
+        try {
+          maskedKey = maskApiKey(decryptApiKey(config.encryptedKey));
+        } catch {
+          maskedKey = '****';
+        }
+      }
 
-    return {
-      id: config.id,
-      baseUrl: config.baseUrl,
-      model: config.model,
-      label: config.label,
-      enabled: config.enabled,
-      maskedKey,
-      createdAt: config.createdAt,
-      lastUsedAt: config.lastUsedAt,
-    };
-  }),
+      return {
+        id: config.id,
+        baseUrl: canManage ? config.baseUrl : null,
+        model: config.model,
+        label: config.label,
+        enabled: config.enabled,
+        maskedKey,
+        createdAt: config.createdAt,
+        lastUsedAt: config.lastUsedAt,
+      };
+    }),
 
   /**
-   * Save (upsert) the current user's image provider config.
+   * Save (upsert) the Realm's image provider config. Owner/Admin.
    */
   save: protectedProcedure
     .input(
       z.object({
+        realmId: z.string().uuid(),
         baseUrl: z.string().min(1),
         apiKey: z.string().optional(),
         model: z.string().min(1).default('dall-e-3'),
@@ -56,6 +64,7 @@ export const imageProviderRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      await requireRealmRole(ctx, input.realmId, 'ADMIN');
       let normalizedBaseUrl = input.baseUrl.trim();
       if (!normalizedBaseUrl.startsWith('http://') && !normalizedBaseUrl.startsWith('https://')) {
         normalizedBaseUrl = `https://${normalizedBaseUrl}`;
@@ -72,7 +81,7 @@ export const imageProviderRouter = router({
       const normalizedEndpoint = normalizeImageEndpoint(normalizedBaseUrl);
 
       const existing = await ctx.db.imageProviderConfig.findFirst({
-        where: { userId: ctx.user.id, label: input.label },
+        where: { realmId: input.realmId, label: input.label },
       });
 
       let encryptedKey: string;
@@ -89,12 +98,13 @@ export const imageProviderRouter = router({
 
       const saved = await ctx.db.imageProviderConfig.upsert({
         where: {
-          userId_label: {
-            userId: ctx.user.id,
+          realmId_label: {
+            realmId: input.realmId,
             label: input.label,
           },
         },
         create: {
+          realmId: input.realmId,
           userId: ctx.user.id,
           baseUrl: normalizedEndpoint,
           encryptedKey,
@@ -128,13 +138,14 @@ export const imageProviderRouter = router({
     }),
 
   /**
-   * Delete the current user's image provider config.
+   * Delete the Realm's image provider config. Owner/Admin.
    */
   delete: protectedProcedure
-    .input(z.object({ id: z.string().uuid() }))
+    .input(z.object({ realmId: z.string().uuid(), id: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
+      await requireRealmRole(ctx, input.realmId, 'ADMIN');
       const existing = await ctx.db.imageProviderConfig.findFirst({
-        where: { id: input.id, userId: ctx.user.id },
+        where: { id: input.id, realmId: input.realmId },
       });
 
       if (!existing) {
@@ -153,63 +164,67 @@ export const imageProviderRouter = router({
 
   /**
    * Test connection to the image provider endpoint without generating an image.
+   * Owner/Admin.
    */
-  test: protectedProcedure.mutation(async ({ ctx }) => {
-    const rate = await checkRateLimit('apiKeyTest', ctx.user.id);
-    if (!rate.allowed) {
-      const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
-      throw new TRPCError({
-        code: 'TOO_MANY_REQUESTS',
-        message: `Too many connection tests. Try again in ${retryIn}s.`,
-      });
-    }
-
-    const config = await ctx.db.imageProviderConfig.findFirst({
-      where: { userId: ctx.user.id, enabled: true },
-    });
-
-    if (!config) {
-      throw new TRPCError({
-        code: 'NOT_FOUND',
-        message: 'No active image provider configuration found',
-      });
-    }
-    const plaintextKey = decryptApiKey(config.encryptedKey);
-
-    // Form test endpoint for models check (non-billable)
-    let modelsUrl = config.baseUrl;
-    if (modelsUrl.endsWith('/images/generations')) {
-      modelsUrl = modelsUrl.slice(0, -'/images/generations'.length);
-    }
-    modelsUrl = `${modelsUrl}/models`;
-
-    try {
-      const res = await ssrfFetch(
-        'openai',
-        modelsUrl,
-        {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${plaintextKey}`,
-          },
-        },
-        { validateUrl: true, timeout: 15_000 },
-      );
-
-      if (res.ok) {
-        return { success: true, message: 'Successfully connected to image provider endpoint' };
+  test: protectedProcedure
+    .input(z.object({ realmId: z.string().uuid() }))
+    .mutation(async ({ ctx, input }) => {
+      await requireRealmRole(ctx, input.realmId, 'ADMIN');
+      const rate = await checkRateLimit('apiKeyTest', ctx.user.id);
+      if (!rate.allowed) {
+        const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: `Too many connection tests. Try again in ${retryIn}s.`,
+        });
       }
-      return {
-        success: false,
-        message: `Endpoint returned status ${res.status}. Base URL and API key saved.`,
-      };
-    } catch (err) {
-      const errMessage = err instanceof Error ? err.message : String(err);
-      console.error(`[imageProvider] Connection check failed: ${errMessage}`);
-      return {
-        success: false,
-        message: 'Connection check failed. Configuration saved.',
-      };
-    }
-  }),
+
+      const config = await ctx.db.imageProviderConfig.findFirst({
+        where: { realmId: input.realmId, enabled: true },
+      });
+
+      if (!config) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'No active image provider configuration found',
+        });
+      }
+      const plaintextKey = decryptApiKey(config.encryptedKey);
+
+      // Form test endpoint for models check (non-billable)
+      let modelsUrl = config.baseUrl;
+      if (modelsUrl.endsWith('/images/generations')) {
+        modelsUrl = modelsUrl.slice(0, -'/images/generations'.length);
+      }
+      modelsUrl = `${modelsUrl}/models`;
+
+      try {
+        const res = await ssrfFetch(
+          'openai',
+          modelsUrl,
+          {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${plaintextKey}`,
+            },
+          },
+          { validateUrl: true, timeout: 15_000 },
+        );
+
+        if (res.ok) {
+          return { success: true, message: 'Successfully connected to image provider endpoint' };
+        }
+        return {
+          success: false,
+          message: `Endpoint returned status ${res.status}. Base URL and API key saved.`,
+        };
+      } catch (err) {
+        const errMessage = err instanceof Error ? err.message : String(err);
+        console.error(`[imageProvider] Connection check failed: ${errMessage}`);
+        return {
+          success: false,
+          message: 'Connection check failed. Configuration saved.',
+        };
+      }
+    }),
 });

@@ -2,9 +2,8 @@ import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { protectedProcedure, router } from '../trpc';
 import type { Context } from '../context';
-import type { ProjectRole } from '@app-builder/shared';
 import { env } from '@/env';
-import { requireProjectRole } from '@/server/authz';
+import { requireProjectAccess } from '@/server/authz';
 import { checkRateLimit } from '@/server/rate-limit';
 import {
   DeployRejectedError,
@@ -21,14 +20,6 @@ import {
   validateBundle,
 } from '@/server/deploy/user-apps';
 import { Prisma } from '@prisma-generated/prisma/client';
-
-async function assertProjectAccess(
-  ctx: Context,
-  projectId: string,
-  minimumRole: ProjectRole = 'VIEWER',
-): Promise<void> {
-  await requireProjectRole(ctx, projectId, minimumRole);
-}
 
 function assertDeployConfigured(): void {
   if (!isDeployConfigured()) {
@@ -98,7 +89,7 @@ export const deploymentsRouter = router({
   list: protectedProcedure
     .input(z.object({ projectId: z.string() }))
     .query(async ({ ctx, input }) => {
-      await assertProjectAccess(ctx, input.projectId, 'VIEWER');
+      await requireProjectAccess(ctx, input.projectId);
 
       const deployments = await ctx.db.deployment.findMany({
         where: { projectId: input.projectId },
@@ -120,7 +111,7 @@ export const deploymentsRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      await assertProjectAccess(ctx, input.projectId, 'EDITOR');
+      await requireProjectAccess(ctx, input.projectId);
       assertDeployConfigured();
       assertDeployDomainIsolated();
 
@@ -231,7 +222,7 @@ export const deploymentsRouter = router({
   unpublish: protectedProcedure
     .input(z.object({ projectId: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      await assertProjectAccess(ctx, input.projectId, 'EDITOR');
+      await requireProjectAccess(ctx, input.projectId);
       assertDeployConfigured();
 
       const project = await loadProject(ctx, input.projectId);
@@ -267,7 +258,7 @@ export const deploymentsRouter = router({
       }
 
       // Verify the caller has access to the parent project
-      await assertProjectAccess(ctx, deployment.projectId, 'VIEWER');
+      await requireProjectAccess(ctx, deployment.projectId);
 
       return deployment;
     }),

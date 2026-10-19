@@ -128,12 +128,12 @@ export async function expireOpenCheckoutSessions(
 type SyncDb = Pick<Prisma.TransactionClient, 'subscription'>;
 
 /**
- * Mirror one Stripe subscription onto its org's `Subscription` row.
+ * Mirror one Stripe subscription onto its Realm's `Subscription` row.
  *
  * Always re-reads the subscription from Stripe instead of trusting the event
  * body, so retried, duplicated or out-of-order webhooks all converge on
- * Stripe's current state. The org is resolved through our own
- * customer → organization mapping (created at checkout), never from event data.
+ * Stripe's current state. The Realm is resolved through our own
+ * customer → Realm mapping (created at checkout), never from event data.
  */
 export async function syncSubscription(
   db: SyncDb,
@@ -153,7 +153,7 @@ export async function syncSubscription(
     return;
   }
 
-  // A late event for an org's previous, already-ended subscription must not
+  // A late event for a Realm's previous, already-ended subscription must not
   // overwrite the subscription it has now.
   if (
     row.stripeSubscriptionId &&

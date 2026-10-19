@@ -1,17 +1,7 @@
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { protectedProcedure, router } from '../trpc';
-import type { Context } from '../context';
-import type { ProjectRole } from '@app-builder/shared';
-import { requireProjectRole } from '@/server/authz';
-
-async function assertProjectAccess(
-  ctx: Context,
-  projectId: string,
-  minimumRole: ProjectRole = 'VIEWER',
-): Promise<void> {
-  await requireProjectRole(ctx, projectId, minimumRole);
-}
+import { requireProjectAccess } from '@/server/authz';
 
 function defaultHandlerCode(): string {
   return [
@@ -32,7 +22,7 @@ export const functionsRouter = router({
   list: protectedProcedure
     .input(z.object({ projectId: z.string() }))
     .query(async ({ ctx, input }) => {
-      await assertProjectAccess(ctx, input.projectId, 'VIEWER');
+      await requireProjectAccess(ctx, input.projectId);
 
       const functions = await ctx.db.backendFunction.findMany({
         where: { projectId: input.projectId },
@@ -55,7 +45,7 @@ export const functionsRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      await assertProjectAccess(ctx, input.projectId, 'EDITOR');
+      await requireProjectAccess(ctx, input.projectId);
 
       // Check for duplicates
       const existing = await ctx.db.backendFunction.findUnique({
@@ -113,7 +103,7 @@ export const functionsRouter = router({
         });
       }
 
-      await assertProjectAccess(ctx, existing.projectId, 'EDITOR');
+      await requireProjectAccess(ctx, existing.projectId);
 
       const updated = await ctx.db.backendFunction.update({
         where: { id: input.id },
@@ -145,7 +135,7 @@ export const functionsRouter = router({
         });
       }
 
-      await assertProjectAccess(ctx, existing.projectId, 'EDITOR');
+      await requireProjectAccess(ctx, existing.projectId);
 
       await ctx.db.backendFunction.delete({ where: { id: input.id } });
 

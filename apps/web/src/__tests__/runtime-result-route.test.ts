@@ -15,13 +15,13 @@ import {
  */
 const mocks = vi.hoisted(() => ({
   getVerifiedSession: vi.fn(),
-  requireProjectRole: vi.fn(),
+  requireProjectAccess: vi.fn(),
   traceFindFirst: vi.fn(),
   traceUpdate: vi.fn(),
 }));
 
 vi.mock('@/lib/auth', () => ({ getVerifiedSession: mocks.getVerifiedSession }));
-vi.mock('@/server/authz', () => ({ requireProjectRole: mocks.requireProjectRole }));
+vi.mock('@/server/authz', () => ({ requireProjectAccess: mocks.requireProjectAccess }));
 vi.mock('@/lib/db', () => ({
   getDb: () => ({
     generationToolTrace: {
@@ -53,7 +53,7 @@ function postRuntimePayload(payload: unknown, requestId: string = REQUEST_ID) {
 describe('POST /api/generate/runtime/[requestId]', () => {
   beforeEach(() => {
     mocks.getVerifiedSession.mockReset().mockResolvedValue({ user: { id: USER_ID } });
-    mocks.requireProjectRole.mockReset().mockResolvedValue(undefined);
+    mocks.requireProjectAccess.mockReset().mockResolvedValue(undefined);
     mocks.traceFindFirst.mockReset().mockResolvedValue(ROW);
     mocks.traceUpdate.mockReset().mockResolvedValue({});
     takeRuntimeResult(REQUEST_ID);
@@ -122,7 +122,7 @@ describe('POST /api/generate/runtime/[requestId]', () => {
   });
 
   it('rejects a caller who cannot edit the project', async () => {
-    mocks.requireProjectRole.mockRejectedValue(new Error('forbidden'));
+    mocks.requireProjectAccess.mockRejectedValue(new Error('forbidden'));
 
     const response = await postRuntimePayload({
       status: 'complete',

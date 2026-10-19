@@ -8,7 +8,7 @@ import bcrypt from 'bcryptjs';
 import { getDb } from './db';
 import { canAdoptAccountByEmail } from './account-linking';
 import { checkRateLimit, hashIp, trustedClientIp } from '@/server/rate-limit';
-import { ensurePersonalOrganization } from '@/server/onboarding';
+import { ensurePersonalRealm } from '@/server/onboarding';
 import { LINK_COOKIE, decodeLinkIntent, type LinkIntent } from '@/server/account-link';
 
 export function oauthProvidersEnabled(): { google: boolean; github: boolean } {
@@ -96,20 +96,19 @@ function buildProviders(): NextAuthOptions['providers'] {
 }
 
 /**
- * Best-effort onboarding at sign-in: `projects.create` requires an
- * organizationId, so an account without any organization dead-ends at
- * "No workspace found". `ensurePersonalOrganization` is idempotent and creates
- * the personal workspace only when the user has none.
+ * Best-effort onboarding at sign-in: every user builds in their personal Realm
+ * until they join or create a shared one. `ensurePersonalRealm` is idempotent
+ * and creates it only when missing.
  *
  * Deliberately swallows failures: a provisioning problem (missing table,
  * transient database error) must never block an otherwise valid sign-in, and
  * the next sign-in retries.
  */
-async function ensureWorkspaceForSignIn(userId: string, name?: string | null): Promise<void> {
+async function ensureRealmForSignIn(userId: string): Promise<void> {
   try {
-    await ensurePersonalOrganization(getDb(), userId, name);
+    await ensurePersonalRealm(getDb(), userId);
   } catch (error) {
-    console.error('[auth] failed to ensure personal organization for user', userId, error);
+    console.error('[auth] failed to ensure personal Realm for user', userId, error);
   }
 }
 
@@ -165,7 +164,7 @@ export const authOptions: NextAuthOptions = {
       if (!account || account.provider === 'credentials') {
         // Password sign-in can be a brand-new user's first successful session
         // (registration is best-effort above), so provision here too.
-        if (user.id) await ensureWorkspaceForSignIn(user.id, user.name);
+        if (user.id) await ensureRealmForSignIn(user.id);
         return true;
       }
       const email = user.email?.trim().toLowerCase();
@@ -209,7 +208,7 @@ export const authOptions: NextAuthOptions = {
         user.name = owner.name;
         user.image = owner.avatarUrl;
         user.sessionVersion = owner.sessionVersion;
-        await ensureWorkspaceForSignIn(owner.id, owner.name);
+        await ensureRealmForSignIn(owner.id);
         return true;
       }
 
@@ -234,7 +233,7 @@ export const authOptions: NextAuthOptions = {
         user.sessionVersion = existing.sessionVersion;
         // Existing rows may predate onboarding, and an adopted OAuth identity
         // still needs a workspace it can create projects in.
-        await ensureWorkspaceForSignIn(existing.id, existing.name ?? user.name);
+        await ensureRealmForSignIn(existing.id);
         if (user.name && user.name !== existing.name) {
           await db.user.update({
             where: { id: existing.id },
@@ -259,7 +258,7 @@ export const authOptions: NextAuthOptions = {
       user.id = created.id;
       user.email = created.email;
       user.sessionVersion = created.sessionVersion;
-      await ensureWorkspaceForSignIn(created.id, created.name ?? user.name);
+      await ensureRealmForSignIn(created.id);
       return true;
     },
     async session({ session, token }) {

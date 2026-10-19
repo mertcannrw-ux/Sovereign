@@ -13,9 +13,12 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/trpc/client', () => ({
   trpc: {
-    organizations: {
+    realms: {
       list: {
-        useQuery: () => ({ data: [{ id: 'org-1', name: 'Workspace' }], isLoading: false }),
+        useQuery: () => ({
+          data: [{ id: 'realm-1', name: 'Personal', type: 'PERSONAL', role: 'OWNER' }],
+          isLoading: false,
+        }),
       },
     },
     billing: {
@@ -92,7 +95,7 @@ describe('BillingPanel after paid plans launch', () => {
     expect(screen.queryByText('Coming soon')).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Upgrade to Pro' }));
-    expect(mocks.checkout).toHaveBeenCalledWith({ organizationId: 'org-1', plan: 'pro' });
+    expect(mocks.checkout).toHaveBeenCalledWith({ realmId: 'realm-1', plan: 'pro' });
     expect(mocks.registerInterest).not.toHaveBeenCalled();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     vi.unstubAllGlobals();

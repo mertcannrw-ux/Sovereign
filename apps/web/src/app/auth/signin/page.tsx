@@ -20,6 +20,7 @@ import { primaryButton } from '@/components/landing/primitives';
 import { GITHUB_MARK, GOOGLE_MARK, ProviderMark } from '@/components/landing/provider-logos';
 import { Input } from '@/components/ui/input';
 import { trpc } from '@/lib/trpc/client';
+import { safeCallbackUrl, withCallback } from '@/lib/safe-callback';
 
 /** Monochrome sign-in marks from simple-icons (CC0), on the same 24x24 grid as `PROVIDER_LOGOS`. */
 /**
@@ -45,6 +46,7 @@ function SignInForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const oauthError = searchParams.get('error');
+  const callbackUrl = safeCallbackUrl(searchParams.get('callbackUrl'));
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState(
@@ -65,7 +67,7 @@ function SignInForm() {
     setIsLoading(true);
     try {
       const result = await signIn('credentials', { email, password, redirect: false });
-      if (result?.ok) router.push('/dashboard');
+      if (result?.ok) router.push(callbackUrl);
       else setError(result?.error ?? 'Invalid email or password.');
     } catch {
       setError('An unexpected error occurred. Please try again.');
@@ -77,7 +79,7 @@ function SignInForm() {
   async function handleOAuthSignIn(provider: string) {
     if (provider === 'google') setIsGoogleLoading(true);
     if (provider === 'github') setIsGithubLoading(true);
-    await signIn(provider, { callbackUrl: '/dashboard' });
+    await signIn(provider, { callbackUrl });
   }
 
   return (
@@ -85,7 +87,7 @@ function SignInForm() {
       eyebrow="Welcome back"
       title="Sign in to continue"
       copy="Access your projects, providers, and deployment workspace."
-      aside={{ href: '/auth/signup', label: 'Create account' }}
+      aside={{ href: withCallback('/auth/signup', callbackUrl), label: 'Create account' }}
     >
       <form onSubmit={handleSubmit} className="space-y-5">
         <div className="space-y-2">
@@ -185,7 +187,10 @@ function SignInForm() {
       )}
       <p className="mt-10 border-t border-border pt-6 text-sm text-foreground-muted">
         New to Sovereign?{' '}
-        <Link href="/auth/signup" className="font-medium text-foreground hover:text-primary">
+        <Link
+          href={withCallback('/auth/signup', callbackUrl)}
+          className="font-medium text-foreground hover:text-primary"
+        >
           Create an account
         </Link>
       </p>

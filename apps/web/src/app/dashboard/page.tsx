@@ -45,6 +45,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Logo, useLogoState } from '@/components/Logo';
 import { trpc } from '@/lib/trpc/client';
+import { useCurrentRealm } from '@/lib/use-current-realm';
 import { isTypingTarget } from '@/lib/keyboard';
 import { motion } from 'framer-motion';
 import { cn } from '@app-builder/ui/utils';
@@ -382,11 +383,13 @@ function DashboardContent() {
     return () => clearTimeout(timer);
   }, [search]);
 
-  // Paginated newest-first, filtered server-side so search matches every
-  // project, not just the pages loaded so far.
+  const { realm, error: realmsError, refetch: refetchRealms } = useCurrentRealm();
+  // The current Realm's projects, paginated newest-first and filtered
+  // server-side so search matches every project, not just the pages loaded.
   const projectsQuery = trpc.projects.list.useInfiniteQuery(
-    { search: debouncedSearch || undefined },
+    { realmId: realm?.id ?? '', search: debouncedSearch || undefined },
     {
+      enabled: Boolean(realm),
       getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
       // Poll while a card is building, so it flips back when the build ends.
       refetchInterval: (query) =>
@@ -397,7 +400,6 @@ function DashboardContent() {
           : false,
     },
   );
-  const orgsQuery = trpc.organizations.list.useQuery();
 
   const createMutation = trpc.projects.create.useMutation();
   const renameMutation = trpc.projects.update.useMutation({
@@ -508,23 +510,21 @@ function DashboardContent() {
   };
 
   /**
-   * Create a project in the first available workspace with the prompt as its
-   * brief, then open the editor, which seeds the prompt from the brief.
+   * Create a project in the current Realm with the prompt as its brief, then
+   * open the editor, which seeds the prompt from the brief.
    */
   async function createProject(event?: FormEvent) {
     event?.preventDefault();
     const brief = prompt.trim();
     if (!brief || isCreating) return;
-    const orgId = orgsQuery.data?.[0]?.id;
-    if (!orgId) {
-      // `organizations.list` only feeds this lookup, so a failure here is
-      // reported under the prompt instead of blocking the whole dashboard.
+    if (!realm) {
+      // Reported under the prompt instead of blocking the whole dashboard.
       setCreateError(
-        orgsQuery.isError
-          ? 'Could not load your workspaces. Check your connection and try again.'
-          : 'No workspace found. Create or join an organization first.',
+        realmsError
+          ? 'Could not load your Realms. Check your connection and try again.'
+          : 'Your Realms are still loading. Try again in a moment.',
       );
-      if (orgsQuery.isError) void orgsQuery.refetch();
+      if (realmsError) void refetchRealms();
       return;
     }
     setIsCreating(true);
@@ -533,7 +533,7 @@ function DashboardContent() {
       const project = await createMutation.mutateAsync({
         name: nameFromPrompt(brief),
         description: brief,
-        organizationId: orgId,
+        realmId: realm.id,
       });
       router.push(`/project/${project.id}`);
     } catch (error) {
@@ -704,7 +704,7 @@ function DashboardContent() {
         </section>
 
         <section className="mt-12">
-          {projectsQuery.isLoading ? (
+          {!realm || projectsQuery.isLoading ? (
             <div className="flex justify-center py-20">
               <div className="h-7 w-7 animate-spin rounded-full border-2 border-border border-t-primary" />
             </div>

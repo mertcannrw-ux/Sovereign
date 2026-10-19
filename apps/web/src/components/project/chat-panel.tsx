@@ -356,9 +356,10 @@ export interface ChatPanelProps {
   /** The last run ended in an error; the status row offers `onRetry`. */
   lastRunFailed: boolean;
   onRetry: () => void;
-  /** Whether the user has an AI provider key; undefined while it loads. */
+  /** Whether the project's Realm has an AI provider key; undefined while it loads. */
   hasApiKey: boolean | undefined;
-  onAddApiKey: () => void;
+  /** Opens key settings; absent when the user cannot manage the Realm's keys. */
+  onAddApiKey?: () => void;
   generationPhase: GenerationPhaseEvent | null;
   liveThinking: string | null;
   liveAnswer: string;
@@ -458,11 +459,15 @@ export function ChatPanel({
                   I need a key first.
                 </h2>
                 <p className="mt-1.5 max-w-xs text-sm text-foreground-muted">
-                  Sovereign runs on your own API key. Add one and we&apos;re ready.
+                  {onAddApiKey
+                    ? "Sovereign runs on this Realm's own API key. Add one and we're ready."
+                    : 'Ask an owner or admin of this Realm to add an API key.'}
                 </p>
-                <Button className="mt-5" onClick={onAddApiKey}>
-                  Add API key
-                </Button>
+                {onAddApiKey && (
+                  <Button className="mt-5" onClick={onAddApiKey}>
+                    Add API key
+                  </Button>
+                )}
               </>
             ) : hasApiKey ? (
               <>

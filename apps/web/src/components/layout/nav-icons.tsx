@@ -51,20 +51,6 @@ export function ProjectsIcon({ active, className }: NavIconProps) {
   );
 }
 
-/** Team: one person in front, a second behind their shoulder. */
-export function TeamIcon({ active, className }: NavIconProps) {
-  return (
-    <NavIconSvg className={className}>
-      <Filled active={active}>
-        <circle cx="7.5" cy="7" r="2.5" />
-        <path d="M2.75 16.25a4.75 4.75 0 0 1 9.5 0Z" />
-      </Filled>
-      <circle cx="14" cy="5.25" r="2" />
-      <path d="M14.5 10.25c1.6.35 2.75 2.1 2.75 6" />
-    </NavIconSvg>
-  );
-}
-
 /** New project: a plus on the same grid and stroke as the rest of the set. */
 export function NewProjectIcon({ className }: Omit<NavIconProps, 'active'>) {
   return (

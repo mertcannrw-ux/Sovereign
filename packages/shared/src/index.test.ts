@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   ProjectStatus,
-  ProjectRole,
-  OrganizationRole,
+  RealmRole,
+  RealmType,
   DeploymentStatus,
   JobStatus,
   SubscriptionStatus,
@@ -26,18 +26,17 @@ describe('enum schemas', () => {
     expect(() => ProjectStatus.parse('INVALID')).toThrow();
   });
 
-  it('ProjectRole accepts the three roles and rejects ADMIN', () => {
-    expect(ProjectRole.parse('OWNER')).toBe('OWNER');
-    expect(ProjectRole.parse('EDITOR')).toBe('EDITOR');
-    expect(ProjectRole.parse('VIEWER')).toBe('VIEWER');
-    expect(() => ProjectRole.parse('ADMIN')).toThrow();
+  it('RealmRole accepts OWNER/ADMIN/MEMBER', () => {
+    expect(RealmRole.parse('OWNER')).toBe('OWNER');
+    expect(RealmRole.parse('ADMIN')).toBe('ADMIN');
+    expect(RealmRole.parse('MEMBER')).toBe('MEMBER');
+    expect(() => RealmRole.parse('USER')).toThrow();
   });
 
-  it('OrganizationRole accepts OWNER/ADMIN/MEMBER', () => {
-    expect(OrganizationRole.parse('OWNER')).toBe('OWNER');
-    expect(OrganizationRole.parse('ADMIN')).toBe('ADMIN');
-    expect(OrganizationRole.parse('MEMBER')).toBe('MEMBER');
-    expect(() => OrganizationRole.parse('USER')).toThrow();
+  it('RealmType accepts PERSONAL/SHARED', () => {
+    expect(RealmType.parse('PERSONAL')).toBe('PERSONAL');
+    expect(RealmType.parse('SHARED')).toBe('SHARED');
+    expect(() => RealmType.parse('TEAM')).toThrow();
   });
 
   it('DeploymentStatus accepts the lifecycle states', () => {
@@ -96,7 +95,7 @@ describe('CreateProjectInput', () => {
       description: 'A test project',
       modelProvider: 'openai',
       modelName: 'gpt-4',
-      organizationId: UUID,
+      realmId: UUID,
     };
     expect(CreateProjectInput.parse(input)).toEqual(input);
   });
@@ -107,18 +106,18 @@ describe('CreateProjectInput', () => {
         name: '',
         modelProvider: 'openai',
         modelName: 'gpt-4',
-        organizationId: UUID,
+        realmId: UUID,
       }),
     ).toThrow();
   });
 
-  it('rejects a non-uuid organizationId', () => {
+  it('rejects a non-uuid realmId', () => {
     expect(() =>
       CreateProjectInput.parse({
         name: 'X',
         modelProvider: 'openai',
         modelName: 'gpt-4',
-        organizationId: 'not-a-uuid',
+        realmId: 'not-a-uuid',
       }),
     ).toThrow();
   });

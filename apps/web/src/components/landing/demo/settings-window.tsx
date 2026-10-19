@@ -15,10 +15,10 @@ import { AppSidebar } from './app-sidebar';
 
 const TABS = [
   { id: 'profile', label: 'Profile', Icon: CircleUser },
-  { id: 'providers', label: 'AI Providers', Icon: AIKey },
-  { id: 'teams', label: 'Team', Icon: Users },
-  { id: 'billing', label: 'Billing', Icon: CreditCard },
   { id: 'developer-api', label: 'Developer API', Icon: CodeXml },
+  { id: 'providers', label: 'AI Providers', Icon: AIKey },
+  { id: 'members', label: 'Members', Icon: Users },
+  { id: 'billing', label: 'Billing', Icon: CreditCard },
 ] as const;
 
 const PROVIDERS = [

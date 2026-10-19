@@ -307,7 +307,7 @@ Empty tree → SHA-256 of the empty string (no trailing newline). Unit-test empt
 
 #### Verify / CI worker
 
-`BackgroundJob` is a **table**, not a runtime. Confirmed: `prisma/schema.prisma` ~702, `JobStatus` enum, `lockedAt` / `runAfter` / `attempts` / `maxAttempts`. The only code use is `backgroundJob.deleteMany` in `organizations.ts`. `apps/web/src/server/workers/` is empty. Shared `JobStatus` is types only. Enqueue without a worker leaves rows `QUEUED` forever.
+`BackgroundJob` is a **table**, not a runtime. Confirmed: `prisma/schema.prisma` ~702, `JobStatus` enum, `lockedAt` / `runAfter` / `attempts` / `maxAttempts`. The only code use is `backgroundJob.deleteMany` in `realms.ts` (and account deletion). `apps/web/src/server/workers/` is empty. Shared `JobStatus` is types only. Enqueue without a worker leaves rows `QUEUED` forever.
 
 **Enqueue rule (honest skip):** generate may insert `BackgroundJob type: 'verify_project'` only when **all** of:
 

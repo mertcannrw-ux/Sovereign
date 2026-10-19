@@ -1,13 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
-import {
-  requireOrganizationRole,
-  requireProjectRole,
-  requireProjectEditor,
-  requireProjectOwner,
-  requireProjectViewer,
-} from './authz';
+import { hasRealmRole, requireProjectAccess, requireRealmRole } from './authz';
 import type { AuthzContext } from './authz';
 
 /**
@@ -17,18 +11,22 @@ import type { AuthzContext } from './authz';
  */
 function makeCtx(options: {
   userId?: string | null;
-  project?: { id: string; ownerId: string; organizationId: string } | null;
-  collaborator?: { role: 'OWNER' | 'EDITOR' | 'VIEWER' } | null;
-  membership?: { role: 'OWNER' | 'ADMIN' | 'MEMBER' } | null;
+  project?: { realmId: string; ownerId: string } | null;
+  membership?: { role: 'OWNER' | 'ADMIN' | 'MEMBER'; type?: 'PERSONAL' | 'SHARED' } | null;
 }): AuthzContext {
-  const { userId = 'user-1', project = null, collaborator = null, membership = null } = options;
+  const { userId = 'user-1', project = null, membership = null } = options;
 
   return {
     user: userId === null ? null : ({ id: userId } as AuthzContext['user']),
     db: {
       project: { findUnique: vi.fn(async () => project) },
-      projectCollaborator: { findUnique: vi.fn(async () => collaborator) },
-      organizationMember: { findUnique: vi.fn(async () => membership) },
+      realmMember: {
+        findUnique: vi.fn(async () =>
+          membership
+            ? { role: membership.role, realm: { type: membership.type ?? 'SHARED' } }
+            : null,
+        ),
+      },
     },
   } as unknown as AuthzContext;
 }
@@ -38,100 +36,86 @@ async function expectTrpcError(promise: Promise<unknown>, code: string) {
   await promise.catch((error: TRPCError) => expect(error.code).toBe(code));
 }
 
-describe('requireOrganizationRole', () => {
+describe('hasRealmRole', () => {
+  it('orders roles MEMBER < ADMIN < OWNER', () => {
+    expect(hasRealmRole('OWNER', 'ADMIN')).toBe(true);
+    expect(hasRealmRole('ADMIN', 'ADMIN')).toBe(true);
+    expect(hasRealmRole('MEMBER', 'ADMIN')).toBe(false);
+    expect(hasRealmRole('ADMIN', 'OWNER')).toBe(false);
+  });
+});
+
+describe('requireRealmRole', () => {
   it('rejects an anonymous caller', async () => {
-    const ctx = makeCtx({ userId: null, membership: { role: 'OWNER' } });
-    await expectTrpcError(requireOrganizationRole(ctx, 'org-1', 'MEMBER'), 'UNAUTHORIZED');
+    const ctx = makeCtx({ userId: null });
+    await expectTrpcError(requireRealmRole(ctx, 'realm-1', 'MEMBER'), 'UNAUTHORIZED');
   });
 
-  it('hides non-membership as NOT_FOUND', async () => {
+  it('hides a Realm from non-members behind NOT_FOUND', async () => {
     const ctx = makeCtx({ membership: null });
-    await expectTrpcError(requireOrganizationRole(ctx, 'org-1', 'MEMBER'), 'NOT_FOUND');
+    await expectTrpcError(requireRealmRole(ctx, 'realm-1', 'MEMBER'), 'NOT_FOUND');
   });
 
-  it('enforces the role hierarchy', async () => {
+  it('enforces the minimum role', async () => {
     const member = makeCtx({ membership: { role: 'MEMBER' } });
-    await expectTrpcError(requireOrganizationRole(member, 'org-1', 'ADMIN'), 'FORBIDDEN');
+    await expectTrpcError(requireRealmRole(member, 'realm-1', 'ADMIN'), 'FORBIDDEN');
 
     const admin = makeCtx({ membership: { role: 'ADMIN' } });
-    await expect(requireOrganizationRole(admin, 'org-1', 'ADMIN')).resolves.toEqual({
+    await expect(requireRealmRole(admin, 'realm-1', 'ADMIN')).resolves.toEqual({
+      realmId: 'realm-1',
       role: 'ADMIN',
+      realmType: 'SHARED',
     });
-    await expectTrpcError(requireOrganizationRole(admin, 'org-1', 'OWNER'), 'FORBIDDEN');
+    await expectTrpcError(requireRealmRole(admin, 'realm-1', 'OWNER'), 'FORBIDDEN');
 
-    const owner = makeCtx({ membership: { role: 'OWNER' } });
-    await expect(requireOrganizationRole(owner, 'org-1', 'OWNER')).resolves.toEqual({
+    const owner = makeCtx({ membership: { role: 'OWNER', type: 'PERSONAL' } });
+    await expect(requireRealmRole(owner, 'realm-1', 'OWNER')).resolves.toEqual({
+      realmId: 'realm-1',
       role: 'OWNER',
+      realmType: 'PERSONAL',
     });
   });
 });
 
-describe('requireProjectRole', () => {
-  const project = { id: 'proj-1', ownerId: 'owner-1', organizationId: 'org-1' };
+describe('requireProjectAccess', () => {
+  const project = { realmId: 'realm-1', ownerId: 'creator-1' };
 
   it('rejects an anonymous caller', async () => {
     const ctx = makeCtx({ userId: null, project });
-    await expectTrpcError(requireProjectRole(ctx, 'proj-1', 'VIEWER'), 'UNAUTHORIZED');
+    await expectTrpcError(requireProjectAccess(ctx, 'proj-1'), 'UNAUTHORIZED');
   });
 
-  it('returns NOT_FOUND for a project the caller cannot see', async () => {
+  it('returns NOT_FOUND for a missing project', async () => {
     const ctx = makeCtx({ project: null });
-    await expectTrpcError(requireProjectRole(ctx, 'missing', 'VIEWER'), 'NOT_FOUND');
+    await expectTrpcError(requireProjectAccess(ctx, 'missing'), 'NOT_FOUND');
   });
 
-  it('grants the project owner full access', async () => {
-    const ctx = makeCtx({ userId: 'owner-1', project });
-    await expect(requireProjectOwner(ctx, 'proj-1')).resolves.toEqual({
-      organizationId: 'org-1',
+  it("does not let a non-member reach a Realm's project", async () => {
+    const ctx = makeCtx({ userId: 'outsider', project, membership: null });
+    await expectTrpcError(requireProjectAccess(ctx, 'proj-1'), 'NOT_FOUND');
+  });
+
+  it('does not let the creator back in once they have left the Realm', async () => {
+    const ctx = makeCtx({ userId: 'creator-1', project, membership: null });
+    await expectTrpcError(requireProjectAccess(ctx, 'proj-1'), 'NOT_FOUND');
+  });
+
+  it("lets every member open and build the Realm's projects", async () => {
+    const ctx = makeCtx({ userId: 'member-1', project, membership: { role: 'MEMBER' } });
+    await expect(requireProjectAccess(ctx, 'proj-1')).resolves.toEqual({
+      realmId: 'realm-1',
+      role: 'MEMBER',
+      realmType: 'SHARED',
+      ownerId: 'creator-1',
     });
   });
 
-  it('honours collaborator roles', async () => {
-    const viewer = makeCtx({ project, collaborator: { role: 'VIEWER' } });
-    await expect(requireProjectViewer(viewer, 'proj-1')).resolves.toEqual({
-      organizationId: 'org-1',
-    });
-    await expectTrpcError(requireProjectEditor(viewer, 'proj-1'), 'FORBIDDEN');
-    await expectTrpcError(requireProjectOwner(viewer, 'proj-1'), 'FORBIDDEN');
-
-    const editor = makeCtx({ project, collaborator: { role: 'EDITOR' } });
-    await expect(requireProjectEditor(editor, 'proj-1')).resolves.toEqual({
-      organizationId: 'org-1',
-    });
-    await expectTrpcError(requireProjectOwner(editor, 'proj-1'), 'FORBIDDEN');
-  });
-
-  it('lets an org OWNER administer any project in the organization', async () => {
-    const ctx = makeCtx({ userId: 'org-owner', project, membership: { role: 'OWNER' } });
-    await expect(requireProjectOwner(ctx, 'proj-1')).resolves.toEqual({
-      organizationId: 'org-1',
-    });
-  });
-
-  it('maps an org ADMIN to project EDITOR, not OWNER', async () => {
-    const ctx = makeCtx({ userId: 'org-admin', project, membership: { role: 'ADMIN' } });
-    await expect(requireProjectEditor(ctx, 'proj-1')).resolves.toEqual({
-      organizationId: 'org-1',
-    });
-    // An org admin must not be able to delete the project or transfer it.
-    await expectTrpcError(requireProjectOwner(ctx, 'proj-1'), 'FORBIDDEN');
-  });
-
-  it('does not let a plain org MEMBER reach an unrelated project', async () => {
-    const ctx = makeCtx({ userId: 'org-member', project, membership: { role: 'MEMBER' } });
-    await expectTrpcError(requireProjectRole(ctx, 'proj-1', 'VIEWER'), 'NOT_FOUND');
-  });
-
-  it('prefers the collaborator row over a lower org role', async () => {
-    // Org MEMBER would be denied, but the explicit collaborator grant wins.
-    const ctx = makeCtx({
-      userId: 'user-2',
-      project,
-      collaborator: { role: 'EDITOR' },
-      membership: { role: 'MEMBER' },
-    });
-    await expect(requireProjectEditor(ctx, 'proj-1')).resolves.toEqual({
-      organizationId: 'org-1',
+  it('enforces a higher minimum role when asked', async () => {
+    const member = makeCtx({ project, membership: { role: 'MEMBER' } });
+    await expectTrpcError(requireProjectAccess(member, 'proj-1', 'ADMIN'), 'FORBIDDEN');
+    const admin = makeCtx({ project, membership: { role: 'ADMIN' } });
+    await expect(requireProjectAccess(admin, 'proj-1', 'ADMIN')).resolves.toMatchObject({
+      role: 'ADMIN',
     });
   });
 });

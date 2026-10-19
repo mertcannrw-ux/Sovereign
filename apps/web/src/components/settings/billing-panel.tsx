@@ -15,13 +15,18 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { trpc } from '@/lib/trpc/client';
+import { useCurrentRealm } from '@/lib/use-current-realm';
 
 type PaidPlan = 'pro' | 'business';
 
 const PLAN_DETAILS = {
   free: { name: 'Free', price: '$0', summary: '3 active projects' },
   pro: { name: 'Pro', price: '$25', summary: 'Unlimited projects' },
-  business: { name: 'Business', price: '$50', summary: 'Unlimited projects, built for teams' },
+  business: {
+    name: 'Business',
+    price: '$50',
+    summary: 'Unlimited projects, built for shared Realms',
+  },
 } as const;
 
 const STATUS_LABELS = {
@@ -41,9 +46,8 @@ function formatDate(value: Date | string): string {
 }
 
 export function BillingPanel() {
-  const orgsQuery = trpc.organizations.list.useQuery();
-  const [selectedOrgId, setSelectedOrgId] = useState('');
-  const orgId = selectedOrgId || orgsQuery.data?.[0]?.id || '';
+  const { realm, isLoading: realmsLoading } = useCurrentRealm();
+  const realmId = realm?.id ?? '';
   const [returnedFromCheckout, setReturnedFromCheckout] = useState(false);
   const [error, setError] = useState('');
 
@@ -57,9 +61,9 @@ export function BillingPanel() {
   }, []);
 
   const planQuery = trpc.billing.getPlan.useQuery(
-    { organizationId: orgId },
+    { realmId },
     {
-      enabled: Boolean(orgId),
+      enabled: Boolean(realmId),
       refetchInterval: (query) =>
         returnedFromCheckout && !query.state.data?.hasSubscription ? 2000 : false,
     },
@@ -81,7 +85,7 @@ export function BillingPanel() {
   async function startCheckout(plan: PaidPlan) {
     setError('');
     try {
-      const { url } = await checkoutMutation.mutateAsync({ organizationId: orgId, plan });
+      const { url } = await checkoutMutation.mutateAsync({ realmId, plan });
       window.location.assign(url);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not start checkout.');
@@ -91,14 +95,14 @@ export function BillingPanel() {
   async function openPortal() {
     setError('');
     try {
-      const { url } = await portalMutation.mutateAsync({ organizationId: orgId });
+      const { url } = await portalMutation.mutateAsync({ realmId });
       window.location.assign(url);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not open the billing portal.');
     }
   }
 
-  if (orgsQuery.isLoading || (orgId && planQuery.isLoading)) {
+  if (realmsLoading || (realmId && planQuery.isLoading)) {
     return (
       <div className="flex justify-center py-16">
         <Loader2 className="h-6 w-6 animate-spin text-foreground-muted" />
@@ -106,13 +110,11 @@ export function BillingPanel() {
     );
   }
 
-  if (!orgId || !billing) {
+  if (!realmId || !billing) {
     return (
       <Card className="border-border bg-background-subtle">
         <CardContent className="py-16 text-center text-sm text-foreground-muted">
-          {orgsQuery.isError || planQuery.isError
-            ? 'Could not load billing. Try again in a moment.'
-            : 'No workspace found. Create or join an organization first.'}
+          Could not load billing. Try again in a moment.
         </CardContent>
       </Card>
     );
@@ -129,24 +131,9 @@ export function BillingPanel() {
       <div>
         <h2 className="text-xl font-semibold text-foreground">Billing</h2>
         <p className="mt-1 text-sm text-foreground-muted">
-          Your plan covers the workspace. AI usage is billed by your own providers.
+          Your plan covers this Realm. AI usage is billed by its own providers.
         </p>
       </div>
-
-      {(orgsQuery.data?.length ?? 0) > 1 && (
-        <select
-          value={orgId}
-          onChange={(event) => setSelectedOrgId(event.target.value)}
-          className="h-10 rounded-lg border border-border bg-background-subtle px-3 text-sm text-foreground"
-          aria-label="Workspace"
-        >
-          {orgsQuery.data?.map((org) => (
-            <option key={org.id} value={org.id}>
-              {org.name}
-            </option>
-          ))}
-        </select>
-      )}
 
       {awaitingCheckout && (
         <div className="flex items-center gap-2 rounded-lg border border-border bg-background-subtle px-4 py-3 text-sm text-foreground-muted">
@@ -228,7 +215,7 @@ export function BillingPanel() {
 
       {!comingSoon && !billing.canManage && (
         <p className="text-sm text-foreground-muted">
-          Only workspace owners and admins can change the plan.
+          Only the owner of this Realm can change the plan.
         </p>
       )}
       {!comingSoon && !billing.billingConfigured && (

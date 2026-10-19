@@ -14,17 +14,29 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { CreateRealmDialog } from '@/components/realms/create-realm-dialog';
+import { RealmMark } from '@/components/realms/realm-mark';
+import { initials } from '@/lib/initials';
 import { isTypingTarget } from '@/lib/keyboard';
-import { NewProjectIcon, ProjectsIcon, TeamIcon, type NavIconProps } from './nav-icons';
-import { Settings, X, PanelLeftClose, PanelLeft, LogOut, Ellipsis } from 'lucide-react';
+import { useCurrentRealm } from '@/lib/use-current-realm';
+import { NewProjectIcon, ProjectsIcon, type NavIconProps } from './nav-icons';
+import {
+  Settings,
+  X,
+  PanelLeftClose,
+  PanelLeft,
+  LogOut,
+  Ellipsis,
+  ChevronsUpDown,
+  Plus,
+} from 'lucide-react';
 
-const navItems = [
-  { href: '/dashboard', label: 'Projects', icon: ProjectsIcon },
-  { href: '/dashboard/team', label: 'Team', icon: TeamIcon },
-];
+const navItems = [{ href: '/dashboard', label: 'Projects', icon: ProjectsIcon }];
 
 const focusRing =
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40';
@@ -61,15 +73,6 @@ function NavItem({
       <span className={fadeLabel(rail)}>{label}</span>
     </Link>
   );
-}
-
-/** Up to two initials: "Ada Lovelace" -> "AL", "ada@x.dev" -> "A". */
-function initials(name: string) {
-  const words = name.split(/\s+/).filter(Boolean);
-  const first = words[0] ?? 'U';
-  const last = words.at(-1) ?? '';
-  if (name.includes('@') || words.length < 2) return first.charAt(0).toUpperCase();
-  return (first.charAt(0) + last.charAt(0)).toUpperCase();
 }
 
 function SidebarTooltip({
@@ -327,6 +330,15 @@ export function Sidebar({ open, onClose, defaultCollapsed = false, className }: 
               </SidebarTooltip>
             </div>
 
+            <RealmSwitcher
+              rail={rail}
+              onNavigate={onClose}
+              onMenuOpenChange={(next) => {
+                setMenuOpen(next);
+                if (!next && !hoveringRef.current) schedulePeek(false, 150);
+              }}
+            />
+
             <SidebarTooltip label="New project" hint="N">
               <Link
                 href="/dashboard?new=true"
@@ -338,7 +350,7 @@ export function Sidebar({ open, onClose, defaultCollapsed = false, className }: 
                 }}
                 className={cn(
                   itemBase,
-                  'mt-4 border border-border bg-background-subtle px-[7px] text-sm font-medium text-foreground-secondary hover:border-border-strong hover:bg-background-muted hover:text-foreground',
+                  'mt-3 border border-border bg-background-subtle px-[7px] text-sm font-medium text-foreground-secondary hover:border-border-strong hover:bg-background-muted hover:text-foreground',
                 )}
               >
                 <NewProjectIcon />
@@ -404,6 +416,89 @@ export function Sidebar({ open, onClose, defaultCollapsed = false, className }: 
           </TooltipProvider>
         </aside>
       </div>
+    </>
+  );
+}
+
+/**
+ * The current Realm, at the top of the rail. Its menu switches Realms (which
+ * changes the projects and keys shown everywhere), creates one, or opens the
+ * Realm's settings.
+ */
+function RealmSwitcher({
+  rail,
+  onNavigate,
+  onMenuOpenChange,
+}: {
+  rail: boolean;
+  onNavigate: () => void;
+  onMenuOpenChange: (open: boolean) => void;
+}) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const { realm, realms, selectRealm } = useCurrentRealm();
+  const [creating, setCreating] = useState(false);
+  const name = realm?.name ?? 'Realm';
+
+  // A project belongs to one Realm; switching away from it leaves the project.
+  const afterSwitch = () => {
+    if (pathname.startsWith('/project/')) router.push('/dashboard');
+    onNavigate();
+  };
+
+  return (
+    <>
+      <DropdownMenu onOpenChange={onMenuOpenChange}>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label={`Realm: ${name}. Switch Realm`}
+            className={cn(
+              itemBase,
+              'group mt-4 px-1 text-left hover:bg-background-subtle data-[state=open]:bg-background-subtle',
+            )}
+          >
+            <RealmMark name={name} />
+            <span className={cn('flex-1 truncate text-sm font-medium', fadeLabel(rail))}>
+              {realm ? name : ''}
+            </span>
+            <ChevronsUpDown
+              aria-hidden
+              className={cn('mr-1 h-4 w-4 shrink-0 text-foreground-muted', fadeLabel(rail))}
+            />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side="bottom" align="start" sideOffset={6} className="w-[224px]">
+          <DropdownMenuLabel className="px-2 py-1.5 text-xs font-medium text-foreground-muted">
+            Realms
+          </DropdownMenuLabel>
+          <DropdownMenuRadioGroup
+            value={realm?.id}
+            onValueChange={(realmId) => {
+              selectRealm(realmId);
+              afterSwitch();
+            }}
+          >
+            {realms.map((candidate) => (
+              <DropdownMenuRadioItem key={candidate.id} value={candidate.id}>
+                <span className="truncate">{candidate.name}</span>
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => setCreating(true)}>
+            <Plus className="text-foreground-muted" />
+            Create Realm
+          </DropdownMenuItem>
+          <DropdownMenuItem asChild>
+            <Link href="/settings?tab=members" onClick={onNavigate}>
+              <Settings className="text-foreground-muted" />
+              Realm settings
+            </Link>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <CreateRealmDialog open={creating} onOpenChange={setCreating} onCreated={afterSwitch} />
     </>
   );
 }

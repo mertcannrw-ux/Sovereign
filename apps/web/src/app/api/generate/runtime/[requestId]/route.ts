@@ -3,7 +3,7 @@ import { NextRequest } from 'next/server';
 import { getVerifiedSession } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { coerceRuntimeResult, putRuntimeResult, RUNTIME_TRACE_PENDING } from '@/lib/runtime-bridge';
-import { requireProjectRole } from '@/server/authz';
+import { requireProjectAccess } from '@/server/authz';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,7 +45,7 @@ export async function POST(
     return Response.json({ error: 'Runtime request not found' }, { status: 404 });
   }
   try {
-    await requireProjectRole({ user: session.user, db }, trace.run.projectId, 'EDITOR');
+    await requireProjectAccess({ user: session.user, db }, trace.run.projectId);
   } catch {
     return Response.json({ error: 'Runtime request not found' }, { status: 404 });
   }

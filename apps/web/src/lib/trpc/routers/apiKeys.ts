@@ -4,6 +4,7 @@ import { getProvider, SsrfError, validateOutboundUrl } from '@app-builder/ai-gat
 import { protectedProcedure, router } from '../trpc';
 import { encryptApiKey, decryptApiKey, maskApiKey } from '@/lib/crypto';
 import { checkRateLimit } from '@/server/rate-limit';
+import { hasRealmRole, requireRealmRole } from '@/server/authz';
 
 const providerSchema = z.enum([
   'openai',
@@ -46,28 +47,44 @@ async function fetchModels(key: StoredKeyRecord, signal?: AbortSignal): Promise<
   const plaintext = decryptApiKey(key.encryptedKey);
   return getProvider(provider).listModels(plaintext, key.baseUrl ?? undefined, signal);
 }
+/**
+ * A Realm's key as a member may see it: which provider is connected, never the
+ * key. Owner/Admin also get the masked form (first and last three characters)
+ * so they can tell keys apart. The plaintext never leaves the server.
+ */
+export function presentKey(key: StoredKeyRecord, canManage: boolean) {
+  return {
+    id: key.id,
+    provider: parseProvider(key.provider),
+    label: key.label,
+    baseUrl: canManage ? key.baseUrl : null,
+    createdAt: key.createdAt,
+    lastUsedAt: key.lastUsedAt,
+    maskedKey: canManage ? maskApiKey(decryptApiKey(key.encryptedKey)) : null,
+  };
+}
+
+const realmInput = z.object({ realmId: z.string().uuid() });
+
 export const apiKeysRouter = router({
-  list: protectedProcedure.query(async ({ ctx }) => {
+  /** The Realm's provider keys. Any member; see `presentKey` for what each role sees. */
+  list: protectedProcedure.input(realmInput).query(async ({ ctx, input }) => {
+    const { role } = await requireRealmRole(ctx, input.realmId, 'MEMBER');
     const keys: StoredKeyRecord[] = await ctx.db.apiKey.findMany({
-      where: { userId: ctx.user.id },
+      where: { realmId: input.realmId },
       orderBy: { createdAt: 'desc' },
     });
-
-    return keys.map((key) => ({
-      id: key.id,
-      provider: parseProvider(key.provider),
-      label: key.label,
-      baseUrl: key.baseUrl,
-      createdAt: key.createdAt,
-      lastUsedAt: key.lastUsedAt,
-      maskedKey: maskApiKey(decryptApiKey(key.encryptedKey)),
-    }));
+    return keys.map((key) => presentKey(key, hasRealmRole(role, 'ADMIN')));
   }),
 
-  /** Verify the key against the provider, then store it. A key that fails verification is never saved. */
+  /**
+   * Verify the key against the provider, then store it in the Realm. A key
+   * that fails verification is never saved. Owner/Admin.
+   */
   save: protectedProcedure
     .input(
       z.object({
+        realmId: z.string().uuid(),
         provider: providerSchema,
         // Ollama takes no key; every other provider requires one.
         key: z.string().optional(),
@@ -76,6 +93,7 @@ export const apiKeysRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      await requireRealmRole(ctx, input.realmId, 'ADMIN');
       const plaintextKey = input.provider === 'ollama' ? OLLAMA_KEY : input.key?.trim();
       if (!plaintextKey) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'Paste an API key to connect.' });
@@ -125,20 +143,21 @@ export const apiKeysRouter = router({
       }
 
       const encryptedKey = encryptApiKey(plaintextKey);
-      // The unique key is (userId, provider, label): matching on provider alone
+      // The unique key is (realmId, provider, label): matching on provider alone
       // silently overwrote (and renamed) a key stored under another label.
       const label = input.label ?? null;
       const existing = await ctx.db.apiKey.findFirst({
-        where: { userId: ctx.user.id, provider: input.provider, label },
+        where: { realmId: input.realmId, provider: input.provider, label },
       });
 
       const key = existing
         ? await ctx.db.apiKey.update({
             where: { id: existing.id },
-            data: { encryptedKey, label, baseUrl: input.baseUrl ?? null },
+            data: { encryptedKey, label, baseUrl: input.baseUrl ?? null, userId: ctx.user.id },
           })
         : await ctx.db.apiKey.create({
             data: {
+              realmId: input.realmId,
               userId: ctx.user.id,
               provider: input.provider,
               encryptedKey,
@@ -157,11 +176,13 @@ export const apiKeysRouter = router({
       };
     }),
 
+  /** Remove a key from the Realm. Owner/Admin. */
   delete: protectedProcedure
-    .input(z.object({ id: z.string() }))
+    .input(z.object({ realmId: z.string().uuid(), id: z.string() }))
     .mutation(async ({ ctx, input }) => {
+      await requireRealmRole(ctx, input.realmId, 'ADMIN');
       const key = await ctx.db.apiKey.findFirst({
-        where: { id: input.id, userId: ctx.user.id },
+        where: { id: input.id, realmId: input.realmId },
       });
       if (!key) {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'API key not found' });
@@ -170,41 +191,47 @@ export const apiKeysRouter = router({
       return { success: true as const };
     }),
 
-  test: protectedProcedure.input(z.object({ id: z.string() })).mutation(async ({ ctx, input }) => {
-    const key: StoredKeyRecord | null = await ctx.db.apiKey.findFirst({
-      where: { id: input.id, userId: ctx.user.id },
-    });
-    if (!key) {
-      throw new TRPCError({ code: 'NOT_FOUND', message: 'API key not found' });
-    }
-
-    const rate = await checkRateLimit('apiKeyTest', ctx.user.id);
-    if (!rate.allowed) {
-      const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
-      throw new TRPCError({
-        code: 'TOO_MANY_REQUESTS',
-        message: `Too many connection tests. Try again in ${retryIn}s.`,
+  /** Check a stored key still works. Owner/Admin. */
+  test: protectedProcedure
+    .input(z.object({ realmId: z.string().uuid(), id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      await requireRealmRole(ctx, input.realmId, 'ADMIN');
+      const key: StoredKeyRecord | null = await ctx.db.apiKey.findFirst({
+        where: { id: input.id, realmId: input.realmId },
       });
-    }
+      if (!key) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'API key not found' });
+      }
 
-    try {
-      const models = await fetchModels(key);
-      await ctx.db.apiKey.update({
-        where: { id: key.id },
-        data: { lastUsedAt: new Date() },
-      });
-      return { models };
-    } catch {
-      throw new TRPCError({
-        code: 'BAD_REQUEST',
-        message: 'Connection failed. Check the API key and base URL, then try again.',
-      });
-    }
-  }),
+      const rate = await checkRateLimit('apiKeyTest', ctx.user.id);
+      if (!rate.allowed) {
+        const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: `Too many connection tests. Try again in ${retryIn}s.`,
+        });
+      }
 
-  listModels: protectedProcedure.query(async ({ ctx }) => {
+      try {
+        const models = await fetchModels(key);
+        await ctx.db.apiKey.update({
+          where: { id: key.id },
+          data: { lastUsedAt: new Date() },
+        });
+        return { models };
+      } catch {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Connection failed. Check the API key and base URL, then try again.',
+        });
+      }
+    }),
+
+  /** Models each of the Realm's keys can reach, for the builder's model picker. Any member. */
+  listModels: protectedProcedure.input(realmInput).query(async ({ ctx, input }) => {
+    await requireRealmRole(ctx, input.realmId, 'MEMBER');
     const keys: StoredKeyRecord[] = await ctx.db.apiKey.findMany({
-      where: { userId: ctx.user.id },
+      where: { realmId: input.realmId },
       orderBy: { createdAt: 'asc' },
     });
 

@@ -38,6 +38,8 @@ blob-report/
 # Local databases & runtime data
 .pglite/
 .pglite_data/
+# Database snapshots taken before migrations (contain user data)
+.db-backups/
 
 # Private local asset storage (served only via the authenticated /api/assets route)
 .private-assets/

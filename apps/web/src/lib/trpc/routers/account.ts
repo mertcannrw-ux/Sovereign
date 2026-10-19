@@ -430,20 +430,25 @@ export const accountRouter = router({
   }),
 
   /**
-   * What deleting the account removes, for the confirmation dialog.
+   * What deleting the account removes, for the confirmation dialog: the
+   * projects in Realms they own. Projects they made in other people's Realms
+   * stay there.
    */
   deletionSummary: protectedProcedure.query(async ({ ctx }) => {
+    const owned = { realm: { ownerId: ctx.user.id } };
     const [projects, liveApps, apiKeys] = await Promise.all([
-      ctx.db.project.count({ where: { ownerId: ctx.user.id } }),
-      ctx.db.project.count({ where: { ownerId: ctx.user.id, status: 'PUBLISHED' } }),
+      ctx.db.project.count({ where: owned }),
+      ctx.db.project.count({ where: { ...owned, status: 'PUBLISHED' } }),
       ctx.db.apiKey.count({ where: { userId: ctx.user.id } }),
     ]);
     return { projects, liveApps, apiKeys };
   }),
 
   /**
-   * Permanently delete the account: projects (and their app databases and live
-   * apps), stored keys, and workspaces nobody else belongs to.
+   * Permanently delete the account: the Realms they own (none of which may have
+   * other members), with their projects, app databases and live apps, and the
+   * keys they added. Projects they made in other people's Realms stay there.
+
    */
   deleteAccount: protectedProcedure
     .input(z.object({ email: z.string() }))
@@ -456,7 +461,7 @@ export const accountRouter = router({
         });
       }
 
-      const ownedOrgs = await ctx.db.organization.findMany({
+      const ownedRealms = await ctx.db.realm.findMany({
         where: { ownerId: user.id },
         select: {
           id: true,
@@ -465,15 +470,15 @@ export const accountRouter = router({
           _count: { select: { members: { where: { userId: { not: user.id } } } } },
         },
       });
-      const shared = ownedOrgs.find((org) => org._count.members > 0);
+      const shared = ownedRealms.find((realm) => realm._count.members > 0);
       if (shared) {
         throw new TRPCError({
           code: 'PRECONDITION_FAILED',
-          message: `You own the team "${shared.name}", which has other members. Transfer it to someone else first.`,
+          message: `You own the Realm "${shared.name}", which has other members. Transfer it to someone else first.`,
         });
       }
-      const paying = ownedOrgs.some((org) =>
-        org.subscriptions.some(
+      const paying = ownedRealms.some((realm) =>
+        realm.subscriptions.some(
           (sub) =>
             (ACTIVE_SUBSCRIPTION as readonly string[]).includes(sub.status) &&
             !sub.cancelAtPeriodEnd,
@@ -486,9 +491,9 @@ export const accountRouter = router({
         });
       }
 
-      const orgIds = ownedOrgs.map((org) => org.id);
+      const realmIds = ownedRealms.map((realm) => realm.id);
       const projects = await ctx.db.project.findMany({
-        where: { OR: [{ ownerId: user.id }, { organizationId: { in: orgIds } }] },
+        where: { realmId: { in: realmIds } },
         select: {
           id: true,
           slug: true,
@@ -524,21 +529,35 @@ export const accountRouter = router({
           }
           await tx.project.deleteMany({ where: { id: { in: projects.map((p) => p.id) } } });
 
-          // Mirrors organizations.delete for the solo workspaces.
-          await tx.auditEvent.deleteMany({ where: { organizationId: { in: orgIds } } });
-          await tx.usageLedger.deleteMany({ where: { organizationId: { in: orgIds } } });
-          await tx.subscription.deleteMany({ where: { organizationId: { in: orgIds } } });
-          await tx.entitlement.deleteMany({ where: { organizationId: { in: orgIds } } });
-          await tx.backgroundJob.deleteMany({ where: { organizationId: { in: orgIds } } });
-          await tx.organization.deleteMany({ where: { id: { in: orgIds } } });
+          // Mirrors realms.delete for the Realms only they belong to.
+          await tx.auditEvent.deleteMany({ where: { realmId: { in: realmIds } } });
+          await tx.usageLedger.deleteMany({ where: { realmId: { in: realmIds } } });
+          await tx.subscription.deleteMany({ where: { realmId: { in: realmIds } } });
+          await tx.entitlement.deleteMany({ where: { realmId: { in: realmIds } } });
+          await tx.backgroundJob.deleteMany({ where: { realmId: { in: realmIds } } });
+          await tx.realm.deleteMany({ where: { id: { in: realmIds } } });
 
-          // History in other teams stays, without the person behind it.
+          // Their projects in other people's Realms belong to those Realms;
+          // hand them to each Realm's owner so the account delete cannot take
+          // them along.
+          const elsewhere = await tx.project.findMany({
+            where: { ownerId: user.id },
+            select: { id: true, realm: { select: { ownerId: true } } },
+          });
+          for (const project of elsewhere) {
+            await tx.project.update({
+              where: { id: project.id },
+              data: { ownerId: project.realm.ownerId },
+            });
+          }
+
+          // History in other Realms stays, without the person behind it.
           await tx.auditEvent.updateMany({ where: { actorId: user.id }, data: { actorId: null } });
           await tx.backgroundJob.updateMany({
             where: { actorId: user.id },
             data: { actorId: null },
           });
-          await tx.organizationInvite.deleteMany({ where: { invitedById: user.id } });
+          await tx.realmInvite.deleteMany({ where: { invitedById: user.id } });
 
           await tx.user.delete({ where: { id: user.id } });
         },

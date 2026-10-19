@@ -16,6 +16,7 @@ import {
 import { primaryButton } from '@/components/landing/primitives';
 import { Input } from '@/components/ui/input';
 import { trpc } from '@/lib/trpc/client';
+import { safeCallbackUrl } from '@/lib/safe-callback';
 
 export default function SignUpPage() {
   const router = useRouter();
@@ -49,7 +50,11 @@ export default function SignUpPage() {
         password,
         redirect: false,
       });
-      if (result?.ok) router.push('/dashboard');
+      // Read at submit time: an invite link sends people here with a callback.
+      const callbackUrl = safeCallbackUrl(
+        new URLSearchParams(window.location.search).get('callbackUrl'),
+      );
+      if (result?.ok) router.push(callbackUrl);
       else setError('Account created. Sign in to continue.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not create the account.');

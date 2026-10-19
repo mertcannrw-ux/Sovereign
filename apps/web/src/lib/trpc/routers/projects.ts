@@ -6,11 +6,11 @@ import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { protectedProcedure, router } from '../trpc';
 import type { Context } from '../context';
-import { requireOrganizationRole, requireProjectRole } from '@/server/authz';
+import { hasRealmRole, requireProjectAccess, requireRealmRole } from '@/server/authz';
 import { assertTenantSchemaName, provisionAppDatabase } from '@/server/app-database';
 import { quotePgIdent } from '@/server/db-browser';
 import { persistProjectFiles } from '@/lib/project-files';
-import { lockOrganizationMembership } from '@/server/org-lock';
+import { lockRealm } from '@/server/realm-lock';
 import { assertCanCreateProject } from '@/server/plans';
 import { getPlanPrices } from '@/server/stripe';
 
@@ -90,7 +90,7 @@ interface ProjectRecordInput {
   description?: string;
   modelProvider?: string;
   modelName?: string;
-  organizationId: string;
+  realmId: string;
 }
 
 /**
@@ -116,28 +116,19 @@ async function createProjectRecord(
     try {
       return await db.$transaction(
         async (tx) => {
-          // Serialize against removeMember offboarding for this org: the
-          // pre-tx role check can race a concurrent removal, so re-verify
-          // membership while holding the same advisory lock removeMember
-          // uses. Otherwise the removed user could create (and own, via the
-          // ownerId-grants-OWNER shortcut in requireProjectRole) a project
-          // in an organization they were just removed from.
-          await lockOrganizationMembership(tx, input.organizationId);
-          const membership = await tx.organizationMember.findUnique({
-            where: {
-              organizationId_userId: { organizationId: input.organizationId, userId },
-            },
+          // The pre-tx role check can race a concurrent removeMember, so
+          // re-verify membership while holding the lock removeMember takes.
+          await lockRealm(tx, input.realmId);
+          const membership = await tx.realmMember.findUnique({
+            where: { realmId_userId: { realmId: input.realmId, userId } },
           });
           if (!membership) {
-            throw new TRPCError({
-              code: 'FORBIDDEN',
-              message: 'Not a member of this organization.',
-            });
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Not a member of this Realm.' });
           }
 
-          // Counted under the org lock, so concurrent creates cannot both
+          // Counted under the Realm lock, so concurrent creates cannot both
           // pass the plan's project limit.
-          await assertCanCreateProject(tx, input.organizationId, getPlanPrices());
+          await assertCanCreateProject(tx, input.realmId, getPlanPrices());
 
           // Opportunistic dedupe inside the tx; the P2002 retry below is
           // still the arbiter under read-committed.
@@ -149,7 +140,7 @@ async function createProjectRecord(
           const created = await tx.project.create({
             data: {
               ownerId: userId,
-              organizationId: input.organizationId,
+              realmId: input.realmId,
               name: input.name,
               description: input.description ?? null,
               slug,
@@ -186,43 +177,31 @@ async function createProjectRecord(
 
 export const projectsRouter = router({
   /**
-   * List all projects the current user owns or collaborates on.
+   * The projects of one Realm, newest first. Members only.
    */
   list: protectedProcedure
     .input(
-      z
-        .object({
-          cursor: z.string().optional(),
-          limit: z.number().int().min(1).max(100).default(50),
-          // Server-side filter so search covers every project, not just the
-          // pages the dashboard happened to load.
-          search: z.string().max(100).optional(),
-        })
-        .default({}),
+      z.object({
+        realmId: z.string().uuid(),
+        cursor: z.string().optional(),
+        limit: z.number().int().min(1).max(100).default(50),
+        // Server-side filter so search covers every project, not just the
+        // pages the dashboard happened to load.
+        search: z.string().max(100).optional(),
+      }),
     )
     .query(async ({ ctx, input }) => {
-      // Org admins see every project of every org they administer, so this
-      // query is unbounded without a cap. Cursor = JSON {u, id} of the last
-      // item of the previous page, per paginateProjects below.
+      await requireRealmRole(ctx, input.realmId, 'MEMBER');
+      // A Realm's project count is unbounded, so the query is paged. Cursor =
+      // JSON {u, id} of the last item of the previous page, per
+      // paginateProjects below.
       const cursor = parseProjectListCursor(input.cursor);
       const take = input.limit + 1;
       const search = input.search?.trim().toLowerCase();
       const projects = await ctx.db.project.findMany({
         where: {
           AND: [
-            {
-              OR: [
-                { ownerId: ctx.user.id },
-                { collaborators: { some: { userId: ctx.user.id } } },
-                {
-                  organization: {
-                    members: {
-                      some: { userId: ctx.user.id, role: { in: ['OWNER', 'ADMIN'] } },
-                    },
-                  },
-                },
-              ],
-            },
+            { realmId: input.realmId },
             ...(cursor ? [belowCursor(cursor)] : []),
             ...(search
               ? [
@@ -279,12 +258,12 @@ export const projectsRouter = router({
         description: z.string().max(500).optional(),
         modelProvider: z.string().optional(),
         modelName: z.string().optional(),
-        organizationId: z.string().uuid(),
+        realmId: z.string().uuid(),
         templateId: z.string().max(80).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      await requireOrganizationRole(ctx, input.organizationId, 'MEMBER');
+      await requireRealmRole(ctx, input.realmId, 'MEMBER');
 
       return createProjectRecord(ctx.db, ctx.user.id, input, async (tx, created) => {
         if (!input.templateId) return;
@@ -301,19 +280,17 @@ export const projectsRouter = router({
     }),
 
   /**
-   * Copy a project's metadata and files into a new draft in the same
-   * organization. Chat history, deployments and app data are not copied.
+   * Copy a project's metadata and files into a new draft in the same Realm. Chat history, deployments and app data are not copied.
    */
   duplicate: protectedProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      await requireProjectRole(ctx, input.id, 'VIEWER');
+      await requireProjectAccess(ctx, input.id);
       const source = await ctx.db.project.findUnique({
         where: { id: input.id },
         include: { files: { select: { path: true, content: true } } },
       });
       if (!source) throw new TRPCError({ code: 'NOT_FOUND', message: 'Project not found' });
-      await requireOrganizationRole(ctx, source.organizationId, 'MEMBER');
 
       return createProjectRecord(
         ctx.db,
@@ -323,59 +300,40 @@ export const projectsRouter = router({
           description: source.description ?? undefined,
           modelProvider: source.modelProvider,
           modelName: source.modelName,
-          organizationId: source.organizationId,
+          realmId: source.realmId,
         },
         (tx, created) => persistProjectFiles(tx, created.id, source.files),
       );
     }),
 
   /**
-   * Get a project by id.  Only the owner or a collaborator may access it.
+   * One project with its Realm. Members of the project's Realm only.
    */
   getById: protectedProcedure.input(z.object({ id: z.string() })).query(async ({ ctx, input }) => {
-    const project = await ctx.db.project.findUnique({
+    const { role } = await requireProjectAccess(ctx, input.id);
+    const project = await ctx.db.project.findUniqueOrThrow({
       where: { id: input.id },
       include: {
-        owner: {
-          select: { id: true, name: true, email: true },
-        },
-        collaborators: {
-          include: {
-            user: {
-              select: { id: true, name: true, email: true },
-            },
-          },
-        },
+        owner: { select: { id: true, name: true, email: true } },
+        realm: { select: { id: true, name: true, type: true } },
       },
     });
-
-    if (!project) {
-      throw new TRPCError({
-        code: 'NOT_FOUND',
-        message: 'Project not found',
-      });
-    }
-
-    await requireProjectRole(ctx, input.id, 'VIEWER');
-
-    return project;
+    return { ...project, role };
   }),
 
   /** Return the latest persisted project filesystem for live preview. */
   files: protectedProcedure.input(z.object({ id: z.string() })).query(async ({ ctx, input }) => {
-    const project = await ctx.db.project.findUnique({
-      where: { id: input.id },
-      include: { files: { orderBy: { path: 'asc' } } },
+    await requireProjectAccess(ctx, input.id);
+    const files = await ctx.db.projectFile.findMany({
+      where: { projectId: input.id },
+      orderBy: { path: 'asc' },
+      select: { path: true, content: true },
     });
-    if (!project) throw new TRPCError({ code: 'NOT_FOUND', message: 'Project not found' });
-
-    await requireProjectRole(ctx, input.id, 'VIEWER');
-
-    return project.files.map((file) => ({ path: file.path, content: file.content }));
+    return files;
   }),
 
   /**
-   * Update project metadata.  Only the owner may update.
+   * Update project metadata. Any member of the project's Realm.
    */
   update: protectedProcedure
     .input(
@@ -388,7 +346,7 @@ export const projectsRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      await requireProjectRole(ctx, input.id, 'OWNER');
+      await requireProjectAccess(ctx, input.id);
 
       const updated = await ctx.db.project.update({
         where: { id: input.id },
@@ -410,26 +368,37 @@ export const projectsRouter = router({
     }),
 
   /**
-   * Delete a project.  Only the owner may delete.
+   * Delete a project. Owner/Admin, or the member who created it.
    */
   delete: protectedProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      await requireProjectRole(ctx, input.id, 'OWNER');
-
-      const appDb = await ctx.db.appDatabase.findFirst({ where: { projectId: input.id } });
-      const schemaName = appDb ? assertTenantSchemaName(appDb.schemaName) : null;
-
-      await ctx.db.$transaction(async (tx) => {
-        // The tenant schema holds the end users' data; deleting the project row
-        // alone (which cascades the AppDatabase row) would orphan it on the
-        // cluster forever. Drop it in the same transaction, before the row.
-        if (schemaName) {
-          await tx.$executeRawUnsafe(`DROP SCHEMA IF EXISTS ${quotePgIdent(schemaName)} CASCADE`);
-        }
-        await tx.project.delete({ where: { id: input.id } });
-      });
-
+      const { role, ownerId } = await requireProjectAccess(ctx, input.id);
+      if (!hasRealmRole(role, 'ADMIN') && ownerId !== ctx.user.id) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Only an owner or admin can delete a project someone else created.',
+        });
+      }
+      await deleteProject(ctx.db, input.id);
       return { success: true as const };
     }),
 });
+
+/**
+ * Delete a project and its app database. The caller has already authorized it.
+ */
+export async function deleteProject(db: Context['db'], projectId: string): Promise<void> {
+  const appDb = await db.appDatabase.findFirst({ where: { projectId } });
+  const schemaName = appDb ? assertTenantSchemaName(appDb.schemaName) : null;
+
+  await db.$transaction(async (tx) => {
+    // The tenant schema holds the end users' data; deleting the project row
+    // alone (which cascades the AppDatabase row) would orphan it on the
+    // cluster forever. Drop it in the same transaction, before the row.
+    if (schemaName) {
+      await tx.$executeRawUnsafe(`DROP SCHEMA IF EXISTS ${quotePgIdent(schemaName)} CASCADE`);
+    }
+    await tx.project.delete({ where: { id: projectId } });
+  });
+}

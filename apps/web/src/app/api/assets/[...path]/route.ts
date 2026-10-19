@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getVerifiedSession } from '@/lib/auth';
 import { getDb } from '@/lib/db';
-import { requireProjectRole } from '@/server/authz';
+import { requireProjectAccess } from '@/server/authz';
 import {
   LOCAL_ASSET_ROOT,
   downloadAssetBytes,
@@ -78,7 +78,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ pat
         user: { id: session.user.id } as { id: string },
         db: dbCheck,
       } as Pick<Context, 'user' | 'db'>;
-      await requireProjectRole(ctx as Context, assetCheck.projectId, 'VIEWER');
+      await requireProjectAccess(ctx as Context, assetCheck.projectId);
     } catch {
       return new NextResponse('Forbidden', { status: 403 });
     }

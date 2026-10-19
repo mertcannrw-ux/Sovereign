@@ -6,7 +6,7 @@ import { createZip, safeZipPath, type ZipEntry } from '@/server/zip';
 
 const README = `Sovereign data export
 
-account.json   Your profile, sign-in methods, preferences and teams.
+account.json   Your profile, sign-in methods, preferences and Realms.
 settings.json  Your AI provider and image provider settings. API keys are never
                included: they stay encrypted on our side and are not exported.
 projects/      One folder per project you own: project.json, chat.json and the
@@ -34,7 +34,7 @@ export async function GET() {
     where: { id: userId },
     include: {
       accounts: { select: { provider: true } },
-      organizations: { include: { organization: { select: { name: true } } } },
+      realms: { include: { realm: { select: { name: true, type: true } } } },
       apiKeys: {
         select: { provider: true, label: true, baseUrl: true, createdAt: true, lastUsedAt: true },
       },
@@ -76,7 +76,7 @@ export async function GET() {
           providers: user.accounts.map((account) => account.provider),
         },
         preferences: { mascotAnimations: user.mascotAnimations },
-        teams: user.organizations.map((m) => ({ name: m.organization.name, role: m.role })),
+        realms: user.realms.map((m) => ({ name: m.realm.name, type: m.realm.type, role: m.role })),
       }),
     },
     {

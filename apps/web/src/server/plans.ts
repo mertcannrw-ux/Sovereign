@@ -5,7 +5,7 @@ import type { SubscriptionStatus } from '@app-builder/shared';
 /**
  * Plan resolution and limits.
  *
- * The plan is always derived from the org's `Subscription` row, which only the
+ * The plan is always derived from the Realm's `Subscription` row, which only the
  * Stripe webhook writes. Anything that is not a known price in an access-granting
  * status resolves to Free, so a missing, stale or half-written row can never
  * unlock a paid plan.
@@ -15,7 +15,7 @@ export type Plan = 'free' | 'pro' | 'business';
 export type PaidPlan = Exclude<Plan, 'free'>;
 
 export interface PlanLimits {
-  /** Non-archived projects per organization; null means unlimited. */
+  /** Non-archived projects per Realm; null means unlimited. */
   activeProjects: number | null;
 }
 
@@ -48,7 +48,7 @@ export function planFromSubscription(
   return planForPriceId(subscription.priceId, prices) ?? 'free';
 }
 
-/** An org's subscription grants access, so a new checkout would double-bill it. */
+/** A Realm's subscription grants access, so a new checkout would double-bill it. */
 export function hasLiveSubscription(
   subscription: { status: SubscriptionStatus; stripeSubscriptionId: string | null } | null,
 ): boolean {
@@ -73,34 +73,30 @@ export async function recordPlanInterest(
   await db.planInterest.createMany({ data: [{ userId, plan }], skipDuplicates: true });
 }
 
-export async function getOrgPlan(
-  db: PlanDb,
-  organizationId: string,
-  prices: PlanPrices,
-): Promise<Plan> {
+export async function getRealmPlan(db: PlanDb, realmId: string, prices: PlanPrices): Promise<Plan> {
   const subscription = await db.subscription.findUnique({
-    where: { organizationId },
+    where: { realmId },
     select: { status: true, priceId: true },
   });
   return planFromSubscription(subscription, prices);
 }
 
 /**
- * Throws when the org is at its plan's active-project limit. Call inside the
- * project-create transaction, after `lockOrganizationMembership`, so concurrent
+ * Throws when the Realm is at its plan's active-project limit. Call inside the
+ * project-create transaction, after `lockRealm`, so concurrent
  * creates are serialized and cannot both slip under the limit.
  */
 export async function assertCanCreateProject(
   db: PlanDb,
-  organizationId: string,
+  realmId: string,
   prices: PlanPrices,
 ): Promise<void> {
-  const plan = await getOrgPlan(db, organizationId, prices);
+  const plan = await getRealmPlan(db, realmId, prices);
   const limit = PLAN_LIMITS[plan].activeProjects;
   if (limit === null) return;
 
   const active = await db.project.count({
-    where: { organizationId, status: { not: 'ARCHIVED' } },
+    where: { realmId, status: { not: 'ARCHIVED' } },
   });
   if (active >= limit) {
     throw new TRPCError({

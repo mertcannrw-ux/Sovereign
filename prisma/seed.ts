@@ -1,6 +1,6 @@
-// Prisma seed script - creates initial admin account and personal organization.
+// Prisma seed script - creates the initial admin account and their personal Realm.
 // No demo projects: a new workspace starts empty.
-import { PrismaClient, OrganizationRole } from './generated/prisma/client';
+import { PrismaClient } from './generated/prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import bcrypt from 'bcryptjs';
 
@@ -75,27 +75,21 @@ async function main() {
     console.log(`     User ID:  ${user.id}`);
   }
 
-  // ── Personal organization ───────────────────────
-  const orgSlug = 'admin-personal';
-  let org = await prisma.organization.findUnique({ where: { slug: orgSlug } });
+  // ── Personal Realm ──────────────────────────────
+  let realm = await prisma.realm.findFirst({ where: { ownerId: adminId, type: 'PERSONAL' } });
 
-  if (!org) {
-    org = await prisma.organization.create({
+  if (!realm) {
+    realm = await prisma.realm.create({
       data: {
-        name: "Admin's Organization",
-        slug: orgSlug,
+        name: 'Personal',
+        type: 'PERSONAL',
         ownerId: adminId,
-        members: {
-          create: {
-            userId: adminId,
-            role: OrganizationRole.OWNER,
-          },
-        },
+        members: { create: { userId: adminId, role: 'OWNER' } },
       },
     });
-    console.log(`  Organization created: ${org.name} (${org.id})`);
+    console.log(`  Personal Realm created (${realm.id})`);
   } else {
-    console.log(`  ⏭  Organization already exists: ${org.name}`);
+    console.log(`  ⏭  Personal Realm already exists`);
   }
 
   console.log('Seed complete.');

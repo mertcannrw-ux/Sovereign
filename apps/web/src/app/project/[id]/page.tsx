@@ -10,7 +10,9 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import type { VersionTimelineEntry } from '@/components/version-timeline';
 import { VersionHistoryMenu } from '@/components/project/version-history-menu';
+import { skipToken } from '@tanstack/react-query';
 import { trpc } from '@/lib/trpc/client';
+import { canManageRealm, selectRealm } from '@/lib/use-current-realm';
 import { getPreviewCursorTarget, useSmoothCursor } from '@/lib/use-smooth-cursor';
 import { sortPreviewFiles, usePreviewRuntime } from '@/lib/use-preview-runtime';
 import { useGeneration } from '@/lib/use-generation';
@@ -56,9 +58,17 @@ function ProjectWorkspace() {
 
   const projectQuery = trpc.projects.getById.useQuery({ id: projectId });
   const utils = trpc.useUtils();
-  const modelsQuery = trpc.apiKeys.listModels.useQuery();
+  // Builds use the keys of the project's Realm, whoever is building.
+  const realmId = projectQuery.data?.realmId;
+  const realmInput = realmId ? { realmId } : skipToken;
+  const modelsQuery = trpc.apiKeys.listModels.useQuery(realmInput);
   // Drives the chat's empty state: "I need a key first" vs "What are we building?".
-  const apiKeysQuery = trpc.apiKeys.list.useQuery();
+  const apiKeysQuery = trpc.apiKeys.list.useQuery(realmInput);
+  // Opening a project makes its Realm the current one, so the sidebar and
+  // settings match what is on screen.
+  useEffect(() => {
+    if (realmId) selectRealm(realmId);
+  }, [realmId]);
   // Newest page first; older pages append via loadOlderMessages below.
   const historyQuery = trpc.chat.getHistory.useInfiniteQuery(
     {
@@ -651,7 +661,11 @@ function ProjectWorkspace() {
             lastRunFailed={generation.lastRunFailed}
             onRetry={generation.retry}
             hasApiKey={apiKeysQuery.data ? apiKeysQuery.data.length > 0 : undefined}
-            onAddApiKey={() => router.push('/settings?tab=providers')}
+            onAddApiKey={
+              canManageRealm(projectQuery.data?.role)
+                ? () => router.push('/settings?tab=providers')
+                : undefined
+            }
             generationPhase={generation.generationPhase}
             liveThinking={generation.liveThinking}
             liveAnswer={generation.liveAnswer}
