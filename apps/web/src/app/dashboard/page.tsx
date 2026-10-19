@@ -18,8 +18,6 @@ import {
   Copy,
   ExternalLink,
   FolderKanban,
-  Grid2X2,
-  List,
   MoreHorizontal,
   Pencil,
   Search,
@@ -206,20 +204,10 @@ interface ProjectActions {
 
 /**
  * Screenshot, else the live site in a scaled-down, inert iframe, else the
- * dot-grid surface (globals.css). `compact` thumbnails (list rows) skip the
- * iframe and the interactive canvas: at that size the iframe is unreadable, and one
- * live page per row is too heavy. Every variant ignores the pointer so clicks
- * reach the card's stretched link underneath.
+ * interactive dot grid. Every variant ignores the pointer so clicks reach
+ * the card's stretched link underneath.
  */
-function ProjectThumbnail({
-  project,
-  className,
-  compact = false,
-}: {
-  project: ProjectSummary;
-  className?: string;
-  compact?: boolean;
-}) {
+function ProjectThumbnail({ project, className }: { project: ProjectSummary; className?: string }) {
   if (project.thumbnailUrl) {
     return (
       // eslint-disable-next-line @next/next/no-img-element -- thumbnails are user-app screenshots on arbitrary hosts
@@ -231,7 +219,7 @@ function ProjectThumbnail({
       />
     );
   }
-  if (project.liveUrl && !compact) {
+  if (project.liveUrl) {
     return (
       <div
         aria-hidden="true"
@@ -246,13 +234,6 @@ function ProjectThumbnail({
           sandbox="allow-scripts allow-same-origin"
           className="pointer-events-none absolute left-0 top-0 h-[400%] w-[400%] origin-top-left scale-[0.25] border-0"
         />
-      </div>
-    );
-  }
-  if (compact) {
-    return (
-      <div aria-hidden="true" className={cn('dot-grid pointer-events-none', className)}>
-        <div className="dot-grid-dots" />
       </div>
     );
   }
@@ -375,41 +356,6 @@ function ProjectCard({ project, actions }: { project: ProjectSummary; actions: P
   );
 }
 
-function ProjectRow({ project, actions }: { project: ProjectSummary; actions: ProjectActions }) {
-  return (
-    <div className="group relative flex items-center gap-3.5 border-b border-border px-4 py-3 transition-colors last:border-0 hover:bg-background-muted/50 has-[a[data-card-link]:focus-visible]:bg-background-muted/50">
-      <Link
-        href={projectHref(project)}
-        data-card-link
-        aria-label={project.isEmpty ? `Start building ${project.name}` : `Open ${project.name}`}
-        className="absolute inset-0 focus-visible:outline-none"
-      />
-      <ProjectThumbnail
-        project={project}
-        className="h-9 w-12 shrink-0 rounded-control-inner border border-border"
-        compact
-      />
-      <div className="pointer-events-none relative min-w-0 flex-1 [&_a]:pointer-events-auto">
-        <p className="truncate text-sm font-medium">{project.name}</p>
-        {project.liveUrl ? (
-          <div className="flex min-w-0">
-            <LiveLink url={project.liveUrl} />
-          </div>
-        ) : null}
-      </div>
-      {project.isEmpty ? null : (
-        <Badge variant={statusVariant[project.status]} className="text-[10px]">
-          {project.status}
-        </Badge>
-      )}
-      <span className="hidden w-28 text-right text-xs text-foreground-muted sm:block">
-        {activityLabel(project)}
-      </span>
-      <ProjectMenu project={project} actions={actions} className="relative z-10" />
-    </div>
-  );
-}
-
 /** Render the authenticated project list, the prompt-first project creator, and card actions. */
 function DashboardContent() {
   const { data: session, status: authStatus } = useSession();
@@ -453,7 +399,6 @@ function DashboardContent() {
     prompt === '',
     'Describe what you want to build…',
   );
-  const [view, setView] = useState<'grid' | 'list'>('grid');
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<ProjectSummary | null>(null);
@@ -634,35 +579,6 @@ function DashboardContent() {
                 className="h-9 pl-9"
               />
             </div>
-            <div className="relative flex shrink-0 items-center gap-0.5 rounded-control border border-border bg-background-subtle p-0.5">
-              <div
-                aria-hidden="true"
-                className="duration-280 pointer-events-none absolute bottom-0.5 top-0.5 w-8 rounded-control-inner bg-background-muted transition-all ease-[cubic-bezier(0.16,1,0.3,1)]"
-                style={{ left: `${view === 'grid' ? 2 : 36}px` }}
-              />
-              {(
-                [
-                  ['grid', 'Grid view', Grid2X2],
-                  ['list', 'List view', List],
-                ] as const
-              ).map(([value, label, Icon]) => (
-                <button
-                  key={value}
-                  type="button"
-                  aria-label={label}
-                  aria-pressed={view === value}
-                  onClick={() => setView(value)}
-                  className={cn(
-                    'relative z-10 grid h-8 w-8 place-items-center rounded-control-inner transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
-                    view === value
-                      ? 'text-foreground'
-                      : 'text-foreground-muted hover:text-foreground',
-                  )}
-                >
-                  <Icon className="h-4 w-4" />
-                </button>
-              ))}
-            </div>
           </div>
         </header>
 
@@ -757,24 +673,14 @@ function DashboardContent() {
             </div>
           ) : (
             <motion.div
-              key={view}
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ duration: 0.18, ease: 'easeOut' }}
+              className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
             >
-              {view === 'grid' ? (
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                  {projects.map((project) => (
-                    <ProjectCard key={project.id} project={project} actions={actions} />
-                  ))}
-                </div>
-              ) : (
-                <div className="overflow-hidden rounded-card border border-border bg-background-subtle">
-                  {projects.map((project) => (
-                    <ProjectRow key={project.id} project={project} actions={actions} />
-                  ))}
-                </div>
-              )}
+              {projects.map((project) => (
+                <ProjectCard key={project.id} project={project} actions={actions} />
+              ))}
             </motion.div>
           )}
           {projectsQuery.hasNextPage && !projectsQuery.isFetchingNextPage && (
