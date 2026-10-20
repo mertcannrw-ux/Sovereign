@@ -15,6 +15,7 @@ import {
   ArrowLeft,
   ArrowUp,
   Check,
+  ChevronDown,
   ChevronRight,
   Crosshair,
   Paperclip,
@@ -811,17 +812,16 @@ export function PromptBar({
                 setActiveSubMenu('root');
               }}
               className={cn(
-                'flex items-center rounded-full bg-transparent px-3 py-1.5 text-xs transition-all hover:bg-white/[0.08]',
-                showModelPopover && 'bg-white/[0.10] ring-1 ring-white/15',
+                'flex h-8 min-w-0 items-center gap-1 rounded-full border border-border bg-background-subtle px-3 text-[13px] text-foreground-secondary transition-colors hover:border-border-strong hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
+                showModelPopover && 'border-border-strong text-foreground',
               )}
               aria-haspopup="dialog"
               aria-expanded={showModelPopover}
               aria-controls={dialogId}
+              aria-label={`Model: ${selectedModel || 'Auto'}`}
             >
-              <span className="font-medium text-foreground">{selectedModel || 'Select Model'}</span>
-              <span className="ml-2.5 font-normal text-foreground-secondary">
-                {REASONING_LEVELS.find((r) => r.value === reasoningEffort)?.label ?? 'Auto'}
-              </span>
+              <span className="max-w-[160px] truncate">{selectedModel || 'Auto'}</span>
+              <ChevronDown className="h-3.5 w-3.5 shrink-0 text-foreground-muted" aria-hidden />
             </button>
 
             <button
@@ -840,7 +840,7 @@ export function PromptBar({
                   ? 'bg-error text-error-foreground shadow-md hover:bg-error/90'
                   : input.trim() && selectedModel && selectedProvider
                     ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20 hover:bg-primary/90'
-                    : 'cursor-not-allowed bg-white/10 text-white/30',
+                    : 'cursor-not-allowed bg-background-subtle text-foreground-muted',
               )}
               aria-label={isSending ? 'Stop agent' : 'Send message'}
               aria-live="polite"

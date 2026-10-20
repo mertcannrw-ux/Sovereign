@@ -1,10 +1,11 @@
 'use client';
 
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useSession, signOut } from 'next-auth/react';
 import { cn } from '@app-builder/ui/utils';
-import { Logo } from '@/components/brand/logo';
+import { Logo } from '@/components/Logo';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import {
@@ -13,38 +14,226 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { CreateRealmDialog } from '@/components/realms/create-realm-dialog';
+import { RealmMark } from '@/components/realms/realm-mark';
+import { initials } from '@/lib/initials';
+import { isTypingTarget } from '@/lib/keyboard';
+import { useCurrentRealm } from '@/lib/use-current-realm';
+import { NewProjectIcon, ProjectsIcon, type NavIconProps } from './nav-icons';
 import {
-  LayoutDashboard,
-  LayoutTemplate,
   Settings,
-  Users,
   X,
   PanelLeftClose,
   PanelLeft,
   LogOut,
-  Plus,
   Ellipsis,
+  ChevronsUpDown,
+  Plus,
 } from 'lucide-react';
 
-const navItems = [
-  { href: '/dashboard', label: 'Projects', icon: LayoutDashboard },
-  { href: '/dashboard/templates', label: 'Templates', icon: LayoutTemplate },
-  { href: '/dashboard/team', label: 'Team', icon: Users },
-];
+const navItems = [{ href: '/dashboard', label: 'Projects', icon: ProjectsIcon }];
+
+const focusRing =
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40';
+
+function NavItem({
+  href,
+  label,
+  icon: Icon,
+  active,
+  rail,
+  onClick,
+}: {
+  href: string;
+  label: string;
+  icon: React.ComponentType<NavIconProps>;
+  active: boolean;
+  rail: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Link
+      href={href}
+      onClick={onClick}
+      aria-current={active ? 'page' : undefined}
+      className={cn(
+        itemBase,
+        'px-2 text-sm font-medium',
+        active
+          ? 'bg-background-muted text-foreground'
+          : 'text-foreground-muted hover:bg-background-subtle hover:text-foreground',
+      )}
+    >
+      <Icon active={active} className={cn(active && 'text-primary')} />
+      <span className={fadeLabel(rail)}>{label}</span>
+    </Link>
+  );
+}
+
+function SidebarTooltip({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactElement;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent
+        side="right"
+        sideOffset={8}
+        className={cn('shadow-none', hint && 'flex items-center gap-3')}
+      >
+        {label}
+        {hint ? <kbd className="font-sans text-foreground-muted">{hint}</kbd> : null}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+/*
+ * Collapsing animates the sidebar's width between 240px and the 56px rail,
+ * and hovering the rail expands it over the page until the pointer leaves.
+ * Every row keeps its icon in a fixed 36px slot at the left, so the icons
+ * hold still while the width changes and the labels fade and get clipped.
+ * All of it is desktop only: below `md` the drawer is always full width.
+ */
+const itemBase = cn(
+  'flex h-9 w-full shrink-0 items-center gap-2.5 overflow-hidden rounded-item transition-colors',
+  focusRing,
+);
+
+/** Labels fade out quickly on collapse and back in once the width has grown. */
+function fadeLabel(rail: boolean) {
+  return cn(
+    'min-w-0 whitespace-nowrap transition-opacity',
+    rail ? 'duration-100 md:opacity-0' : 'delay-100 duration-200',
+  );
+}
+
+const iconButton = cn(
+  'flex h-9 w-9 shrink-0 items-center justify-center rounded-item text-foreground-muted transition-colors hover:bg-background-subtle hover:text-foreground',
+  focusRing,
+);
 
 interface SidebarProps {
   open: boolean;
   onClose: () => void;
+  /**
+   * Desktop only: start as a 56px icon rail instead of the full sidebar (the
+   * editor, which needs the width). The user can switch either way; below `md`
+   * the drawer is always the full sidebar.
+   */
+  defaultCollapsed?: boolean;
   className?: string;
 }
 
-export function Sidebar({ open, onClose, className }: SidebarProps) {
+const COLLAPSE_EVENT = 'sovereign:sidebar-collapsed';
+
+// Holds the choice when localStorage is blocked, so the toggle still works.
+const memoryStore = new Map<string, string>();
+
+function readStored(key: string) {
+  try {
+    return window.localStorage.getItem(key) ?? memoryStore.get(key) ?? null;
+  } catch {
+    return memoryStore.get(key) ?? null;
+  }
+}
+
+function subscribeCollapsed(onChange: () => void) {
+  window.addEventListener('storage', onChange);
+  window.addEventListener(COLLAPSE_EVENT, onChange);
+  return () => {
+    window.removeEventListener('storage', onChange);
+    window.removeEventListener(COLLAPSE_EVENT, onChange);
+  };
+}
+
+/**
+ * The desktop collapsed/expanded choice, one for the whole app once the user
+ * has made it. Until then each surface uses its own default (the editor starts
+ * collapsed). The server render uses the default.
+ */
+function useCollapsed(defaultCollapsed: boolean) {
+  const storageKey = 'sovereign:sidebar-collapsed';
+  const stored = useSyncExternalStore(
+    subscribeCollapsed,
+    () => readStored(storageKey),
+    () => null,
+  );
+  const collapsed = stored === null ? defaultCollapsed : stored === 'true';
+
+  const toggle = useCallback(() => {
+    memoryStore.set(storageKey, String(!collapsed));
+    try {
+      window.localStorage.setItem(storageKey, String(!collapsed));
+    } catch {
+      // Storage unavailable: the choice lasts until the page reloads.
+    }
+    window.dispatchEvent(new Event(COLLAPSE_EVENT));
+  }, [storageKey, collapsed]);
+
+  return [collapsed, toggle] as const;
+}
+
+export function Sidebar({ open, onClose, defaultCollapsed = false, className }: SidebarProps) {
+  const [collapsed, toggleCollapsed] = useCollapsed(defaultCollapsed);
+  // Collapsed, the rail expands over the page while the pointer or keyboard
+  // focus is in it, after a short dwell so passing over it doesn't trigger it.
+  const [peek, setPeek] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const hoveringRef = useRef(false);
+  const peekTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const rail = collapsed && !peek;
+
+  const schedulePeek = useCallback((next: boolean, delay: number) => {
+    clearTimeout(peekTimerRef.current);
+    peekTimerRef.current = setTimeout(() => setPeek(next), delay);
+  }, []);
+  useEffect(() => () => clearTimeout(peekTimerRef.current), []);
+
+  const handleToggle = useCallback(() => {
+    clearTimeout(peekTimerRef.current);
+    setPeek(false);
+    toggleCollapsed();
+  }, [toggleCollapsed]);
   const pathname = usePathname();
   const router = useRouter();
   const { data: session } = useSession();
   const user = session?.user;
+  const displayName = user?.name ?? user?.email ?? 'Your account';
+
+  // The Projects page's prompt box is the project creator: focus it in place,
+  // or navigate there and let the page focus it once it mounts.
+  const startNewProject = useCallback(() => {
+    if (pathname === '/dashboard') {
+      window.dispatchEvent(new CustomEvent('open-new-project'));
+    } else {
+      router.push('/dashboard?new=true');
+    }
+  }, [pathname, router]);
+
+  // "N" starts a new project unless something else has the keyboard.
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== 'n' || event.defaultPrevented || event.repeat) return;
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      if (isTypingTarget(event.target) || document.querySelector('[role="dialog"]')) return;
+      event.preventDefault();
+      startNewProject();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [startNewProject]);
 
   return (
     <>
@@ -55,125 +244,295 @@ export function Sidebar({ open, onClose, className }: SidebarProps) {
           onClick={onClose}
         />
       )}
-      <aside
+      {/* Holds the sidebar's place in the layout; the aside can expand past it. */}
+      <div
         className={cn(
-          'fixed inset-y-0 left-0 z-50 flex w-[256px] flex-col border-r border-border bg-background-subtle transition-transform duration-200 md:static md:translate-x-0',
-          open ? 'translate-x-0' : '-translate-x-full',
-          className,
+          'md:relative md:shrink-0 md:transition-[width] md:duration-200 md:ease-out',
+          collapsed ? 'md:w-14' : 'md:w-[240px]',
         )}
       >
-        <div className="flex h-20 items-center justify-between px-5">
-          <Link
-            href="/dashboard"
-            className="rounded-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40"
-            onClick={onClose}
-          >
-            <Logo size="lg" />
-          </Link>
-          <Button variant="ghost" size="icon-sm" onClick={onClose} className="md:hidden">
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
-
-        <div className="px-3 pt-4">
-          <Button className="w-full justify-start gap-2" asChild>
-            <Link
-              href="/dashboard?new=true"
-              onClick={() => {
-                onClose();
-                if (pathname === '/dashboard') {
-                  window.dispatchEvent(new CustomEvent('open-new-project'));
-                }
-              }}
-            >
-              <Plus className="h-4 w-4" />
-              New project
-            </Link>
-          </Button>
-        </div>
-
-        <nav className="flex-1 space-y-1 px-3 py-6">
-          <p className="mb-3 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-muted">
-            Workspace
-          </p>
-          {navItems.map((item) => {
-            const isActive =
-              item.href === '/dashboard'
-                ? pathname === '/dashboard'
-                : pathname.startsWith(item.href);
-            return (
+        <aside
+          aria-label="Navigation"
+          onPointerEnter={(event) => {
+            if (event.pointerType !== 'mouse') return;
+            hoveringRef.current = true;
+            if (collapsed) schedulePeek(true, 120);
+          }}
+          onPointerLeave={(event) => {
+            if (event.pointerType !== 'mouse') return;
+            hoveringRef.current = false;
+            if (!menuOpen) schedulePeek(false, 150);
+          }}
+          onFocus={() => {
+            if (collapsed) schedulePeek(true, 0);
+          }}
+          onBlur={(event) => {
+            if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+            if (!hoveringRef.current && !menuOpen) schedulePeek(false, 0);
+          }}
+          className={cn(
+            'fixed inset-y-0 left-0 z-50 flex w-[240px] flex-col overflow-hidden border-r border-border bg-background px-2.5 pb-3 transition-[transform,width,box-shadow] duration-200 ease-out md:absolute md:z-30 md:translate-x-0',
+            open ? 'translate-x-0' : '-translate-x-full',
+            rail && 'md:w-14',
+            collapsed && peek && 'md:shadow-popover',
+            className,
+          )}
+        >
+          <TooltipProvider delayDuration={300}>
+            {/*
+             * The same offset on every page, so the sidebar never shifts when
+             * you navigate. It shares a line with the Projects page title.
+             */}
+            <div className="mt-8 flex h-9 shrink-0 items-center lg:mt-10">
               <Link
-                key={item.href}
-                href={item.href}
+                href="/dashboard"
                 onClick={onClose}
+                aria-label="Sovereign home"
+                className={cn('flex h-9 min-w-0 shrink-0 items-center rounded-item', focusRing)}
+              >
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center">
+                  <Logo size={28} />
+                </span>
+                <span
+                  className={cn('ml-0.5 text-base font-semibold text-foreground', fadeLabel(rail))}
+                >
+                  Sovereign
+                </span>
+              </Link>
+
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={onClose}
+                className="ml-auto md:hidden"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+              {/* Expanded by hover, the same button pins the sidebar open. */}
+              <SidebarTooltip label={collapsed ? 'Keep sidebar open' : 'Collapse sidebar'}>
+                <button
+                  type="button"
+                  aria-label={collapsed ? 'Keep sidebar open' : 'Collapse sidebar'}
+                  onClick={handleToggle}
+                  tabIndex={rail ? -1 : undefined}
+                  className={cn(
+                    iconButton,
+                    'ml-auto hidden h-8 w-8 transition-[opacity,background-color,color] md:flex',
+                    rail ? 'pointer-events-none opacity-0' : 'delay-100',
+                  )}
+                >
+                  {collapsed ? (
+                    <PanelLeft className="h-[18px] w-[18px]" strokeWidth={1.5} />
+                  ) : (
+                    <PanelLeftClose className="h-[18px] w-[18px]" strokeWidth={1.5} />
+                  )}
+                </button>
+              </SidebarTooltip>
+            </div>
+
+            <RealmSwitcher
+              rail={rail}
+              onNavigate={onClose}
+              onMenuOpenChange={(next) => {
+                setMenuOpen(next);
+                if (!next && !hoveringRef.current) schedulePeek(false, 150);
+              }}
+            />
+
+            <SidebarTooltip label="New project" hint="N">
+              <Link
+                href="/dashboard?new=true"
+                aria-label="New project"
+                onClick={(event) => {
+                  event.preventDefault();
+                  onClose();
+                  startNewProject();
+                }}
                 className={cn(
-                  'flex h-10 items-center gap-3 rounded-item px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40',
-                  isActive
-                    ? 'bg-background-muted text-foreground'
-                    : 'text-foreground-secondary hover:bg-background-muted hover:text-foreground',
+                  itemBase,
+                  'mt-3 border border-border bg-background-subtle px-[7px] text-sm font-medium text-foreground-secondary hover:border-border-strong hover:bg-background-muted hover:text-foreground',
                 )}
               >
-                <item.icon className={cn('h-4 w-4 shrink-0', isActive && 'text-primary')} />
-                {item.label}
+                <NewProjectIcon />
+                <span className={fadeLabel(rail)}>New project</span>
               </Link>
-            );
-          })}
-        </nav>
+            </SidebarTooltip>
 
-        <div className="border-t border-border p-3">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                aria-label="Account menu"
-                className="flex w-full items-center gap-3 rounded-item p-2 text-left transition-colors hover:bg-background-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40 data-[state=open]:bg-background-muted"
-              >
-                <Avatar className="h-9 w-9 border border-border">
-                  {user?.image ? <AvatarImage src={user.image} alt={user?.name ?? 'User'} /> : null}
-                  <AvatarFallback className="bg-background-muted text-xs text-foreground-secondary">
-                    {(user?.name ?? user?.email ?? 'U').charAt(0).toUpperCase()}
-                  </AvatarFallback>
-                </Avatar>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-foreground">
-                    {user?.name ?? 'Your account'}
-                  </p>
-                  <p className="truncate text-xs text-foreground-muted">{user?.email ?? ''}</p>
-                </div>
-                <Ellipsis className="h-4 w-4 shrink-0 text-foreground-muted" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent side="top" align="start" sideOffset={8} className="w-[232px]">
-              <DropdownMenuLabel className="px-2 py-1.5 font-normal">
-                <div className="flex flex-col">
-                  <span className="truncate text-sm font-medium text-foreground">
-                    {user?.name ?? 'Your account'}
-                  </span>
-                  <span className="truncate text-xs font-normal text-foreground-muted">
-                    {user?.email ?? ''}
-                  </span>
-                </div>
-              </DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={() => {
-                  onClose();
-                  router.push('/settings');
+            <nav aria-label="Primary" className="mt-3 flex flex-1 flex-col gap-0.5">
+              {navItems.map((item) => (
+                <NavItem
+                  key={item.href}
+                  {...item}
+                  active={
+                    item.href === '/dashboard'
+                      ? pathname === '/dashboard'
+                      : pathname.startsWith(item.href)
+                  }
+                  rail={rail}
+                  onClick={onClose}
+                />
+              ))}
+            </nav>
+
+            <div className="mt-2 border-t border-border pt-2">
+              <DropdownMenu
+                onOpenChange={(next) => {
+                  setMenuOpen(next);
+                  // Closing the menu outside the sidebar collapses it again.
+                  if (!next && !hoveringRef.current) schedulePeek(false, 150);
                 }}
               >
-                <Settings className="text-foreground-muted" />
-                Settings
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => signOut({ callbackUrl: '/' })}>
-                <LogOut className="text-foreground-muted" />
-                Sign out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </aside>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label="Account menu"
+                    className={cn(
+                      itemBase,
+                      'group h-11 px-1 text-left hover:bg-background-subtle data-[state=open]:bg-background-subtle',
+                    )}
+                  >
+                    <Avatar className="h-7 w-7 shrink-0">
+                      {user?.image ? <AvatarImage src={user.image} alt={displayName} /> : null}
+                      <AvatarFallback className="bg-background-muted text-[11px] font-medium text-foreground-secondary">
+                        {initials(displayName)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className={cn('flex-1 leading-tight', fadeLabel(rail))}>
+                      <p className="truncate text-sm font-medium text-foreground">{displayName}</p>
+                      {user?.email && user.email !== displayName ? (
+                        <p className="truncate text-xs text-foreground-muted">{user.email}</p>
+                      ) : null}
+                    </div>
+                    <Ellipsis className="mr-1 h-4 w-4 shrink-0 text-foreground-muted opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 group-data-[state=open]:opacity-100" />
+                  </button>
+                </DropdownMenuTrigger>
+                <AccountMenuContent
+                  name={user?.name ?? 'Your account'}
+                  email={user?.email ?? ''}
+                  onNavigate={onClose}
+                />
+              </DropdownMenu>
+            </div>
+          </TooltipProvider>
+        </aside>
+      </div>
     </>
+  );
+}
+
+/**
+ * The current Realm, at the top of the rail. Its menu switches Realms (which
+ * changes the projects and keys shown everywhere), creates one, or opens the
+ * Realm's settings.
+ */
+function RealmSwitcher({
+  rail,
+  onNavigate,
+  onMenuOpenChange,
+}: {
+  rail: boolean;
+  onNavigate: () => void;
+  onMenuOpenChange: (open: boolean) => void;
+}) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const { realm, realms, selectRealm } = useCurrentRealm();
+  const [creating, setCreating] = useState(false);
+  const name = realm?.name ?? 'Realm';
+
+  // A project belongs to one Realm; switching away from it leaves the project.
+  const afterSwitch = () => {
+    if (pathname.startsWith('/project/')) router.push('/dashboard');
+    onNavigate();
+  };
+
+  return (
+    <>
+      <DropdownMenu onOpenChange={onMenuOpenChange}>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label={`Realm: ${name}. Switch Realm`}
+            className={cn(
+              itemBase,
+              'group mt-4 px-1 text-left hover:bg-background-subtle data-[state=open]:bg-background-subtle',
+            )}
+          >
+            <RealmMark name={name} />
+            <span className={cn('flex-1 truncate text-sm font-medium', fadeLabel(rail))}>
+              {realm ? name : ''}
+            </span>
+            <ChevronsUpDown
+              aria-hidden
+              className={cn('mr-1 h-4 w-4 shrink-0 text-foreground-muted', fadeLabel(rail))}
+            />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side="bottom" align="start" sideOffset={6} className="w-[224px]">
+          <DropdownMenuLabel className="px-2 py-1.5 text-xs font-medium text-foreground-muted">
+            Realms
+          </DropdownMenuLabel>
+          <DropdownMenuRadioGroup
+            value={realm?.id}
+            onValueChange={(realmId) => {
+              selectRealm(realmId);
+              afterSwitch();
+            }}
+          >
+            {realms.map((candidate) => (
+              <DropdownMenuRadioItem key={candidate.id} value={candidate.id}>
+                <span className="truncate">{candidate.name}</span>
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => setCreating(true)}>
+            <Plus className="text-foreground-muted" />
+            Create Realm
+          </DropdownMenuItem>
+          <DropdownMenuItem asChild>
+            <Link href="/settings?tab=members" onClick={onNavigate}>
+              <Settings className="text-foreground-muted" />
+              Realm settings
+            </Link>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <CreateRealmDialog open={creating} onOpenChange={setCreating} onCreated={afterSwitch} />
+    </>
+  );
+}
+
+function AccountMenuContent({
+  name,
+  email,
+  onNavigate,
+}: {
+  name: string;
+  email: string;
+  /** Closes the mobile drawer when a link in the menu is followed. */
+  onNavigate?: () => void;
+}) {
+  return (
+    <DropdownMenuContent side="top" align="start" sideOffset={8} className="w-[224px]">
+      <DropdownMenuLabel className="px-2 py-1.5 font-normal">
+        <div className="flex flex-col">
+          <span className="truncate text-sm font-medium text-foreground">{name}</span>
+          <span className="truncate text-xs font-normal text-foreground-muted">{email}</span>
+        </div>
+      </DropdownMenuLabel>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem asChild>
+        <Link href="/settings" onClick={onNavigate}>
+          <Settings className="text-foreground-muted" />
+          Settings
+        </Link>
+      </DropdownMenuItem>
+      <DropdownMenuItem onClick={() => signOut({ callbackUrl: '/' })}>
+        <LogOut className="text-foreground-muted" />
+        Sign out
+      </DropdownMenuItem>
+    </DropdownMenuContent>
   );
 }
 

@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { cn } from '@app-builder/ui/utils';
-import { Logo } from '@/components/brand/logo';
+import { LogoLockup } from '@/components/Logo';
 import { COLUMN, GUTTER, RuleMarks } from './primitives';
 
 const FOOTER_COLUMNS = [
@@ -37,7 +37,7 @@ export function SiteFooter() {
       <div className={cn(COLUMN, GUTTER, 'py-16')}>
         <div className="grid gap-12 lg:grid-cols-[1.4fr_2fr]">
           <div>
-            <Logo />
+            <LogoLockup />
             <p className="mt-5 max-w-xs text-sm leading-6 text-foreground-muted">
               The independent AI workspace for designing, building and shipping real software.
             </p>

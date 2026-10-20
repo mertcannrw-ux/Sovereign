@@ -2,11 +2,14 @@ import { NextAuthOptions, getServerSession, type Session } from 'next-auth';
 import GoogleProvider from 'next-auth/providers/google';
 import GitHubProvider from 'next-auth/providers/github';
 import CredentialsProvider from 'next-auth/providers/credentials';
+import { decode } from 'next-auth/jwt';
+import { cookies } from 'next/headers';
 import bcrypt from 'bcryptjs';
 import { getDb } from './db';
 import { canAdoptAccountByEmail } from './account-linking';
 import { checkRateLimit, hashIp, trustedClientIp } from '@/server/rate-limit';
-import { ensurePersonalOrganization } from '@/server/onboarding';
+import { ensurePersonalRealm } from '@/server/onboarding';
+import { LINK_COOKIE, decodeLinkIntent, type LinkIntent } from '@/server/account-link';
 
 export function oauthProvidersEnabled(): { google: boolean; github: boolean } {
   return {
@@ -18,9 +21,9 @@ export function oauthProvidersEnabled(): { google: boolean; github: boolean } {
 function buildProviders(): NextAuthOptions['providers'] {
   const enabled = oauthProvidersEnabled();
   const providers: NextAuthOptions['providers'] = [];
-  // `allowDangerousEmailAccountLinking` is deliberately NOT set. This app has no
-  // email-verification flow, so an attacker can register the victim's address
-  // with a password they control; auto-linking an OAuth identity onto that row
+  // `allowDangerousEmailAccountLinking` is deliberately NOT set. Password
+  // sign-ups do not verify their address, so an attacker can register the
+  // victim's address with a password they control; auto-linking an OAuth identity onto that row
   // would hand the attacker continued password access to the victim's account
   // (account pre-hijacking). Linking decisions live in the `signIn` callback,
   // which only adopts an existing row when it cannot already be controlled by
@@ -93,21 +96,52 @@ function buildProviders(): NextAuthOptions['providers'] {
 }
 
 /**
- * Best-effort onboarding at sign-in: `projects.create` requires an
- * organizationId, so an account without any organization dead-ends at
- * "No workspace found". `ensurePersonalOrganization` is idempotent and creates
- * the personal workspace only when the user has none.
+ * Best-effort onboarding at sign-in: every user builds in their personal Realm
+ * until they join or create a shared one. `ensurePersonalRealm` is idempotent
+ * and creates it only when missing.
  *
  * Deliberately swallows failures: a provisioning problem (missing table,
  * transient database error) must never block an otherwise valid sign-in, and
  * the next sign-in retries.
  */
-async function ensureWorkspaceForSignIn(userId: string, name?: string | null): Promise<void> {
+async function ensureRealmForSignIn(userId: string): Promise<void> {
   try {
-    await ensurePersonalOrganization(getDb(), userId, name);
+    await ensurePersonalRealm(getDb(), userId);
   } catch (error) {
-    console.error('[auth] failed to ensure personal organization for user', userId, error);
+    console.error('[auth] failed to ensure personal Realm for user', userId, error);
   }
+}
+
+/**
+ * The pending "connect a provider" intent for `provider` (server/account-link.ts),
+ * consumed so it applies to one round trip only. Null unless the browser's
+ * session token is still valid and belongs to the user who asked.
+ */
+async function consumeLinkIntent(provider: string): Promise<LinkIntent | null> {
+  const secret = process.env.NEXTAUTH_SECRET;
+  if (!secret) return null;
+  const jar = await cookies();
+  const raw = jar.get(LINK_COOKIE)?.value;
+  if (!raw) return null;
+  try {
+    jar.delete(LINK_COOKIE);
+  } catch {
+    // Read-only context; the cookie expires on its own.
+  }
+  const intent = decodeLinkIntent(raw, secret);
+  if (!intent || intent.provider !== provider) return null;
+
+  const sessionToken =
+    jar.get('__Secure-next-auth.session-token')?.value ?? jar.get('next-auth.session-token')?.value;
+  const token = sessionToken
+    ? await decode({ token: sessionToken, secret }).catch(() => null)
+    : null;
+  if (!token || token.sub !== intent.userId) return null;
+  const owner = await getDb().user.findUnique({
+    where: { id: intent.userId },
+    select: { sessionVersion: true },
+  });
+  return owner && owner.sessionVersion === (token.sessionVersion ?? 0) ? intent : null;
 }
 
 /**
@@ -130,7 +164,7 @@ export const authOptions: NextAuthOptions = {
       if (!account || account.provider === 'credentials') {
         // Password sign-in can be a brand-new user's first successful session
         // (registration is best-effort above), so provision here too.
-        if (user.id) await ensureWorkspaceForSignIn(user.id, user.name);
+        if (user.id) await ensureRealmForSignIn(user.id);
         return true;
       }
       const email = user.email?.trim().toLowerCase();
@@ -144,15 +178,54 @@ export const authOptions: NextAuthOptions = {
       if (providerEmailVerified === false) return '/auth/signin?error=EmailNotVerified';
 
       const db = getDb();
+      const identity = { provider: account.provider, providerAccountId: account.providerAccountId };
+      const linked = await db.account.findUnique({
+        where: { provider_providerAccountId: identity },
+      });
+
+      // "Connect" from Settings > Profile. Returning a URL ends the round trip
+      // without a new sign-in, so the session that asked stays as it was.
+      const intent = await consumeLinkIntent(account.provider);
+      if (intent) {
+        if (linked) {
+          return linked.userId === intent.userId
+            ? `/settings?tab=profile&linked=${account.provider}`
+            : '/settings?tab=profile&linkError=taken';
+        }
+        const sameProvider = await db.account.findFirst({
+          where: { userId: intent.userId, provider: account.provider },
+        });
+        if (sameProvider) return '/settings?tab=profile&linkError=exists';
+        await db.account.create({ data: { ...identity, userId: intent.userId } });
+        return `/settings?tab=profile&linked=${account.provider}`;
+      }
+
+      if (linked) {
+        const owner = await db.user.findUnique({ where: { id: linked.userId } });
+        if (!owner) return false;
+        user.id = owner.id;
+        user.email = owner.email;
+        user.name = owner.name;
+        user.image = owner.avatarUrl;
+        user.sessionVersion = owner.sessionVersion;
+        await ensureRealmForSignIn(owner.id);
+        return true;
+      }
+
       const existing = await db.user.findFirst({
         where: { email: { equals: email, mode: 'insensitive' } },
+        include: { _count: { select: { accounts: true } } },
       });
       if (existing) {
-        if (!canAdoptAccountByEmail(existing)) {
-          // Do not sign the user in under an existing password-protected
-          // account, and do not create a duplicate row for the same address.
-          return '/auth/signin?error=AccountLinkRequired';
+        if (!canAdoptAccountByEmail({ ...existing, linkedAccounts: existing._count.accounts })) {
+          // Do not sign the user in under an existing account this provider is
+          // not connected to, and do not create a duplicate row for the same
+          // address.
+          return existing.passwordHash
+            ? '/auth/signin?error=AccountLinkRequired'
+            : '/auth/signin?error=ProviderNotConnected';
         }
+        await db.account.create({ data: { ...identity, userId: existing.id } });
         user.id = existing.id;
         user.email = existing.email;
         // Carry the database-minted version so getVerifiedSession can compare
@@ -160,7 +233,7 @@ export const authOptions: NextAuthOptions = {
         user.sessionVersion = existing.sessionVersion;
         // Existing rows may predate onboarding, and an adopted OAuth identity
         // still needs a workspace it can create projects in.
-        await ensureWorkspaceForSignIn(existing.id, existing.name ?? user.name);
+        await ensureRealmForSignIn(existing.id);
         if (user.name && user.name !== existing.name) {
           await db.user.update({
             where: { id: existing.id },
@@ -179,12 +252,13 @@ export const authOptions: NextAuthOptions = {
           name: user.name ?? null,
           avatarUrl: user.image ?? null,
           emailVerified: true,
+          accounts: { create: identity },
         },
       });
       user.id = created.id;
       user.email = created.email;
       user.sessionVersion = created.sessionVersion;
-      await ensureWorkspaceForSignIn(created.id, created.name ?? user.name);
+      await ensureRealmForSignIn(created.id);
       return true;
     },
     async session({ session, token }) {
@@ -196,10 +270,24 @@ export const authOptions: NextAuthOptions = {
       }
       return session;
     },
-    async jwt({ token, user }) {
+    async jwt({ token, user, trigger }) {
       if (user) {
         token.sub = user.id;
         token.sessionVersion = (user as { sessionVersion?: number }).sessionVersion ?? 0;
+      }
+      // The client calls `update()` after a profile edit: refresh what the
+      // sidebar shows. Never sessionVersion - a revoked token must not be able
+      // to revive itself this way.
+      if (trigger === 'update' && token.sub) {
+        const fresh = await getDb().user.findUnique({
+          where: { id: token.sub },
+          select: { name: true, email: true, avatarUrl: true },
+        });
+        if (fresh) {
+          token.name = fresh.name;
+          token.email = fresh.email;
+          token.picture = fresh.avatarUrl;
+        }
       }
       return token;
     },

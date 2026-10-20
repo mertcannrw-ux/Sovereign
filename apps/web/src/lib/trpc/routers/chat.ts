@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { getProvider, ProviderError } from '@app-builder/ai-gateway';
 import { AIProvider } from '@app-builder/shared';
 import { protectedProcedure, router } from '../trpc';
-import { requireProjectRole } from '@/server/authz';
+import { requireProjectAccess } from '@/server/authz';
 import { checkRateLimit } from '@/server/rate-limit';
 import { decryptApiKey } from '@/lib/crypto';
 import {
@@ -115,7 +115,7 @@ export const chatRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       // ── 1. Validate project access ──────────────────────────────
-      await requireProjectRole(ctx, input.projectId, 'EDITOR');
+      await requireProjectAccess(ctx, input.projectId);
 
       const leaseToken = randomUUID();
       const claimed = await tryClaimGenerationLease(ctx.db, input.projectId, leaseToken);
@@ -406,7 +406,7 @@ export const chatRouter = router({
       }),
     )
     .query(async ({ ctx, input }) => {
-      await requireProjectRole(ctx, input.projectId, 'VIEWER');
+      await requireProjectAccess(ctx, input.projectId);
 
       // Transcripts grow without bound (every agent turn persists toolCalls
       // JSON); returning the whole history on every project load degrades
@@ -462,7 +462,7 @@ export const chatRouter = router({
   getVersions: protectedProcedure
     .input(z.object({ projectId: z.string() }))
     .query(async ({ ctx, input }) => {
-      await requireProjectRole(ctx, input.projectId, 'VIEWER');
+      await requireProjectAccess(ctx, input.projectId);
 
       return getVersions(ctx.db, input.projectId);
     }),
@@ -479,7 +479,7 @@ export const chatRouter = router({
       }),
     )
     .query(async ({ ctx, input }) => {
-      await requireProjectRole(ctx, input.projectId, 'VIEWER');
+      await requireProjectAccess(ctx, input.projectId);
 
       try {
         return await reconstructVersionFiles(ctx.db, input.projectId, input.versionNumber);
@@ -503,7 +503,7 @@ export const chatRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      await requireProjectRole(ctx, input.projectId, 'EDITOR');
+      await requireProjectAccess(ctx, input.projectId);
 
       const leaseToken = randomUUID();
       const claimed = await tryClaimGenerationLease(ctx.db, input.projectId, leaseToken);

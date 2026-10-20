@@ -3,7 +3,7 @@ import type { NextRequest } from 'next/server';
 import { getToken } from 'next-auth/jwt';
 
 /** Page prefixes that require a session. API routes enforce their own authz. */
-const PROTECTED_PREFIXES = ['/dashboard', '/project', '/settings'];
+const PROTECTED_PREFIXES = ['/dashboard', '/project', '/settings', '/invite'];
 
 function generateNonce(): string {
   const array = new Uint8Array(16);

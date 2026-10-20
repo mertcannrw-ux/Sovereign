@@ -28,6 +28,7 @@
     "interest:report": "tsx prisma/plan-interest-report.ts"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.4.1",
     "@next/eslint-plugin-next": "16.2.10",
     "@playwright/test": "1.61.1",
     "@testing-library/jest-dom": "6.9.1",

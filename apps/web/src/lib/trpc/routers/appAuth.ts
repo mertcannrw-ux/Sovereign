@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { protectedProcedure, router } from '../trpc';
-import { requireProjectRole } from '@/server/authz';
+import { requireProjectAccess } from '@/server/authz';
 
 /**
  * Schema for updating auth configuration.
@@ -60,7 +60,7 @@ export const appAuthRouter = router({
   getConfig: protectedProcedure
     .input(z.object({ projectId: z.string() }))
     .query(async ({ ctx, input }) => {
-      await requireProjectRole(ctx, input.projectId, 'VIEWER');
+      await requireProjectAccess(ctx, input.projectId);
 
       // Read-only: a VIEWER opening this panel must not create a row (the old
       // upsert also bumped updatedAt on every read). Projects without a config
@@ -97,7 +97,7 @@ export const appAuthRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      await requireProjectRole(ctx, input.projectId, 'OWNER');
+      await requireProjectAccess(ctx, input.projectId);
 
       const existing = await ctx.db.appAuthConfig.findUnique({
         where: { projectId: input.projectId },
@@ -148,7 +148,7 @@ export const appAuthRouter = router({
   listUsers: protectedProcedure
     .input(z.object({ projectId: z.string() }))
     .query(async ({ ctx, input }) => {
-      await requireProjectRole(ctx, input.projectId, 'VIEWER');
+      await requireProjectAccess(ctx, input.projectId);
 
       const users = await ctx.db.appUser.findMany({
         where: { projectId: input.projectId },
@@ -171,7 +171,7 @@ export const appAuthRouter = router({
    * Create a new user in the project's app (admin only - owner or admin role).
    */
   createUser: protectedProcedure.input(createUserSchema).mutation(async ({ ctx, input }) => {
-    await requireProjectRole(ctx, input.projectId, 'OWNER');
+    await requireProjectAccess(ctx, input.projectId);
 
     // Normalize like register/login so the case-sensitive unique constraint
     // ([projectId, email]) can't be bypassed with a case variant.
@@ -223,7 +223,7 @@ export const appAuthRouter = router({
   deleteUser: protectedProcedure
     .input(z.object({ projectId: z.string(), userId: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      await requireProjectRole(ctx, input.projectId, 'OWNER');
+      await requireProjectAccess(ctx, input.projectId);
 
       const user = await ctx.db.appUser.findUnique({
         where: { id: input.userId },

@@ -85,11 +85,229 @@
   .chat-message--assistant {
     @apply bg-background;
   }
+
+  /*
+   * Dot-grid surface for project thumbnails with nothing to preview. The dots
+   * are drawn on a canvas (components/dot-grid.tsx) inside `.dot-grid-board`,
+   * which leans toward the cursor while the surrounding `.group` is hovered,
+   * with a soft glow at the cursor (`.dot-grid-glow`). The pointer variables
+   * are set there.
+   */
+  .dot-grid {
+    position: relative;
+    overflow: hidden;
+    background-color: var(--background-muted);
+  }
+
+  /*
+   * Overhangs the frame by 5px (BLEED in dot-grid.tsx), so the outermost dots
+   * sit ~3px inside every edge and the frame stays covered while it tilts.
+   */
+  .dot-grid-board {
+    position: absolute;
+    inset: -5px;
+    transition: transform 400ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .group:hover .dot-grid-board {
+    transform: perspective(600px) translateZ(16px) rotateX(var(--tilt-x, 0deg))
+      rotateY(var(--tilt-y, 0deg));
+  }
+
+  .dot-grid-glow::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    pointer-events: none;
+    background: radial-gradient(
+      200px circle at var(--cursor-x, 50%) var(--cursor-y, 50%),
+      color-mix(in srgb, var(--primary) 8%, transparent),
+      transparent 70%
+    );
+    transition: opacity 300ms ease-out;
+  }
+
+  .group:hover .dot-grid-glow::after {
+    opacity: 1;
+  }
+
+  /*
+   * The empty preview while the first build runs: the card hover glow, held
+   * centred and breathing at low strength (the dots pulse in dot-grid.tsx).
+   */
+  .dot-grid--pulse.dot-grid-glow::after {
+    background: radial-gradient(
+      60% 60% at 50% 50%,
+      color-mix(in srgb, var(--primary) 6%, transparent),
+      transparent 70%
+    );
+    animation: dot-grid-pulse 2.4s ease-in-out infinite;
+  }
+
+  @keyframes dot-grid-pulse {
+    50% {
+      opacity: 1;
+    }
+  }
+
+  /* Reduced motion: the hover still recolours the dots; no tilt or glow. */
+  @media (prefers-reduced-motion: reduce) {
+    .group:hover .dot-grid-board {
+      transform: none;
+    }
+
+    .dot-grid-glow::after {
+      display: none;
+    }
+  }
+
+  /*
+   * The Prompt Shield mark (components/Logo.tsx). Lime by default; a text-*
+   * utility overrides it. The mouth (cursor) mumbles while working, the
+   * caret squints once when a build finishes and the mark shakes once on an
+   * error. `Mascot` adds `.logo--blink` for its random eye blink. The
+   * cursor's hard on/off blink is reserved for the favicon
+   * (use-favicon-blink.ts) and the trailer.
+   */
+  .logo {
+    color: var(--primary);
+  }
+
+  .logo-caret {
+    transform-origin: 13px 14.5px;
+    transform-box: view-box;
+  }
+
+  .logo-cursor {
+    transform-origin: 20.25px 18.5px;
+    transform-box: view-box;
+  }
+
+  .logo--working .logo-cursor {
+    animation: logo-mumble 1.6s ease-in-out infinite;
+  }
+
+  .logo--done .logo-caret {
+    animation: logo-squint 400ms ease-out 1;
+  }
+
+  .logo--blink .logo-caret {
+    animation: logo-blink 120ms ease-in-out 1;
+  }
+
+  .logo--error {
+    animation: logo-shake 400ms ease-in-out 1;
+  }
+
+  @keyframes logo-mumble {
+    0% {
+      transform: translateX(0) scaleX(1);
+    }
+    18% {
+      transform: translateX(-0.6px) scaleX(0.6);
+    }
+    32% {
+      transform: translateX(0.4px) scaleX(1.15);
+    }
+    50% {
+      transform: translateX(0) scaleX(0.85);
+    }
+    68% {
+      transform: translateX(0.8px) scaleX(1.1);
+    }
+    82% {
+      transform: translateX(-0.3px) scaleX(0.7);
+    }
+    100% {
+      transform: translateX(0) scaleX(1);
+    }
+  }
+
+  @keyframes logo-squint {
+    40% {
+      transform: scaleY(0.4);
+    }
+  }
+
+  @keyframes logo-blink {
+    50% {
+      transform: scaleY(0.1);
+    }
+  }
+
+  @keyframes logo-shake {
+    20%,
+    60% {
+      transform: translateX(-2px);
+    }
+    40%,
+    80% {
+      transform: translateX(2px);
+    }
+  }
+
+  /* The editor's mascot status row: done plays, then the row fades out. */
+  .logo-status--done {
+    animation: logo-status-out 300ms ease-out 500ms both;
+  }
+
+  @keyframes logo-status-out {
+    to {
+      opacity: 0;
+    }
+  }
+
+  /*
+   * Reduced motion keeps only the eye blink (design.md §9.2). The selector
+   * outranks the blanket 0.01ms rule at the end of this file.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    .logo,
+    .logo-cursor,
+    .logo-caret {
+      animation: none !important;
+    }
+
+    .logo.logo--blink .logo-caret {
+      animation: logo-blink 120ms ease-in-out 1 !important;
+    }
+  }
+
+  /*
+   * Settings > Profile > "Mascot animations" off: the same reduced-motion
+   * behaviour, for that user only (components/mascot-motion.tsx sets it).
+   */
+  :root[data-mascot-motion='off'] .logo,
+  :root[data-mascot-motion='off'] .logo-cursor,
+  :root[data-mascot-motion='off'] .logo-caret {
+    animation: none !important;
+  }
+
+  :root[data-mascot-motion='off'] .logo.logo--blink .logo-caret {
+    animation: logo-blink 120ms ease-in-out 1 !important;
+  }
 }
 
 @layer utilities {
   .animate-fade-in {
     animation: fadeIn 0.2s ease-out;
+  }
+  /*
+   * Dialogs are centred with translate(-50%, -50%), so their keyframes carry
+   * that offset; a plain transform would pull them off-centre mid-animation.
+   */
+  .animate-dialog-in {
+    animation: dialogIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .animate-dialog-out {
+    animation: dialogOut 0.15s ease-in forwards;
+  }
+  .animate-overlay-in {
+    animation: overlayIn 0.2s ease-out;
+  }
+  .animate-overlay-out {
+    animation: overlayOut 0.15s ease-in forwards;
   }
   .animate-spin {
     animation: spin 1s linear infinite !important;
@@ -151,6 +369,40 @@
     to {
       opacity: 1;
       transform: translateY(0);
+    }
+  }
+
+  @keyframes dialogIn {
+    from {
+      opacity: 0;
+      transform: translate(-50%, calc(-50% + 8px)) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
+  }
+
+  @keyframes dialogOut {
+    from {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
+    to {
+      opacity: 0;
+      transform: translate(-50%, calc(-50% + 4px)) scale(0.98);
+    }
+  }
+
+  @keyframes overlayIn {
+    from {
+      opacity: 0;
+    }
+  }
+
+  @keyframes overlayOut {
+    to {
+      opacity: 0;
     }
   }
 

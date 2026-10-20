@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { protectedProcedure, router } from '../trpc';
 import { env } from '@/env';
-import { requireOrganizationRole } from '@/server/authz';
+import { requireRealmRole } from '@/server/authz';
 import {
   PLAN_LIMITS,
   hasLiveSubscription,
@@ -33,15 +33,15 @@ function requireBillingConfigured(): void {
 
 export const billingRouter = router({
   /**
-   * The organization's current plan. Readable by any member; only OWNER/ADMIN
-   * may start checkout or open the portal.
+   * The Realm's current plan. Readable by any member; only the owner may start
+   * checkout or open the portal.
    */
   getPlan: protectedProcedure
-    .input(z.object({ organizationId: z.string().uuid() }))
+    .input(z.object({ realmId: z.string().uuid() }))
     .query(async ({ ctx, input }) => {
-      const { role } = await requireOrganizationRole(ctx, input.organizationId, 'MEMBER');
+      const { role } = await requireRealmRole(ctx, input.realmId, 'MEMBER');
       const subscription = await ctx.db.subscription.findUnique({
-        where: { organizationId: input.organizationId },
+        where: { realmId: input.realmId },
         select: {
           status: true,
           priceId: true,
@@ -60,7 +60,7 @@ export const billingRouter = router({
         cancelAtPeriodEnd: subscription?.cancelAtPeriodEnd ?? false,
         hasSubscription: hasLiveSubscription(subscription),
         hasBillingAccount: Boolean(subscription),
-        canManage: role === 'OWNER' || role === 'ADMIN',
+        canManage: role === 'OWNER',
         billingConfigured: isBillingConfigured(),
         paidPlansAvailable: arePaidPlansAvailable(),
       };
@@ -84,12 +84,12 @@ export const billingRouter = router({
   createCheckoutSession: protectedProcedure
     .input(
       z.object({
-        organizationId: z.string().uuid(),
+        realmId: z.string().uuid(),
         plan: z.enum(['pro', 'business']),
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      await requireOrganizationRole(ctx, input.organizationId, 'ADMIN');
+      await requireRealmRole(ctx, input.realmId, 'OWNER');
       requireBillingConfigured();
       if (!arePaidPlansAvailable()) {
         throw new TRPCError({
@@ -101,35 +101,35 @@ export const billingRouter = router({
       const stripe = getStripe();
 
       let subscription = await ctx.db.subscription.findUnique({
-        where: { organizationId: input.organizationId },
+        where: { realmId: input.realmId },
       });
       if (hasLiveSubscription(subscription)) {
         throw new TRPCError({
           code: 'CONFLICT',
-          message: 'This workspace already has a subscription. Change it from the billing portal.',
+          message: 'This Realm already has a subscription. Change it from the billing portal.',
         });
       }
 
       if (!subscription) {
-        const organization = await ctx.db.organization.findUniqueOrThrow({
-          where: { id: input.organizationId },
+        const realm = await ctx.db.realm.findUniqueOrThrow({
+          where: { id: input.realmId },
           select: { name: true },
         });
         // The idempotency key collapses double-clicks and concurrent requests
-        // onto one Stripe customer per organization.
+        // onto one Stripe customer per Realm.
         const customer = await stripe.customers.create(
           {
-            name: organization.name,
-            metadata: { organizationId: input.organizationId },
+            name: realm.name,
+            metadata: { realmId: input.realmId },
           },
-          { idempotencyKey: `org-customer:${input.organizationId}` },
+          { idempotencyKey: `realm-customer:${input.realmId}` },
         );
         // INCOMPLETE until the webhook reports a real subscription, so this
         // placeholder row never grants a paid plan.
         subscription = await ctx.db.subscription.upsert({
-          where: { organizationId: input.organizationId },
+          where: { realmId: input.realmId },
           create: {
-            organizationId: input.organizationId,
+            realmId: input.realmId,
             stripeCustomerId: customer.id,
             status: 'INCOMPLETE',
           },
@@ -143,23 +143,23 @@ export const billingRouter = router({
       if (existing.hasLive) {
         throw new TRPCError({
           code: 'CONFLICT',
-          message: 'This workspace already has a subscription. Change it from the billing portal.',
+          message: 'This Realm already has a subscription. Change it from the billing portal.',
         });
       }
       // Only the newest checkout can be paid, so two open tabs cannot both
       // subscribe.
       await expireOpenCheckoutSessions(stripe, subscription.stripeCustomerId);
 
-      // One trial per organization: any earlier subscription, even a canceled
+      // One trial per Realm: any earlier subscription, even a canceled
       // one, uses it up.
       const trialEligible = !subscription.stripeSubscriptionId && !existing.hasAny;
       const session = await stripe.checkout.sessions.create({
         mode: 'subscription',
         customer: subscription.stripeCustomerId,
-        client_reference_id: input.organizationId,
+        client_reference_id: input.realmId,
         line_items: [{ price, quantity: 1 }],
         subscription_data: {
-          metadata: { organizationId: input.organizationId },
+          metadata: { realmId: input.realmId },
           ...(trialEligible && { trial_period_days: TRIAL_DAYS }),
         },
         success_url: appUrl('/settings?tab=billing&checkout=success'),
@@ -176,19 +176,19 @@ export const billingRouter = router({
    * and payment methods.
    */
   createPortalSession: protectedProcedure
-    .input(z.object({ organizationId: z.string().uuid() }))
+    .input(z.object({ realmId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
-      await requireOrganizationRole(ctx, input.organizationId, 'ADMIN');
+      await requireRealmRole(ctx, input.realmId, 'OWNER');
       requireBillingConfigured();
 
       const subscription = await ctx.db.subscription.findUnique({
-        where: { organizationId: input.organizationId },
+        where: { realmId: input.realmId },
         select: { stripeCustomerId: true },
       });
       if (!subscription) {
         throw new TRPCError({
           code: 'PRECONDITION_FAILED',
-          message: 'This workspace has no billing account yet.',
+          message: 'This Realm has no billing account yet.',
         });
       }
 

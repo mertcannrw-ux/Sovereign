@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { Prisma } from '@prisma-generated/prisma/client';
 import { protectedProcedure, router } from '../trpc';
-import { requireProjectRole } from '@/server/authz';
+import { requireProjectAccess } from '@/server/authz';
 import { checkRateLimit } from '@/server/rate-limit';
 import { isSafeDefault, quotePgIdent, sanitizeSqlForTenant } from '@/server/db-browser';
 import { findAppDatabase, requireAppDatabase } from '@/server/app-database';
@@ -61,7 +61,7 @@ export const databaseRouter = router({
   listTables: protectedProcedure
     .input(z.object({ projectId: z.string() }))
     .query(async ({ ctx, input }) => {
-      await requireProjectRole(ctx, input.projectId, 'VIEWER');
+      await requireProjectAccess(ctx, input.projectId);
 
       const appDb = await findAppDatabaseOrThrow(ctx.db, input.projectId);
 
@@ -89,7 +89,7 @@ export const databaseRouter = router({
       }),
     )
     .query(async ({ ctx, input }) => {
-      await requireProjectRole(ctx, input.projectId, 'VIEWER');
+      await requireProjectAccess(ctx, input.projectId);
 
       const appDb = await findAppDatabaseOrThrow(ctx.db, input.projectId);
 
@@ -150,7 +150,7 @@ export const databaseRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      await requireProjectRole(ctx, input.projectId, 'EDITOR');
+      await requireProjectAccess(ctx, input.projectId);
 
       const appDb = await requireAppDatabase(ctx.db, input.projectId);
 
@@ -194,7 +194,7 @@ export const databaseRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      await requireProjectRole(ctx, input.projectId, 'EDITOR');
+      await requireProjectAccess(ctx, input.projectId);
 
       const appDb = await findAppDatabaseOrThrow(ctx.db, input.projectId);
 
@@ -222,7 +222,7 @@ export const databaseRouter = router({
   executeQuery: protectedProcedure
     .input(z.object({ projectId: z.string(), sql: z.string().min(1) }))
     .mutation(async ({ ctx, input }) => {
-      await requireProjectRole(ctx, input.projectId, 'VIEWER');
+      await requireProjectAccess(ctx, input.projectId);
 
       const rate = await checkRateLimit('dbQuery', ctx.user.id);
       if (!rate.allowed) {

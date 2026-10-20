@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { cn } from '@app-builder/ui/utils';
-import { Logo } from '@/components/brand/logo';
+import { LogoLockup } from '@/components/Logo';
 import {
   COLUMN,
   Eyebrow,
@@ -67,7 +67,7 @@ export function AuthShell({
             aria-label="Sovereign home"
             className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40"
           >
-            <Logo />
+            <LogoLockup />
           </Link>
           {aside && (
             <Link

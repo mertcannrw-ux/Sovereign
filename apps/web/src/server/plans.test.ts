@@ -58,25 +58,27 @@ describe('assertCanCreateProject', () => {
     } as unknown as Parameters<typeof assertCanCreateProject>[0];
   }
 
-  it('allows a free org under the limit', async () => {
-    await expect(assertCanCreateProject(fakeDb(null, 2), 'org-1', PRICES)).resolves.toBeUndefined();
+  it('allows a free Realm under the limit', async () => {
+    await expect(
+      assertCanCreateProject(fakeDb(null, 2), 'realm-1', PRICES),
+    ).resolves.toBeUndefined();
   });
 
-  it('rejects a free org at the limit', async () => {
-    await expect(assertCanCreateProject(fakeDb(null, 3), 'org-1', PRICES)).rejects.toMatchObject({
+  it('rejects a free Realm at the limit', async () => {
+    await expect(assertCanCreateProject(fakeDb(null, 3), 'realm-1', PRICES)).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });
   });
 
-  it('does not count projects for a paid org', async () => {
+  it('does not count projects for a paid Realm', async () => {
     const db = fakeDb({ status: 'ACTIVE', priceId: 'price_pro' }, 50);
-    await expect(assertCanCreateProject(db, 'org-1', PRICES)).resolves.toBeUndefined();
+    await expect(assertCanCreateProject(db, 'realm-1', PRICES)).resolves.toBeUndefined();
     expect(db.project.count).not.toHaveBeenCalled();
   });
 
-  it('limits an org whose payment failed', async () => {
+  it('limits a Realm whose payment failed', async () => {
     const db = fakeDb({ status: 'PAST_DUE', priceId: 'price_pro' }, 3);
-    await expect(assertCanCreateProject(db, 'org-1', PRICES)).rejects.toMatchObject({
+    await expect(assertCanCreateProject(db, 'realm-1', PRICES)).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });
   });

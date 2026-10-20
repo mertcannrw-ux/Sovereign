@@ -5,11 +5,12 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { protectedProcedure, router } from '../trpc';
-import { requireOrganizationRole, requireProjectRole } from '@/server/authz';
+import type { Context } from '../context';
+import { hasRealmRole, requireProjectAccess, requireRealmRole } from '@/server/authz';
 import { assertTenantSchemaName, provisionAppDatabase } from '@/server/app-database';
 import { quotePgIdent } from '@/server/db-browser';
 import { persistProjectFiles } from '@/lib/project-files';
-import { lockOrganizationMembership } from '@/server/org-lock';
+import { lockRealm } from '@/server/realm-lock';
 import { assertCanCreateProject } from '@/server/plans';
 import { getPlanPrices } from '@/server/stripe';
 
@@ -22,6 +23,9 @@ function generateSlug(name: string): string {
       .slice(0, 80) || 'project'
   );
 }
+
+/** A generation run counts as in flight for this long: the generate route's 800s cap, rounded up. */
+const ACTIVE_RUN_WINDOW_MS = 15 * 60 * 1000;
 
 type ProjectRow = { id: string; updatedAt: Date };
 interface ProjectListCursor {
@@ -81,45 +85,123 @@ function paginateProjects<T extends ProjectRow>(rows: T[], limit: number) {
   };
 }
 
+interface ProjectRecordInput {
+  name: string;
+  description?: string;
+  modelProvider?: string;
+  modelName?: string;
+  realmId: string;
+}
+
+/**
+ * Insert a project row with a unique slug, provision its app database, then
+ * let `seed` write its initial files inside the same transaction.
+ */
+async function createProjectRecord(
+  db: Context['db'],
+  userId: string,
+  input: ProjectRecordInput,
+  seed: (tx: Prisma.TransactionClient, created: Project) => Promise<void>,
+): Promise<Project> {
+  // Slug allocation must tolerate a concurrent create of the same name:
+  // check-then-create races (two creators read "free" simultaneously), and
+  // a time-based suffix can collide within the same millisecond. P2002
+  // from the projects_slug_key unique index is the arbiter - retry with
+  // fresh entropy, like deployments.create does for its version counter.
+  // The constraint name is checked so any OTHER unique violation on this
+  // multi-table tx propagates instead of silently retrying 5×.
+  const SLUG_MAX_ATTEMPTS = 5;
+  let slug = generateSlug(input.name);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await db.$transaction(
+        async (tx) => {
+          // The pre-tx role check can race a concurrent removeMember, so
+          // re-verify membership while holding the lock removeMember takes.
+          await lockRealm(tx, input.realmId);
+          const membership = await tx.realmMember.findUnique({
+            where: { realmId_userId: { realmId: input.realmId, userId } },
+          });
+          if (!membership) {
+            throw new TRPCError({ code: 'FORBIDDEN', message: 'Not a member of this Realm.' });
+          }
+
+          // Counted under the Realm lock, so concurrent creates cannot both
+          // pass the plan's project limit.
+          await assertCanCreateProject(tx, input.realmId, getPlanPrices());
+
+          // Opportunistic dedupe inside the tx; the P2002 retry below is
+          // still the arbiter under read-committed.
+          const existing = await tx.project.findUnique({ where: { slug } });
+          if (existing) {
+            slug = `${slug}-${randomUUID().slice(0, 8)}`;
+          }
+
+          const created = await tx.project.create({
+            data: {
+              ownerId: userId,
+              realmId: input.realmId,
+              name: input.name,
+              description: input.description ?? null,
+              slug,
+              ...(input.modelProvider !== undefined && { modelProvider: input.modelProvider }),
+              ...(input.modelName !== undefined && { modelName: input.modelName }),
+            },
+          });
+          await provisionAppDatabase(tx, created.id);
+          await seed(tx, created);
+          return created;
+        },
+        // Provisioning a tenant schema + seeding files is raw DDL + a file
+        // batch; the 5s interactive default can abort legitimate creations
+        // under load, so budget generously.
+        { timeout: 30_000 },
+      );
+    } catch (error) {
+      // Prisma reports the violated constraint in meta.target, as a
+      // string for a column-level @unique and a list for composite
+      // indexes; accept both spellings of the slug constraint.
+      const target = (
+        error instanceof Prisma.PrismaClientKnownRequestError ? error.meta?.target : undefined
+      ) as string | string[] | undefined;
+      const isSlugRace =
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002' &&
+        (target === 'slug' ||
+          (Array.isArray(target) && target.length === 1 && target[0] === 'slug'));
+      if (!isSlugRace || attempt >= SLUG_MAX_ATTEMPTS - 1) throw error;
+      slug = `${generateSlug(input.name)}-${randomUUID().slice(0, 8)}`;
+    }
+  }
+}
+
 export const projectsRouter = router({
   /**
-   * List all projects the current user owns or collaborates on.
+   * The projects of one Realm, newest first. Members only.
    */
   list: protectedProcedure
     .input(
-      z
-        .object({
-          cursor: z.string().optional(),
-          limit: z.number().int().min(1).max(100).default(50),
-          // Server-side filter so search covers every project, not just the
-          // pages the dashboard happened to load.
-          search: z.string().max(100).optional(),
-        })
-        .default({}),
+      z.object({
+        realmId: z.string().uuid(),
+        cursor: z.string().optional(),
+        limit: z.number().int().min(1).max(100).default(50),
+        // Server-side filter so search covers every project, not just the
+        // pages the dashboard happened to load.
+        search: z.string().max(100).optional(),
+      }),
     )
     .query(async ({ ctx, input }) => {
-      // Org admins see every project of every org they administer, so this
-      // query is unbounded without a cap. Cursor = JSON {u, id} of the last
-      // item of the previous page, per paginateProjects below.
+      await requireRealmRole(ctx, input.realmId, 'MEMBER');
+      // A Realm's project count is unbounded, so the query is paged. Cursor =
+      // JSON {u, id} of the last item of the previous page, per
+      // paginateProjects below.
       const cursor = parseProjectListCursor(input.cursor);
       const take = input.limit + 1;
       const search = input.search?.trim().toLowerCase();
       const projects = await ctx.db.project.findMany({
         where: {
           AND: [
-            {
-              OR: [
-                { ownerId: ctx.user.id },
-                { collaborators: { some: { userId: ctx.user.id } } },
-                {
-                  organization: {
-                    members: {
-                      some: { userId: ctx.user.id, role: { in: ['OWNER', 'ADMIN'] } },
-                    },
-                  },
-                },
-              ],
-            },
+            { realmId: input.realmId },
             ...(cursor ? [belowCursor(cursor)] : []),
             ...(search
               ? [
@@ -139,6 +221,27 @@ export const projectsRouter = router({
           owner: {
             select: { id: true, name: true, email: true },
           },
+          // Latest live deployment, for the dashboard card's site link.
+          deployments: {
+            where: { status: 'LIVE' },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            select: { url: true, customDomain: true },
+          },
+          // Zero files means the project was never built: the dashboard
+          // shows an empty card instead of a preview.
+          _count: { select: { files: true } },
+          // An in-flight build, for the card's generating mark. Runs older
+          // than the generate route's maxDuration (800s) were killed without
+          // settling their status, so they don't count.
+          generationRuns: {
+            where: {
+              status: { in: ['RUNNING', 'WAITING_RUNTIME', 'VERIFYING'] },
+              startedAt: { gte: new Date(Date.now() - ACTIVE_RUN_WINDOW_MS) },
+            },
+            take: 1,
+            select: { id: true },
+          },
         },
       });
       return paginateProjects(projects, input.limit);
@@ -155,160 +258,82 @@ export const projectsRouter = router({
         description: z.string().max(500).optional(),
         modelProvider: z.string().optional(),
         modelName: z.string().optional(),
-        organizationId: z.string().uuid(),
+        realmId: z.string().uuid(),
         templateId: z.string().max(80).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      await requireOrganizationRole(ctx, input.organizationId, 'MEMBER');
+      await requireRealmRole(ctx, input.realmId, 'MEMBER');
 
-      // Slug allocation must tolerate a concurrent create of the same name:
-      // check-then-create races (two creators read "free" simultaneously), and
-      // a time-based suffix can collide within the same millisecond. P2002
-      // from the projects_slug_key unique index is the arbiter - retry with
-      // fresh entropy, like deployments.create does for its version counter.
-      // The constraint name is checked so any OTHER unique violation on this
-      // multi-table tx propagates instead of silently retrying 5×.
-      const SLUG_MAX_ATTEMPTS = 5;
-      let slug = generateSlug(input.name);
-      let project: Project | null = null;
-      for (let attempt = 0; ; attempt += 1) {
-        try {
-          project = await ctx.db.$transaction(
-            async (tx) => {
-              // Serialize against removeMember offboarding for this org: the
-              // pre-tx role check can race a concurrent removal, so re-verify
-              // membership while holding the same advisory lock removeMember
-              // uses. Otherwise the removed user could create (and own, via the
-              // ownerId-grants-OWNER shortcut in requireProjectRole) a project
-              // in an organization they were just removed from.
-              await lockOrganizationMembership(tx, input.organizationId);
-              const membership = await tx.organizationMember.findUnique({
-                where: {
-                  organizationId_userId: {
-                    organizationId: input.organizationId,
-                    userId: ctx.user.id,
-                  },
-                },
-              });
-              if (!membership) {
-                throw new TRPCError({
-                  code: 'FORBIDDEN',
-                  message: 'Not a member of this organization.',
-                });
-              }
-
-              // Counted under the org lock, so concurrent creates cannot both
-              // pass the plan's project limit.
-              await assertCanCreateProject(tx, input.organizationId, getPlanPrices());
-
-              // Opportunistic dedupe inside the tx; the P2002 retry below is
-              // still the arbiter under read-committed.
-              const existing = await tx.project.findUnique({ where: { slug } });
-              if (existing) {
-                slug = `${slug}-${randomUUID().slice(0, 8)}`;
-              }
-
-              const created = await tx.project.create({
-                data: {
-                  ownerId: ctx.user.id,
-                  organizationId: input.organizationId,
-                  name: input.name,
-                  description: input.description ?? null,
-                  slug,
-                  ...(input.modelProvider !== undefined && { modelProvider: input.modelProvider }),
-                  ...(input.modelName !== undefined && { modelName: input.modelName }),
-                },
-              });
-              await provisionAppDatabase(tx, created.id);
-              if (input.templateId) {
-                await persistProjectFiles(
-                  tx,
-                  created.id,
-                  Object.entries(SEEDS).map(([path, content]) => ({
-                    path,
-                    content:
-                      path === 'src/App.tsx'
-                        ? seedAppTsx(input.name, input.description ?? '')
-                        : content,
-                  })),
-                );
-              }
-              return created;
-            },
-            // Provisioning a tenant schema + seeding template files is raw DDL
-            // + a file batch; the 5s interactive default can abort legitimate
-            // creations under load, so budget generously.
-            { timeout: 30_000 },
-          );
-          break;
-        } catch (error) {
-          // Prisma reports the violated constraint in meta.target, as a
-          // string for a column-level @unique and a list for composite
-          // indexes; accept both spellings of the slug constraint.
-          const target = (
-            error instanceof Prisma.PrismaClientKnownRequestError ? error.meta?.target : undefined
-          ) as string | string[] | undefined;
-          const isSlugRace =
-            error instanceof Prisma.PrismaClientKnownRequestError &&
-            error.code === 'P2002' &&
-            (target === 'slug' ||
-              (Array.isArray(target) && target.length === 1 && target[0] === 'slug'));
-          if (!isSlugRace || attempt >= SLUG_MAX_ATTEMPTS - 1) throw error;
-          slug = `${generateSlug(input.name)}-${randomUUID().slice(0, 8)}`;
-        }
-      }
-
-      return project;
+      return createProjectRecord(ctx.db, ctx.user.id, input, async (tx, created) => {
+        if (!input.templateId) return;
+        await persistProjectFiles(
+          tx,
+          created.id,
+          Object.entries(SEEDS).map(([path, content]) => ({
+            path,
+            content:
+              path === 'src/App.tsx' ? seedAppTsx(input.name, input.description ?? '') : content,
+          })),
+        );
+      });
     }),
 
   /**
-   * Get a project by id.  Only the owner or a collaborator may access it.
+   * Copy a project's metadata and files into a new draft in the same Realm. Chat history, deployments and app data are not copied.
+   */
+  duplicate: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      await requireProjectAccess(ctx, input.id);
+      const source = await ctx.db.project.findUnique({
+        where: { id: input.id },
+        include: { files: { select: { path: true, content: true } } },
+      });
+      if (!source) throw new TRPCError({ code: 'NOT_FOUND', message: 'Project not found' });
+
+      return createProjectRecord(
+        ctx.db,
+        ctx.user.id,
+        {
+          name: `${source.name} copy`.slice(0, 100),
+          description: source.description ?? undefined,
+          modelProvider: source.modelProvider,
+          modelName: source.modelName,
+          realmId: source.realmId,
+        },
+        (tx, created) => persistProjectFiles(tx, created.id, source.files),
+      );
+    }),
+
+  /**
+   * One project with its Realm. Members of the project's Realm only.
    */
   getById: protectedProcedure.input(z.object({ id: z.string() })).query(async ({ ctx, input }) => {
-    const project = await ctx.db.project.findUnique({
+    const { role } = await requireProjectAccess(ctx, input.id);
+    const project = await ctx.db.project.findUniqueOrThrow({
       where: { id: input.id },
       include: {
-        owner: {
-          select: { id: true, name: true, email: true },
-        },
-        collaborators: {
-          include: {
-            user: {
-              select: { id: true, name: true, email: true },
-            },
-          },
-        },
+        owner: { select: { id: true, name: true, email: true } },
+        realm: { select: { id: true, name: true, type: true } },
       },
     });
-
-    if (!project) {
-      throw new TRPCError({
-        code: 'NOT_FOUND',
-        message: 'Project not found',
-      });
-    }
-
-    await requireProjectRole(ctx, input.id, 'VIEWER');
-
-    return project;
+    return { ...project, role };
   }),
 
   /** Return the latest persisted project filesystem for live preview. */
   files: protectedProcedure.input(z.object({ id: z.string() })).query(async ({ ctx, input }) => {
-    const project = await ctx.db.project.findUnique({
-      where: { id: input.id },
-      include: { files: { orderBy: { path: 'asc' } } },
+    await requireProjectAccess(ctx, input.id);
+    const files = await ctx.db.projectFile.findMany({
+      where: { projectId: input.id },
+      orderBy: { path: 'asc' },
+      select: { path: true, content: true },
     });
-    if (!project) throw new TRPCError({ code: 'NOT_FOUND', message: 'Project not found' });
-
-    await requireProjectRole(ctx, input.id, 'VIEWER');
-
-    return project.files.map((file) => ({ path: file.path, content: file.content }));
+    return files;
   }),
 
   /**
-   * Update project metadata.  Only the owner may update.
+   * Update project metadata. Any member of the project's Realm.
    */
   update: protectedProcedure
     .input(
@@ -321,7 +346,7 @@ export const projectsRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      await requireProjectRole(ctx, input.id, 'OWNER');
+      await requireProjectAccess(ctx, input.id);
 
       const updated = await ctx.db.project.update({
         where: { id: input.id },
@@ -343,26 +368,37 @@ export const projectsRouter = router({
     }),
 
   /**
-   * Delete a project.  Only the owner may delete.
+   * Delete a project. Owner/Admin, or the member who created it.
    */
   delete: protectedProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      await requireProjectRole(ctx, input.id, 'OWNER');
-
-      const appDb = await ctx.db.appDatabase.findFirst({ where: { projectId: input.id } });
-      const schemaName = appDb ? assertTenantSchemaName(appDb.schemaName) : null;
-
-      await ctx.db.$transaction(async (tx) => {
-        // The tenant schema holds the end users' data; deleting the project row
-        // alone (which cascades the AppDatabase row) would orphan it on the
-        // cluster forever. Drop it in the same transaction, before the row.
-        if (schemaName) {
-          await tx.$executeRawUnsafe(`DROP SCHEMA IF EXISTS ${quotePgIdent(schemaName)} CASCADE`);
-        }
-        await tx.project.delete({ where: { id: input.id } });
-      });
-
+      const { role, ownerId } = await requireProjectAccess(ctx, input.id);
+      if (!hasRealmRole(role, 'ADMIN') && ownerId !== ctx.user.id) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Only an owner or admin can delete a project someone else created.',
+        });
+      }
+      await deleteProject(ctx.db, input.id);
       return { success: true as const };
     }),
 });
+
+/**
+ * Delete a project and its app database. The caller has already authorized it.
+ */
+export async function deleteProject(db: Context['db'], projectId: string): Promise<void> {
+  const appDb = await db.appDatabase.findFirst({ where: { projectId } });
+  const schemaName = appDb ? assertTenantSchemaName(appDb.schemaName) : null;
+
+  await db.$transaction(async (tx) => {
+    // The tenant schema holds the end users' data; deleting the project row
+    // alone (which cascades the AppDatabase row) would orphan it on the
+    // cluster forever. Drop it in the same transaction, before the row.
+    if (schemaName) {
+      await tx.$executeRawUnsafe(`DROP SCHEMA IF EXISTS ${quotePgIdent(schemaName)} CASCADE`);
+    }
+    await tx.project.delete({ where: { id: projectId } });
+  });
+}

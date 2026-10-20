@@ -1,149 +1,85 @@
 import { TRPCError } from '@trpc/server';
 import type { Context } from '@/lib/trpc/context';
-import { OrganizationRole, ProjectRole } from '@app-builder/shared';
+import type { RealmRole, RealmType } from '@app-builder/shared';
 
 /** The subset of the tRPC context these checks need, so raw route handlers
  * (which have session + db but no full tRPC context) can reuse them too. */
 export type AuthzContext = Pick<Context, 'user' | 'db'>;
 
-// ─── Role hierarchy (higher index = more permissions) ─────
+// ─── Role hierarchy (higher = more permissions) ───────────
 
-const ORG_ROLE_HIERARCHY: Record<OrganizationRole, number> = {
+const REALM_ROLE_RANK: Record<RealmRole, number> = {
   MEMBER: 0,
   ADMIN: 1,
   OWNER: 2,
 };
 
-const PROJECT_ROLE_HIERARCHY: Record<ProjectRole, number> = {
-  VIEWER: 0,
-  EDITOR: 1,
-  OWNER: 2,
-};
-
-function hasMinimumOrgRole(userRole: OrganizationRole, minimum: OrganizationRole): boolean {
-  return ORG_ROLE_HIERARCHY[userRole] >= ORG_ROLE_HIERARCHY[minimum];
+export function hasRealmRole(role: RealmRole, minimum: RealmRole): boolean {
+  return REALM_ROLE_RANK[role] >= REALM_ROLE_RANK[minimum];
 }
 
-function hasMinimumProjectRole(userRole: ProjectRole, minimum: ProjectRole): boolean {
-  return PROJECT_ROLE_HIERARCHY[userRole] >= PROJECT_ROLE_HIERARCHY[minimum];
+export interface RealmAccess {
+  realmId: string;
+  role: RealmRole;
+  realmType: RealmType;
 }
 
-// ─── Organization-level authorization ─────────────────────
+// ─── Realm-level authorization ────────────────────────────
 
-export async function requireOrganizationRole(
+/**
+ * The caller's role in a Realm, or an error. A non-member gets NOT_FOUND, not
+ * FORBIDDEN, so a Realm's existence is never revealed to outsiders.
+ */
+export async function requireRealmRole(
   ctx: AuthzContext,
-  organizationId: string,
-  minimumRole: OrganizationRole,
-): Promise<{ role: OrganizationRole }> {
+  realmId: string,
+  minimumRole: RealmRole,
+): Promise<RealmAccess> {
   if (!ctx.user) {
     throw new TRPCError({ code: 'UNAUTHORIZED' });
   }
 
-  const membership = await ctx.db.organizationMember.findUnique({
-    where: {
-      organizationId_userId: {
-        organizationId,
-        userId: ctx.user.id,
-      },
-    },
+  const membership = await ctx.db.realmMember.findUnique({
+    where: { realmId_userId: { realmId, userId: ctx.user.id } },
+    select: { role: true, realm: { select: { type: true } } },
   });
 
   if (!membership) {
     throw new TRPCError({ code: 'NOT_FOUND' });
   }
 
-  if (!hasMinimumOrgRole(membership.role, minimumRole)) {
+  if (!hasRealmRole(membership.role, minimumRole)) {
     throw new TRPCError({ code: 'FORBIDDEN' });
   }
 
-  return { role: membership.role };
+  return { realmId, role: membership.role, realmType: membership.realm.type };
 }
 
 // ─── Project-level authorization ──────────────────────────
 
-export async function requireProjectRole(
+/**
+ * Access to a project is access to its Realm: every member can open, edit and
+ * build it. Being the project's creator grants nothing on its own, so someone
+ * removed from a Realm loses its projects with it.
+ */
+export async function requireProjectAccess(
   ctx: AuthzContext,
   projectId: string,
-  minimumRole: ProjectRole,
-): Promise<{ role: ProjectRole; organizationId: string }> {
+  minimumRole: RealmRole = 'MEMBER',
+): Promise<RealmAccess & { ownerId: string }> {
   if (!ctx.user) {
     throw new TRPCError({ code: 'UNAUTHORIZED' });
   }
 
-  // Check project ownership first
   const project = await ctx.db.project.findUnique({
     where: { id: projectId },
-    select: { id: true, ownerId: true, organizationId: true },
+    select: { realmId: true, ownerId: true },
   });
 
   if (!project) {
     throw new TRPCError({ code: 'NOT_FOUND' });
   }
 
-  // Owner always has OWNER role
-  if (project.ownerId === ctx.user.id) {
-    return { role: 'OWNER' as ProjectRole, organizationId: project.organizationId };
-  }
-
-  // Check collaborator table
-  const collaborator = await ctx.db.projectCollaborator.findUnique({
-    where: {
-      projectId_userId: {
-        projectId,
-        userId: ctx.user.id,
-      },
-    },
-  });
-
-  if (collaborator) {
-    if (!hasMinimumProjectRole(collaborator.role, minimumRole)) {
-      throw new TRPCError({ code: 'FORBIDDEN' });
-    }
-    return { role: collaborator.role, organizationId: project.organizationId };
-  }
-
-  // Org OWNER/ADMIN may administer every project in the organization.
-  const membership = await ctx.db.organizationMember.findUnique({
-    where: {
-      organizationId_userId: {
-        organizationId: project.organizationId,
-        userId: ctx.user.id,
-      },
-    },
-  });
-  if (membership && hasMinimumOrgRole(membership.role, 'ADMIN')) {
-    const mappedRole: ProjectRole = membership.role === 'OWNER' ? 'OWNER' : 'EDITOR';
-    if (!hasMinimumProjectRole(mappedRole, minimumRole)) {
-      throw new TRPCError({ code: 'FORBIDDEN' });
-    }
-    return { role: mappedRole, organizationId: project.organizationId };
-  }
-
-  throw new TRPCError({ code: 'NOT_FOUND' });
-}
-
-// ─── Convenience wrappers ─────────────────────────────────
-
-export async function requireProjectOwner(
-  ctx: AuthzContext,
-  projectId: string,
-): Promise<{ organizationId: string }> {
-  const result = await requireProjectRole(ctx, projectId, 'OWNER');
-  return { organizationId: result.organizationId };
-}
-
-export async function requireProjectEditor(
-  ctx: AuthzContext,
-  projectId: string,
-): Promise<{ organizationId: string }> {
-  const result = await requireProjectRole(ctx, projectId, 'EDITOR');
-  return { organizationId: result.organizationId };
-}
-
-export async function requireProjectViewer(
-  ctx: AuthzContext,
-  projectId: string,
-): Promise<{ organizationId: string }> {
-  const result = await requireProjectRole(ctx, projectId, 'VIEWER');
-  return { organizationId: result.organizationId };
+  const access = await requireRealmRole(ctx, project.realmId, minimumRole);
+  return { ...access, ownerId: project.ownerId };
 }

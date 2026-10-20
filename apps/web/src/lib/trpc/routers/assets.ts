@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { protectedProcedure, router } from '../trpc';
-import { requireProjectRole } from '@/server/authz';
+import { requireProjectAccess } from '@/server/authz';
 import { getR2ConfigStatus } from '@/server/assets/r2';
 import { listProjectAssets, deleteProjectAsset } from '@/server/assets/project-assets';
 
@@ -12,7 +12,7 @@ export const assetsRouter = router({
   list: protectedProcedure
     .input(z.object({ projectId: z.string().uuid() }))
     .query(async ({ ctx, input }) => {
-      await requireProjectRole(ctx, input.projectId, 'VIEWER');
+      await requireProjectAccess(ctx, input.projectId);
       return listProjectAssets(input.projectId);
     }),
 
@@ -51,7 +51,7 @@ export const assetsRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      await requireProjectRole(ctx, input.projectId, 'EDITOR');
+      await requireProjectAccess(ctx, input.projectId);
       try {
         await deleteProjectAsset(input.assetId, input.projectId);
         return { success: true };

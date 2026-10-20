@@ -38,10 +38,7 @@ const ROUTERS = [
   { name: 'github', copy: 'installation, repositories, sync' },
 ];
 
-const ROLES = [
-  { scope: 'Project', values: ['OWNER', 'EDITOR', 'VIEWER'] },
-  { scope: 'Organization', values: ['OWNER', 'ADMIN', 'MEMBER'] },
-];
+const ROLES = [{ scope: 'Realm', values: ['OWNER', 'ADMIN', 'MEMBER'] }];
 
 const EXPORTS = [
   { Icon: GitBranch, label: 'GitHub sync', copy: 'Connect an installation and push the project.' },
@@ -191,7 +188,7 @@ export function ProductSection() {
           <CellHead
             icon={Users}
             title="Built for more than one."
-            copy="Organizations, invites and per-project access. The agent only writes where your role allows it."
+            copy="Shared Realms with invites, roles and approvals. People and the agent build from the same brief, keys and memory."
           />
           <div className="mt-auto space-y-4">
             {ROLES.map((role) => (

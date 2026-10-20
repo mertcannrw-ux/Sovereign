@@ -5,11 +5,11 @@ import { z } from 'zod';
 export const ProjectStatus = z.enum(['DRAFT', 'PUBLISHED', 'ARCHIVED']);
 export type ProjectStatus = z.infer<typeof ProjectStatus>;
 
-export const ProjectRole = z.enum(['OWNER', 'EDITOR', 'VIEWER']);
-export type ProjectRole = z.infer<typeof ProjectRole>;
+export const RealmRole = z.enum(['OWNER', 'ADMIN', 'MEMBER']);
+export type RealmRole = z.infer<typeof RealmRole>;
 
-export const OrganizationRole = z.enum(['OWNER', 'ADMIN', 'MEMBER']);
-export type OrganizationRole = z.infer<typeof OrganizationRole>;
+export const RealmType = z.enum(['PERSONAL', 'SHARED']);
+export type RealmType = z.infer<typeof RealmType>;
 
 export const DeploymentStatus = z.enum([
   'QUEUED',
@@ -76,6 +76,7 @@ export const AI_PROVIDER_LABELS: Record<AIProvider, string> = {
 
 export interface ApiKey {
   id: string;
+  realmId: string;
   userId: string;
   provider: string;
   label?: string | null;
@@ -84,21 +85,22 @@ export interface ApiKey {
   lastUsedAt?: Date | null;
 }
 
-// ─── Organizations ──────────────────────────────────────
+// ─── Realms ─────────────────────────────────────────────
 
-export interface Organization {
+export interface Realm {
   id: string;
   name: string;
-  slug: string;
+  type: RealmType;
+  brief: string;
   ownerId: string;
   createdAt: Date;
   updatedAt: Date;
 }
 
-export interface OrganizationMember {
-  organizationId: string;
+export interface RealmMember {
+  realmId: string;
   userId: string;
-  role: OrganizationRole;
+  role: RealmRole;
   createdAt: Date;
 }
 
@@ -107,7 +109,7 @@ export interface OrganizationMember {
 export interface Project {
   id: string;
   ownerId: string;
-  organizationId: string;
+  realmId: string;
   name: string;
   description?: string | null;
   slug: string;
@@ -279,7 +281,7 @@ export interface BackgroundJob {
   id: string;
   type: string;
   status: JobStatus;
-  organizationId?: string | null;
+  realmId?: string | null;
   projectId?: string | null;
   actorId?: string | null;
   idempotencyKey?: string | null;
@@ -296,7 +298,7 @@ export interface BackgroundJob {
 
 export interface AuditEvent {
   id: string;
-  organizationId: string;
+  realmId: string;
   actorId?: string | null;
   action: string;
   targetType: string;
@@ -310,7 +312,7 @@ export interface AuditEvent {
 
 export interface Subscription {
   id: string;
-  organizationId: string;
+  realmId: string;
   stripeCustomerId: string;
   stripeSubscriptionId?: string | null;
   priceId?: string | null;
@@ -323,7 +325,7 @@ export interface Subscription {
 
 export interface Entitlement {
   id: string;
-  organizationId: string;
+  realmId: string;
   key: string;
   limit?: number | null;
   enabled: boolean;
@@ -340,7 +342,7 @@ export const CreateProjectInput = z.object({
   initialPrompt: z.string().max(10000).optional(),
   modelProvider: z.string(),
   modelName: z.string(),
-  organizationId: z.string().uuid(),
+  realmId: z.string().uuid(),
 });
 export type CreateProjectInput = z.infer<typeof CreateProjectInput>;
 

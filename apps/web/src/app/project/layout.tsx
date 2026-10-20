@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Command } from 'lucide-react';
+import { LogoLockup } from '@/components/Logo';
 import { Sidebar, SidebarToggle } from '@/components/layout/sidebar';
 
 export default function ProjectLayout({ children }: { children: React.ReactNode }) {
@@ -9,23 +9,17 @@ export default function ProjectLayout({ children }: { children: React.ReactNode 
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      {/* The editor needs the width: it starts as a 56px icon rail on desktop. */}
+      <Sidebar defaultCollapsed open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {/* Mobile header with toggle */}
         <div className="flex h-16 shrink-0 items-center gap-3 border-b border-border bg-background px-4 md:hidden">
           <SidebarToggle open={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
-          <div className="flex items-center gap-2.5">
-            <span className="grid h-8 w-8 place-items-center rounded-lg bg-primary text-primary-foreground shadow-sm">
-              <Command className="h-4 w-4" strokeWidth={2.5} />
-            </span>
-            <span className="text-sm font-bold uppercase tracking-[0.2em] text-foreground">
-              Sovereign
-            </span>
-          </div>
+          <LogoLockup size="md" />
         </div>
 
-        <main className="flex-1 overflow-hidden">{children}</main>
+        <main className="min-w-0 flex-1 overflow-hidden">{children}</main>
       </div>
     </div>
   );

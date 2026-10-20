@@ -1,10 +1,6 @@
-// Prisma seed script - creates initial admin account, personal organization, and demo data
-import {
-  PrismaClient,
-  ProjectStatus,
-  OrganizationRole,
-  ProjectRole,
-} from './generated/prisma/client';
+// Prisma seed script - creates the initial admin account and their personal Realm.
+// No demo projects: a new workspace starts empty.
+import { PrismaClient } from './generated/prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import bcrypt from 'bcryptjs';
 
@@ -79,66 +75,21 @@ async function main() {
     console.log(`     User ID:  ${user.id}`);
   }
 
-  // ── Personal organization ───────────────────────
-  const orgSlug = 'admin-personal';
-  let org = await prisma.organization.findUnique({ where: { slug: orgSlug } });
+  // ── Personal Realm ──────────────────────────────
+  let realm = await prisma.realm.findFirst({ where: { ownerId: adminId, type: 'PERSONAL' } });
 
-  if (!org) {
-    org = await prisma.organization.create({
+  if (!realm) {
+    realm = await prisma.realm.create({
       data: {
-        name: "Admin's Organization",
-        slug: orgSlug,
+        name: 'Personal',
+        type: 'PERSONAL',
         ownerId: adminId,
-        members: {
-          create: {
-            userId: adminId,
-            role: OrganizationRole.OWNER,
-          },
-        },
+        members: { create: { userId: adminId, role: 'OWNER' } },
       },
     });
-    console.log(`  Organization created: ${org.name} (${org.id})`);
+    console.log(`  Personal Realm created (${realm.id})`);
   } else {
-    console.log(`  ⏭  Organization already exists: ${org.name}`);
-  }
-
-  // ── Demo projects ───────────────────────────────
-  const existingProjects = await prisma.project.count({
-    where: { ownerId: adminId },
-  });
-
-  if (existingProjects === 0) {
-    await prisma.project.createMany({
-      data: [
-        {
-          ownerId: adminId,
-          organizationId: org.id,
-          name: 'Todo App',
-          description: 'A full-stack todo application with drag-and-drop',
-          slug: 'todo-app',
-          status: ProjectStatus.PUBLISHED,
-        },
-        {
-          ownerId: adminId,
-          organizationId: org.id,
-          name: 'Blog Platform',
-          description: 'Multi-author blog with markdown support',
-          slug: 'blog-platform',
-          status: ProjectStatus.DRAFT,
-        },
-        {
-          ownerId: adminId,
-          organizationId: org.id,
-          name: 'Analytics Dashboard',
-          description: 'Real-time analytics dashboard with charts',
-          slug: 'analytics-dashboard',
-          status: ProjectStatus.DRAFT,
-        },
-      ],
-    });
-    console.log('  3 demo projects created');
-  } else {
-    console.log(`  ⏭  ${existingProjects} projects already exist, skipping demo data`);
+    console.log(`  ⏭  Personal Realm already exists`);
   }
 
   console.log('Seed complete.');

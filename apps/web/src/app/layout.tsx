@@ -20,6 +20,11 @@ export const metadata: Metadata = {
   title: 'Sovereign · Build anything with AI. Bring your own key.',
   description:
     'The BYOK AI app builder. Combine the power of AI with your own API keys. No credits, no lock-in. Build, edit, and deploy full-stack applications.',
+  // Same paths as components/Logo.tsx. useFaviconBlink swaps this link's href.
+  icons: {
+    icon: { url: '/favicon.svg', type: 'image/svg+xml' },
+    apple: { url: '/apple-touch-icon.png', sizes: '512x512' },
+  },
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {

@@ -38,11 +38,11 @@ const PLANS = [
   {
     name: 'Business',
     price: '$50',
-    line: 'For product teams moving in parallel.',
+    line: 'For people building side by side.',
     features: [
-      '10 collaborators',
-      'Team permissions and roles',
-      'Shared organizations',
+      '10 members per Realm',
+      'Owner, Admin and Member roles',
+      'Shared Realms with a brief and memory',
       'Priority support',
     ],
     cta: 'Get Business',

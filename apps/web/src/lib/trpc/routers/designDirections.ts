@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { protectedProcedure, router } from '../trpc';
-import { requireProjectRole } from '@/server/authz';
+import { requireProjectAccess } from '@/server/authz';
 
 export const designDirectionsRouter = router({
   /**
@@ -11,7 +11,7 @@ export const designDirectionsRouter = router({
   getActive: protectedProcedure
     .input(z.object({ projectId: z.string().uuid() }))
     .query(async ({ ctx, input }) => {
-      await requireProjectRole(ctx, input.projectId, 'VIEWER');
+      await requireProjectAccess(ctx, input.projectId);
       const activeSet = await ctx.db.designDirectionSet.findFirst({
         where: {
           projectId: input.projectId,

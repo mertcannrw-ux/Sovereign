@@ -22,7 +22,7 @@ const SECURITY = [
   {
     Icon: Users,
     title: 'Real access control',
-    copy: 'Every project procedure checks OWNER, EDITOR or VIEWER. Organization roles add an owner, admins and members on top.',
+    copy: 'Every project procedure checks your role in its Realm: owner, admin or member. Keys are used on the server and never reach the browser.',
   },
   {
     Icon: Webhook,

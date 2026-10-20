@@ -6,6 +6,7 @@ import { AlertCircle, Loader2, MousePointer2, RefreshCw, X } from 'lucide-react'
 import type { PreviewCursorTarget } from '@/lib/use-smooth-cursor';
 import type { SelectedPreviewElement } from '@/components/project/types';
 import type { PreviewEngine } from '@/lib/preview-startup';
+import { DotGrid } from '@/components/dot-grid';
 import { A11Y_MESSAGE_SOURCE, capA11yViolations } from '@/lib/visual-editor';
 
 const DISCLOSURE_DISMISSED_KEY = 'sovereign.previewJsDisclosure.dismissed';
@@ -30,6 +31,11 @@ export interface PreviewPaneProps {
   onQuickEdit?: (prompt: string, element: SelectedPreviewElement) => void;
   /** Re-attempts booting the preview sandbox after a failed boot. */
   onRetry?: () => void;
+  /**
+   * Nothing has been built yet: the pane shows a bare dot grid (pulsing lime
+   * while `isSending`, i.e. the first build is running) instead of the sandbox.
+   */
+  isEmpty?: boolean;
 }
 
 export function PreviewPane({
@@ -48,6 +54,7 @@ export function PreviewPane({
   onElementSelected,
   onQuickEdit,
   onRetry,
+  isEmpty = false,
 }: PreviewPaneProps) {
   const [disclosureDismissed, setDisclosureDismissed] = useState(() => {
     if (typeof window === 'undefined') return false;
@@ -179,6 +186,14 @@ export function PreviewPane({
     window.addEventListener('message', handlePreviewMessage);
     return () => window.removeEventListener('message', handlePreviewMessage);
   }, [isEditMode, onElementSelected, onQuickEdit, onSelectedElementChange, url]);
+
+  if (isEmpty && status !== 'error') {
+    return (
+      <div className="relative flex flex-1 overflow-hidden bg-background">
+        <DotGrid pulse={isSending} className="absolute inset-0 bg-background" />
+      </div>
+    );
+  }
 
   return (
     <div className="relative flex flex-1 overflow-hidden bg-background">
