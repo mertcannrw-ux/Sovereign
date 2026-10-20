@@ -246,13 +246,7 @@ export const templates: Template[] = [
   },
 ];
 
-export const templateCategories = [
-  'All',
-  'Apps',
-  'SaaS',
-  'E-commerce',
-  'Content',
-] as const;
+export const templateCategories = ['All', 'Apps', 'SaaS', 'E-commerce', 'Content'] as const;
 
 export type TemplateCategory = (typeof templateCategories)[number];
 

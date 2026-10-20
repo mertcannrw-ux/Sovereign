@@ -191,7 +191,9 @@ function PickerBody({ onChoose }: { onChoose: (template: Template) => void }) {
                   </div>
                 </div>
                 {category === 'All' && (
-                  <span className="shrink-0 text-xs text-foreground-muted">{template.category}</span>
+                  <span className="shrink-0 text-xs text-foreground-muted">
+                    {template.category}
+                  </span>
                 )}
               </li>
             ))}
