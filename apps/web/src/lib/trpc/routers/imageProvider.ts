@@ -9,24 +9,29 @@ import {
 import { protectedProcedure, router } from '../trpc';
 import { encryptApiKey, decryptApiKey, maskApiKey } from '@/lib/crypto';
 import { checkRateLimit } from '@/server/rate-limit';
-import { hasRealmRole, requireRealmRole } from '@/server/authz';
+import { canManageKey, keyAddedByOtherError, requireRealmRole } from '@/server/authz';
+
+/** Who added the config, as everyone in the Realm sees it. */
+const addedBySelect = { user: { select: { name: true, email: true } } } as const;
 
 export const imageProviderRouter = router({
   /**
    * The Realm's image provider config. Any member can see whether one is set
-   * up; only Owner/Admin see its endpoint and masked key.
+   * up and who added it; whoever may change it (see `canManageKey`) also sees
+   * its endpoint and masked key.
    */
   get: protectedProcedure
     .input(z.object({ realmId: z.string().uuid() }))
     .query(async ({ ctx, input }) => {
       const { role } = await requireRealmRole(ctx, input.realmId, 'MEMBER');
-      const canManage = hasRealmRole(role, 'ADMIN');
       const config = await ctx.db.imageProviderConfig.findFirst({
         where: { realmId: input.realmId },
         orderBy: { createdAt: 'desc' },
+        include: addedBySelect,
       });
 
       if (!config) return null;
+      const canManage = canManageKey(role, config.userId, ctx.user.id);
 
       let maskedKey: string | null = null;
       if (canManage) {
@@ -43,6 +48,9 @@ export const imageProviderRouter = router({
         model: config.model,
         label: config.label,
         enabled: config.enabled,
+        addedBy: config.user.name ?? config.user.email,
+        addedByYou: config.userId === ctx.user.id,
+        canManage,
         maskedKey,
         createdAt: config.createdAt,
         lastUsedAt: config.lastUsedAt,
@@ -50,7 +58,8 @@ export const imageProviderRouter = router({
     }),
 
   /**
-   * Save (upsert) the Realm's image provider config. Owner/Admin.
+   * Save (upsert) the Realm's image provider config. Owner/Admin may add one;
+   * only whoever added the existing one, or the Owner, may change it.
    */
   save: protectedProcedure
     .input(
@@ -64,7 +73,7 @@ export const imageProviderRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      await requireRealmRole(ctx, input.realmId, 'ADMIN');
+      const { role } = await requireRealmRole(ctx, input.realmId, 'ADMIN');
       let normalizedBaseUrl = input.baseUrl.trim();
       if (!normalizedBaseUrl.startsWith('http://') && !normalizedBaseUrl.startsWith('https://')) {
         normalizedBaseUrl = `https://${normalizedBaseUrl}`;
@@ -82,7 +91,11 @@ export const imageProviderRouter = router({
 
       const existing = await ctx.db.imageProviderConfig.findFirst({
         where: { realmId: input.realmId, label: input.label },
+        include: addedBySelect,
       });
+      if (existing && !canManageKey(role, existing.userId, ctx.user.id)) {
+        throw keyAddedByOtherError(existing.user.name ?? existing.user.email);
+      }
 
       let encryptedKey: string;
       if (input.apiKey && input.apiKey.trim().length > 0) {
@@ -123,6 +136,8 @@ export const imageProviderRouter = router({
           enabled: input.enabled,
         },
         update: {
+          // A new key is the saver's; editing around the stored one keeps its adder.
+          ...(encryptedKey !== existing?.encryptedKey && { userId: ctx.user.id }),
           baseUrl: normalizedEndpoint,
           encryptedKey,
           model: input.model.trim(),
@@ -148,14 +163,15 @@ export const imageProviderRouter = router({
     }),
 
   /**
-   * Delete the Realm's image provider config. Owner/Admin.
+   * Delete the Realm's image provider config. Whoever added it, or the Owner.
    */
   delete: protectedProcedure
     .input(z.object({ realmId: z.string().uuid(), id: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
-      await requireRealmRole(ctx, input.realmId, 'ADMIN');
+      const { role } = await requireRealmRole(ctx, input.realmId, 'ADMIN');
       const existing = await ctx.db.imageProviderConfig.findFirst({
         where: { id: input.id, realmId: input.realmId },
+        include: addedBySelect,
       });
 
       if (!existing) {
@@ -163,6 +179,9 @@ export const imageProviderRouter = router({
           code: 'NOT_FOUND',
           message: 'Image provider configuration not found',
         });
+      }
+      if (!canManageKey(role, existing.userId, ctx.user.id)) {
+        throw keyAddedByOtherError(existing.user.name ?? existing.user.email);
       }
 
       await ctx.db.imageProviderConfig.delete({

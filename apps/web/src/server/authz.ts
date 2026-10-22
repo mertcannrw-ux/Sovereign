@@ -55,6 +55,25 @@ export async function requireRealmRole(
   return { realmId, role: membership.role, realmType: membership.realm.type };
 }
 
+// ─── Realm keys ───────────────────────────────────────────
+
+/**
+ * Whether `userId` may replace or remove a Realm key (AI or image provider)
+ * that `addedById` added: the Owner any key, an Admin only their own, a Member
+ * none. The same test decides who sees a key's masked form and endpoint.
+ */
+export function canManageKey(role: RealmRole, addedById: string, userId: string): boolean {
+  return role === 'OWNER' || (role === 'ADMIN' && addedById === userId);
+}
+
+/** Refusal for touching a key someone else added, naming who can. */
+export function keyAddedByOtherError(addedBy: string): TRPCError {
+  return new TRPCError({
+    code: 'FORBIDDEN',
+    message: `${addedBy} added this key. Only they or the Realm owner can change or remove it.`,
+  });
+}
+
 // ─── Project-level authorization ──────────────────────────
 
 /**

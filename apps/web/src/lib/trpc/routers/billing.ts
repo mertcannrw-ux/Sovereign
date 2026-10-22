@@ -25,6 +25,16 @@ function appUrl(path: string): string {
   return new URL(path, baseUrl).toString();
 }
 
+/**
+ * Where Stripe sends people back: the Realm settings menu at Billing, for the
+ * Realm they paid for (not whichever one the browser last had open).
+ */
+function billingReturnUrl(realmId: string, checkout?: 'success'): string {
+  const params = new URLSearchParams({ realmSettings: 'billing', realm: realmId });
+  if (checkout) params.set('checkout', checkout);
+  return appUrl(`/dashboard?${params}`);
+}
+
 function requireBillingConfigured(): void {
   if (!isBillingConfigured()) {
     throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Billing is not configured.' });
@@ -160,8 +170,8 @@ export const billingRouter = router({
             metadata: { realmId: input.realmId },
             ...(trialEligible && { trial_period_days: TRIAL_DAYS }),
           },
-          success_url: appUrl('/settings?tab=billing&checkout=success'),
-          cancel_url: appUrl('/settings?tab=billing'),
+          success_url: billingReturnUrl(input.realmId, 'success'),
+          cancel_url: billingReturnUrl(input.realmId),
         },
         {
           // Collapse concurrent creates for the same Realm onto one session:
@@ -209,7 +219,7 @@ export const billingRouter = router({
 
       const session = await getStripe().billingPortal.sessions.create({
         customer: subscription.stripeCustomerId,
-        return_url: appUrl('/settings?tab=billing'),
+        return_url: billingReturnUrl(input.realmId),
       });
       return { url: session.url };
     }),

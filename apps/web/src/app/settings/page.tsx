@@ -3,31 +3,21 @@
 import { useSession } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
-import { CircleUser, CodeXml, CreditCard, Loader2, Users } from 'lucide-react';
-import { AIKey } from '@/components/ui/ai-key-icon';
+import { CircleUser, CodeXml, Loader2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@app-builder/ui/utils';
-import { AIProvidersPanel } from '@/components/settings/ai-providers-panel';
-import { BillingPanel } from '@/components/settings/billing-panel';
-import { MembersPanel } from '@/components/settings/members-panel';
 import { ProfilePanel } from '@/components/settings/profile-panel';
-import { useCurrentRealm } from '@/lib/use-current-realm';
 
 /* ── Tab Navigation ───────────────────────────────────────── */
 
-const ACCOUNT_TABS = [
+/**
+ * Settings are about you. Everything about a Realm (its members, keys and
+ * billing) lives in the Realm settings menu, opened from the Realm switcher.
+ */
+const SETTINGS_TABS = [
   { id: 'profile', label: 'Profile', icon: CircleUser },
   { id: 'developer-api', label: 'Developer API', icon: CodeXml },
 ] as const;
-
-/** Settings of the current Realm; switching Realms switches what these show. */
-const REALM_TABS = [
-  { id: 'providers', label: 'AI Providers', icon: AIKey },
-  { id: 'members', label: 'Members', icon: Users },
-  { id: 'billing', label: 'Billing', icon: CreditCard },
-] as const;
-
-const SETTINGS_TABS = [...ACCOUNT_TABS, ...REALM_TABS];
 
 type SettingsTabId = (typeof SETTINGS_TABS)[number]['id'];
 
@@ -54,15 +44,11 @@ function SettingsLoading() {
 
 function SettingsPageContent() {
   const { data: session, status } = useSession();
-  const { realm } = useCurrentRealm();
-  const [activeTab, setActiveTab] = useState<SettingsTabId>('providers');
+  const [activeTab, setActiveTab] = useState<SettingsTabId>('profile');
 
-  // Stripe Checkout and the Customer Portal return to `?tab=billing`; connecting
-  // a sign-in provider returns to `?tab=profile`; "Realm settings" opens
-  // `?tab=members`.
-  // Reads the search params reactively: the sidebar's "Realm settings" link is
-  // a same-route navigation, so the component does not remount and a mount-only
-  // effect never ran again.
+  // Connecting a sign-in provider returns to `?tab=profile`.
+  // Reads the search params reactively: a same-route navigation does not
+  // remount the component, so a mount-only effect would not run again.
   const searchParams = useSearchParams();
   const tabParam = searchParams.get('tab');
   useEffect(() => {
@@ -102,20 +88,10 @@ function SettingsPageContent() {
             className="flex shrink-0 gap-1 overflow-x-auto pb-2 md:w-56 md:flex-col md:overflow-visible"
             aria-label="Settings sections"
           >
-            <p className="hidden px-3.5 pb-1 text-xs font-medium text-foreground-muted md:block">
-              Account
-            </p>
-            {ACCOUNT_TABS.map(tabButton)}
-            <p className="hidden truncate px-3.5 pb-1 pt-5 text-xs font-medium text-foreground-muted md:block">
-              {realm?.name ?? 'Realm'}
-            </p>
-            {REALM_TABS.map(tabButton)}
+            {SETTINGS_TABS.map(tabButton)}
           </nav>
           <div className="min-w-0 flex-1">
             {activeTab === 'profile' && <ProfilePanel />}
-            {activeTab === 'providers' && <AIProvidersPanel />}
-            {activeTab === 'members' && <MembersPanel />}
-            {activeTab === 'billing' && <BillingPanel />}
             {activeTab === 'developer-api' && (
               <Placeholder
                 title="Developer API"
