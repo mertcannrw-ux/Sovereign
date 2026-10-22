@@ -30,6 +30,18 @@ export type PlanPrices = Partial<Record<PaidPlan, string>>;
 
 const ACCESS_STATUSES: ReadonlySet<SubscriptionStatus> = new Set(['ACTIVE', 'TRIALING']);
 
+/** How long a stored period may overrun before the row stops granting access. */
+const PERIOD_EXPIRY_GRACE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * A missing period is not evidence of expiry: only a recorded end that is well
+ * past can lapse, so an unset column never revokes a paying Realm.
+ */
+function isPeriodLapsed(currentPeriodEnd: Date | null | undefined): boolean {
+  const periodEnd = currentPeriodEnd?.getTime();
+  return Boolean(periodEnd && periodEnd + PERIOD_EXPIRY_GRACE_MS < Date.now());
+}
+
 export function planForPriceId(
   priceId: string | null | undefined,
   prices: PlanPrices,
@@ -40,22 +52,47 @@ export function planForPriceId(
   return null;
 }
 
+/**
+ * Entitlement from a stored subscription row.
+ *
+ * A terminal webhook can be lost (endpoint disabled after Stripe's retry
+ * window), so entitlement also expires on its own: an ACTIVE/TRIALING row whose
+ * period ended more than a day ago grants nothing, even if the row still says
+ * otherwise.
+ */
 export function planFromSubscription(
-  subscription: { status: SubscriptionStatus; priceId: string | null } | null,
+  subscription: {
+    status: SubscriptionStatus;
+    priceId: string | null;
+    currentPeriodEnd?: Date | null;
+  } | null,
   prices: PlanPrices,
 ): Plan {
   if (!subscription || !ACCESS_STATUSES.has(subscription.status)) return 'free';
+  if (isPeriodLapsed(subscription.currentPeriodEnd)) return 'free';
   return planForPriceId(subscription.priceId, prices) ?? 'free';
 }
 
-/** A Realm's subscription grants access, so a new checkout would double-bill it. */
+/**
+ * A Realm's subscription grants access, so a new checkout would double-bill it.
+ *
+ * Mirrors `planFromSubscription`'s period rule: an ACTIVE/TRIALING row whose
+ * period lapsed grants nothing, so it must not block checkout either - that
+ * pairing is what let a lost terminal webhook both downgrade the Realm and
+ * trap it behind a subscription guard it could never clear. PAST_DUE is exempt:
+ * Stripe keeps retrying the charge, so a second checkout would still double-bill.
+ */
 export function hasLiveSubscription(
-  subscription: { status: SubscriptionStatus; stripeSubscriptionId: string | null } | null,
+  subscription: {
+    status: SubscriptionStatus;
+    stripeSubscriptionId: string | null;
+    currentPeriodEnd?: Date | null;
+  } | null,
 ): boolean {
-  return Boolean(
-    subscription?.stripeSubscriptionId &&
-    (ACCESS_STATUSES.has(subscription.status) || subscription.status === 'PAST_DUE'),
-  );
+  if (!subscription?.stripeSubscriptionId) return false;
+  if (subscription.status === 'PAST_DUE') return true;
+  if (!ACCESS_STATUSES.has(subscription.status)) return false;
+  return !isPeriodLapsed(subscription.currentPeriodEnd);
 }
 
 type PlanDb = Pick<Prisma.TransactionClient, 'subscription' | 'project'>;
@@ -76,7 +113,7 @@ export async function recordPlanInterest(
 export async function getRealmPlan(db: PlanDb, realmId: string, prices: PlanPrices): Promise<Plan> {
   const subscription = await db.subscription.findUnique({
     where: { realmId },
-    select: { status: true, priceId: true },
+    select: { status: true, priceId: true, currentPeriodEnd: true },
   });
   return planFromSubscription(subscription, prices);
 }

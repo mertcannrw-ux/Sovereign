@@ -257,6 +257,10 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
   const serverReadyAttachedRef = useRef(false);
   /** Detaches this instance's `server-ready` listener on unmount. */
   const serverReadyUnsubscribeRef = useRef<(() => void) | null>(null);
+  /** True while this instance is the one that started `previousBootServer`. */
+  const ownsPreviousBootServerRef = useRef(false);
+  /** The allowlisted command currently running in the sandbox, if any. */
+  const activeCommandRef = useRef<WebContainerProcess | null>(null);
 
   const enqueue = useCallback((op: () => Promise<void>) => {
     const next = writeQueueRef.current.then(
@@ -284,7 +288,35 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
    * every `run` result). A ref, not state: readers pull it, it never renders.
    */
   const previewErrorsRef = useRef<string[]>([]);
-  const getPreviewErrors = useCallback(() => [...previewErrorsRef.current], []);
+  /**
+   * Snapshot the ring without clearing it. A send reads this before the
+   * request is accepted, so a rejected send must not consume errors the model
+   * never saw.
+   */
+  const peekPreviewErrors = useCallback(() => [...previewErrorsRef.current], []);
+  /**
+   * Remove exactly the lines a request delivered to the model, keeping any
+   * error that arrived while the request was in flight.
+   */
+  const consumePreviewErrors = useCallback((lines: readonly string[]) => {
+    if (lines.length === 0) return;
+    const remaining = [...previewErrorsRef.current];
+    for (const line of lines) {
+      const index = remaining.indexOf(line);
+      if (index >= 0) remaining.splice(index, 1);
+    }
+    previewErrorsRef.current = remaining;
+  }, []);
+  /**
+   * Drain the ring. Every consumer forwards these to the model as "errors the
+   * browser just saw", so keeping already-reported lines meant a fixed error
+   * stayed in every later observation and the agent kept re-fixing it.
+   */
+  const getPreviewErrors = useCallback(() => {
+    const lines = [...previewErrorsRef.current];
+    previewErrorsRef.current = [];
+    return lines;
+  }, []);
 
   /**
    * Run one allowlisted command in the shared container and collect its output.
@@ -297,10 +329,26 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
     async (argv: readonly string[], timeoutMs: number): Promise<RuntimeCommandExecution> => {
       const command = argv.join(' ');
       const startedAt = performance.now();
+      const cancelled = (): RuntimeCommandExecution => ({
+        output: '',
+        exitCode: null,
+        durationMs: Math.round(performance.now() - startedAt),
+        error: 'cancelled',
+      });
       let process: WebContainerProcess;
       try {
         const container = await getContainer();
+        // The unmount cleanup already ran: it can only kill what was in
+        // `activeCommandRef` at that moment, so a boot or spawn resolving
+        // afterwards would keep rewriting the shared container's node_modules
+        // under whatever project boots next.
+        if (!aliveRef.current) return cancelled();
         process = await container.spawn(argv[0]!, argv.slice(1));
+        if (!aliveRef.current) {
+          killProcess(process);
+          return cancelled();
+        }
+        activeCommandRef.current = process;
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to start the command';
         appendLog(`$ ${command}\n${message}`);
@@ -348,6 +396,7 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
         exitCode = await Promise.race([process.exit, timeout]);
       } finally {
         clearTimeout(timer);
+        if (activeCommandRef.current === process) activeCommandRef.current = null;
       }
       // The process is gone (or the kill was issued); give the reader a moment
       // to surface the last buffered chunks, then report.
@@ -429,15 +478,6 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
     (files: PreviewFile[]) => enqueue(() => syncProjectTreeInner(files)),
     [enqueue, syncProjectTreeInner],
   );
-
-  const urlRef = useRef(state.url);
-  urlRef.current = state.url;
-  const doRefresh = useCallback(() => {
-    const u = urlRef.current;
-    if (!u) return;
-    const base = u.endsWith('/') ? u.slice(0, -1) : u;
-    fetch(base + '/__sovereign_hmr/refresh', { method: 'POST', mode: 'cors' }).catch(() => {});
-  }, []);
 
   const restoreLiveStatic = useCallback(
     (
@@ -527,6 +567,13 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
                 { spawn: (command, args) => container.spawn(command, args) },
                 { mode: 'static', onLog: appendLog },
               );
+              if (!aliveRef.current) {
+                // Unmounted while the fallback spawned: nobody would ever adopt
+                // or kill this server, and the next project's boot could adopt
+                // its port and show the wrong app.
+                killProcess(started.process);
+                return;
+              }
               pendingProcessRef.current = started.process;
               serverRef.current = started.process;
               engineRef.current = 'static';
@@ -754,6 +801,7 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
         }
         if (pending) {
           previousBootServer = pending;
+          ownsPreviousBootServerRef.current = true;
           serverRef.current = pending;
           pendingProcessRef.current = null;
         }
@@ -848,6 +896,9 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
         // A boot whose owner went away is not a failure: the shared container
         // and any other project's preview must be left exactly as they are.
         if (error instanceof PreviewBootCancelledError) return;
+        // A failed op from an unmounted instance must not tear down a container
+        // another preview has already booted (teardown is module-global).
+        if (!aliveRef.current) return;
         // A failed boot must not brick the session: drop the cached container
         // (a rejected WebContainer.boot never recovers) and the bootedRef
         // latch so a later retry can start over. Kill any half-started preview
@@ -898,6 +949,11 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
     // A retry starts a new boot attempt, so the previous attempt's ownership of
     // the `server-ready` window is void.
     awaitingServerReadyRef.current = false;
+    // Release the listener (and its "attached" latch) before booting again: the
+    // fresh container has a fresh listener registry, and a latched flag made
+    // the new preview wait for an event it could never receive.
+    serverReadyUnsubscribeRef.current?.();
+    serverReadyUnsubscribeRef.current = null;
     // Drop the cached container: a rejected WebContainer.boot never recovers,
     // and the next getContainer() starts a fresh sandbox.
     resetContainer();
@@ -907,8 +963,11 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
     pendingProcessRef.current = null;
     killProcess(serverRef.current);
     serverRef.current = null;
-    killProcess(previousBootServer);
-    previousBootServer = null;
+    if (ownsPreviousBootServerRef.current) {
+      killProcess(previousBootServer);
+      previousBootServer = null;
+      ownsPreviousBootServerRef.current = false;
+    }
     setState((current) => ({ ...current, status: 'booting', error: null, url: null }));
     void boot();
   }, [boot]);
@@ -931,12 +990,19 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
     return () => {
       cancelViteWatchRef.current?.();
       cancelViteWatchRef.current = null;
+      // A long install must not outlive the page: it keeps rewriting the shared
+      // node_modules while the next project boots.
+      killProcess(activeCommandRef.current);
+      activeCommandRef.current = null;
       killProcess(pendingProcessRef.current);
       pendingProcessRef.current = null;
       killProcess(serverRef.current);
       serverRef.current = null;
-      killProcess(previousBootServer);
-      previousBootServer = null;
+      if (ownsPreviousBootServerRef.current) {
+        killProcess(previousBootServer);
+        previousBootServer = null;
+        ownsPreviousBootServerRef.current = false;
+      }
       // Hand `server-ready` back so the next mount can own it. Without this the
       // listener would stay bound to this instance's nulled refs, and a
       // remounted preview would never become ready again.
@@ -965,11 +1031,12 @@ export function useWebContainer(initialFiles: PreviewFile[], enabled = true) {
     replaceFiles,
     removeFiles,
     retry,
-    triggerRefresh: doRefresh,
     runCommand,
     buildForDeploy,
     syncProjectTree,
     getPreviewErrors,
+    peekPreviewErrors,
+    consumePreviewErrors,
     appendLog,
   };
 }

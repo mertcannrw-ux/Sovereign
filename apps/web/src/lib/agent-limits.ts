@@ -22,18 +22,17 @@ export const VERCEL_HOBBY_MAX_DURATION = 300;
 /**
  * `maxDuration` on the generate route must stay a numeric literal (Next
  * extracts it statically), so a Hobby deployment cannot lower it via env - it
- * must edit the literal. An un-edited literal fails the Vercel build with a
- * plan error at deploy time; this check moves that failure to boot with the
- * exact fix spelled out, and only fires on Vercel Hobby (`VERCEL` is set by
- * the platform, and only Hobby sets the 300s ceiling in practice).
+ * must edit the literal, and Vercel itself rejects an illegal value at build
+ * time. `VERCEL` is set on every plan (Hobby, Pro, Enterprise), so this cannot
+ * distinguish them: it warns rather than throws, because a throw at module
+ * scope would take the route (and the whole build) down on plans that accept
+ * 800s perfectly well.
  */
-export function assertPlanAllowsMaxDuration(maxDuration: number): void {
-  const isVercel = process.env.VERCEL === '1';
-  if (isVercel && maxDuration > VERCEL_HOBBY_MAX_DURATION) {
-    throw new Error(
-      `maxDuration=${maxDuration}s exceeds Vercel Hobby's ${VERCEL_HOBBY_MAX_DURATION}s ceiling and the deploy will fail. ` +
-        `Lower the maxDuration literal in apps/web/src/app/api/generate/route.ts to ${VERCEL_HOBBY_MAX_DURATION}, ` +
-        `or upgrade the Vercel plan.`,
+export function warnIfMaxDurationExceedsHobby(maxDuration: number): void {
+  if (process.env.VERCEL === '1' && maxDuration > VERCEL_HOBBY_MAX_DURATION) {
+    console.warn(
+      `[generate] maxDuration=${maxDuration}s exceeds Vercel Hobby's ${VERCEL_HOBBY_MAX_DURATION}s ceiling. ` +
+        `On Hobby the deploy will fail: lower the literal in apps/web/src/app/api/generate/route.ts to ${VERCEL_HOBBY_MAX_DURATION}, or use a Pro plan.`,
     );
   }
 }

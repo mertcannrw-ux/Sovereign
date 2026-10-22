@@ -43,6 +43,33 @@ describe('hasLiveSubscription', () => {
     }
   });
 
+  it('expires with the stored billing period', () => {
+    const lapsed = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+    const current = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    expect(
+      hasLiveSubscription({
+        status: 'ACTIVE',
+        stripeSubscriptionId: 'sub_1',
+        currentPeriodEnd: current,
+      }),
+    ).toBe(true);
+    expect(
+      hasLiveSubscription({
+        status: 'ACTIVE',
+        stripeSubscriptionId: 'sub_1',
+        currentPeriodEnd: lapsed,
+      }),
+    ).toBe(false);
+    // Stripe still retries the charge, so a lapsed PAST_DUE keeps blocking.
+    expect(
+      hasLiveSubscription({
+        status: 'PAST_DUE',
+        stripeSubscriptionId: 'sub_1',
+        currentPeriodEnd: lapsed,
+      }),
+    ).toBe(true);
+  });
+
   it('allows checkout for a placeholder or ended subscription', () => {
     expect(hasLiveSubscription(null)).toBe(false);
     expect(hasLiveSubscription({ status: 'INCOMPLETE', stripeSubscriptionId: null })).toBe(false);

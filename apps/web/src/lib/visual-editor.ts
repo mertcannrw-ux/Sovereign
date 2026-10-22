@@ -22,6 +22,12 @@ export function instrumentPreviewHtml(content: string): string {
 function visualEditorRuntime() {
   const MESSAGE_SOURCE = 'sovereign-visual-editor';
   const getParentOrigin = () => {
+    // The workspace embeds this origin as a literal when it serves the overlay
+    // (the preview is cross-origin, so reading `parent.location` throws and the
+    // '*' fallback broadcast selections to any embedder).
+    const injected = (window as Window & { __SOVEREIGN_HOST_ORIGIN__?: string })
+      .__SOVEREIGN_HOST_ORIGIN__;
+    if (typeof injected === 'string' && injected) return injected;
     try {
       const o = window.parent.location.origin;
       return o && o !== 'null' ? o : '*';
@@ -340,6 +346,9 @@ export function capA11yViolations(violations: unknown[]): {
 function axeRuntime() {
   const MESSAGE_SOURCE = 'sovereign-a11y';
   const getParentOrigin = () => {
+    const injected = (window as Window & { __SOVEREIGN_HOST_ORIGIN__?: string })
+      .__SOVEREIGN_HOST_ORIGIN__;
+    if (typeof injected === 'string' && injected) return injected;
     try {
       const origin = window.parent.location.origin;
       return origin && origin !== 'null' ? origin : '*';
@@ -392,6 +401,20 @@ function axeRuntime() {
 
   if (document.readyState === 'complete') schedule();
   else window.addEventListener('load', schedule);
+}
+
+/**
+ * Overlay scripts with the workspace origin baked in. The preview is served
+ * cross-origin, so the frame cannot read `parent.location.origin`; passing it
+ * here is what lets `postMessage` target the workspace instead of `'*'`.
+ * `origin` is JSON-encoded so it cannot break out of the literal.
+ */
+export function buildOverlayScripts(origin: string): { editor: string; axe: string } {
+  const prefix = `window.__SOVEREIGN_HOST_ORIGIN__=${JSON.stringify(origin)};`;
+  return {
+    editor: `${prefix}${VISUAL_EDITOR_SCRIPT}`,
+    axe: `${prefix}${AXE_RUNTIME_SCRIPT}`,
+  };
 }
 
 export const VISUAL_EDITOR_SCRIPT = `;(${visualEditorRuntime.toString()})();`;

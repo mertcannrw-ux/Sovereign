@@ -12,7 +12,10 @@ export interface RuntimeCommandSpec {
 
 export const RUNTIME_COMMANDS: Record<string, RuntimeCommandSpec> = {
   'npm install': {
-    argv: ['npm', 'install'],
+    // `--ignore-scripts` matches the preview's own install path. Without it a
+    // dependency's postinstall runs model-chosen code with network access, and
+    // a deploy install re-runs it even for a project whose preview never did.
+    argv: ['npm', 'install', '--ignore-scripts'],
     timeoutMs: 180_000,
   },
   'npx tsc --noEmit': {

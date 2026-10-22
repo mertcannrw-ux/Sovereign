@@ -29,7 +29,8 @@ function createPreview(): UseGenerationOptions['preview'] {
     applyImmediateWrite: vi.fn().mockResolvedValue(undefined),
     flushPendingWrites: vi.fn().mockResolvedValue(undefined),
     handleRuntimeRequest: vi.fn().mockResolvedValue(undefined),
-    getPreviewErrors: vi.fn(() => []),
+    peekPreviewErrors: vi.fn(() => []),
+    consumePreviewErrors: vi.fn(),
   };
 }
 
@@ -71,6 +72,7 @@ function driveStream() {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
 });
@@ -84,7 +86,7 @@ describe('useGeneration run outcomes', () => {
 
     const { result } = renderHook(() => useGeneration(options));
 
-    let sendPromise: Promise<void> | undefined;
+    let sendPromise: Promise<boolean> | undefined;
     await act(async () => {
       sendPromise = result.current.send('build a landing page');
     });
@@ -130,7 +132,7 @@ describe('useGeneration run outcomes', () => {
 
     const { result } = renderHook(() => useGeneration(options));
 
-    let sendPromise: Promise<void> | undefined;
+    let sendPromise: Promise<boolean> | undefined;
     await act(async () => {
       sendPromise = result.current.send('build a landing page');
     });
@@ -183,7 +185,7 @@ describe('useGeneration run outcomes', () => {
 
     const { result } = renderHook(() => useGeneration(options));
 
-    let sendPromise: Promise<void> | undefined;
+    let sendPromise: Promise<boolean> | undefined;
     await act(async () => {
       sendPromise = result.current.send('add a page');
     });
@@ -217,7 +219,7 @@ describe('useGeneration run outcomes', () => {
 
     const { result } = renderHook(() => useGeneration(options));
 
-    let sendPromise: Promise<void> | undefined;
+    let sendPromise: Promise<boolean> | undefined;
     await act(async () => {
       sendPromise = result.current.send('build a landing page');
     });
@@ -262,7 +264,7 @@ describe('useGeneration run outcomes', () => {
       { initialProps: { history: [] as GenerationHistoryMessage[] } },
     );
 
-    let sendPromise: Promise<void> | undefined;
+    let sendPromise: Promise<boolean> | undefined;
     await act(async () => {
       sendPromise = result.current.send('build a landing page');
     });
@@ -302,7 +304,7 @@ describe('useGeneration run outcomes', () => {
 
     const { result } = renderHook(() => useGeneration(options));
 
-    let firstSend: Promise<void> | undefined;
+    let firstSend: Promise<boolean> | undefined;
     await act(async () => {
       // Same tick: the `isSending` state has not re-rendered yet, so only the
       // in-flight flag can reject the duplicate.
@@ -369,7 +371,7 @@ describe('useGeneration run outcomes', () => {
 
     const { result } = renderHook(() => useGeneration(options));
 
-    let sendPromise: Promise<void> | undefined;
+    let sendPromise: Promise<boolean> | undefined;
     await act(async () => {
       sendPromise = result.current.send('does the preview update?');
     });
@@ -397,5 +399,66 @@ describe('useGeneration run outcomes', () => {
       await sendPromise;
     });
     expect(result.current.liveAnswer).toBe('');
+  });
+
+  it('retries a send that races the stopped run’s lease release', async () => {
+    vi.useFakeTimers();
+    const preview = createPreview();
+    const options = createOptions(preview);
+    vi.mocked(consumeGenerationStream).mockImplementation(async (_response, handler) => {
+      await handler({
+        type: 'ready',
+        data: {
+          userMessage: {
+            id: 'user-1',
+            role: 'user',
+            content: 'try again',
+            timestamp: new Date().toISOString(),
+            model: 'openai:gpt-test',
+          },
+          assistantMessage: {
+            id: 'assistant-1',
+            role: 'assistant',
+            content: 'done',
+            timestamp: new Date().toISOString(),
+            model: 'openai:gpt-test',
+            tokenUsage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+          },
+          files: [],
+          versionNumber: 1,
+        },
+      });
+    });
+    const busy = () =>
+      new Response(
+        JSON.stringify({
+          error: 'A generation is already running for this project.',
+          retryAfterMs: 20 * 60 * 1000,
+        }),
+        { status: 409, headers: { 'Content-Type': 'application/json' } },
+      );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(busy())
+      .mockResolvedValueOnce(busy())
+      .mockResolvedValueOnce(new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { result } = renderHook(() => useGeneration(options));
+    act(() => result.current.stop());
+
+    let sendPromise: Promise<boolean> | undefined;
+    act(() => {
+      sendPromise = result.current.send('try again');
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+      await sendPromise;
+    });
+
+    // Both lease-busy responses were retried rather than shown as a failure.
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(preview.consumePreviewErrors).toHaveBeenCalled();
+    expect(result.current.lastRunFailed).toBe(false);
   });
 });

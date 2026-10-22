@@ -68,6 +68,22 @@ export interface UploadProjectAssetParams {
   height?: number;
 }
 
+/** Upper bound on stored bytes per project; keeps one tenant from filling the bucket. */
+const MAX_PROJECT_ASSET_BYTES = 2 * 1024 * 1024 * 1024; // 2GB
+const MAX_PROJECT_ASSET_COUNT = 5_000;
+
+interface AssetUsage {
+  _count: { _all: number };
+  _sum: { byteSize: number | null };
+}
+
+function exceedsAssetQuota(usage: AssetUsage, incomingBytes: number): boolean {
+  return (
+    usage._count._all >= MAX_PROJECT_ASSET_COUNT ||
+    (usage._sum.byteSize ?? 0) + incomingBytes > MAX_PROJECT_ASSET_BYTES
+  );
+}
+
 export async function uploadProjectAsset(params: UploadProjectAssetParams): Promise<ProjectAsset> {
   if (params.bytes.byteLength > MAX_ASSET_BYTES) {
     throw new Error(`Asset size (${params.bytes.byteLength} bytes) exceeds maximum limit of 20MB.`);
@@ -76,6 +92,18 @@ export async function uploadProjectAsset(params: UploadProjectAssetParams): Prom
   const mediaType = detectImageMediaType(params.bytes);
   if (!mediaType || !ALLOWED_MEDIA_TYPES.has(mediaType)) {
     throw new Error('Unrecognized image format. Allowed types: PNG, JPEG, WebP, GIF.');
+  }
+
+  const db = getDb();
+  const usage = await db.projectAsset.aggregate({
+    where: { projectId: params.projectId },
+    _count: { _all: true },
+    _sum: { byteSize: true },
+  });
+  // Reject before uploading: the authoritative check runs again under a lock
+  // below, but a project already at its cap should not pay for the transfer.
+  if (exceedsAssetQuota(usage, params.bytes.byteLength)) {
+    throw new Error('This project has reached its asset storage limit.');
   }
 
   const ext = getExtensionForMediaType(mediaType);
@@ -87,26 +115,38 @@ export async function uploadProjectAsset(params: UploadProjectAssetParams): Prom
     contentType: mediaType,
   });
 
-  // 2. Write database record second
-  const db = getDb();
+  // 2. Write database record second. The quota is re-checked inside a
+  // per-project advisory lock: concurrent uploads would otherwise all read the
+  // pre-insert total and commit past the cap together.
   try {
-    const asset = await db.projectAsset.create({
-      data: {
-        projectId: params.projectId,
-        createdById: params.createdById,
-        objectKey,
-        publicUrl,
-        mediaType,
-        byteSize: params.bytes.byteLength,
-        width: params.width,
-        height: params.height,
-        source: params.source ?? 'generated',
-        prompt: params.prompt,
-      },
+    return await db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`project-assets:${params.projectId}`}, 0))`;
+      const lockedUsage = await tx.projectAsset.aggregate({
+        where: { projectId: params.projectId },
+        _count: { _all: true },
+        _sum: { byteSize: true },
+      });
+      if (exceedsAssetQuota(lockedUsage, params.bytes.byteLength)) {
+        throw new Error('This project has reached its asset storage limit.');
+      }
+      return tx.projectAsset.create({
+        data: {
+          projectId: params.projectId,
+          createdById: params.createdById,
+          objectKey,
+          publicUrl,
+          mediaType,
+          byteSize: params.bytes.byteLength,
+          width: params.width,
+          height: params.height,
+          source: params.source ?? 'generated',
+          prompt: params.prompt,
+        },
+      });
     });
-    return asset;
   } catch (dbError) {
-    // DB write failed: perform compensation cleanup on R2
+    // No row was written (or the transaction rolled back), so the object just
+    // uploaded would otherwise be orphaned in the bucket.
     try {
       await deleteFromR2(objectKey);
     } catch {
@@ -141,4 +181,44 @@ export async function listProjectAssets(projectId: string): Promise<ProjectAsset
     where: { projectId },
     orderBy: { createdAt: 'desc' },
   });
+}
+
+/**
+ * Object keys for the assets of one or more projects. Read *before* the rows
+ * are deleted: the rows cascade with the project, and once they are gone the
+ * keys are unrecoverable.
+ */
+export async function listProjectAssetObjectKeys(projectIds: string[]): Promise<string[]> {
+  if (projectIds.length === 0) return [];
+  const db = getDb();
+  const assets = await db.projectAsset.findMany({
+    where: { projectId: { in: projectIds } },
+    select: { objectKey: true },
+  });
+  return assets.map((asset) => asset.objectKey);
+}
+
+const ASSET_DELETE_BATCH_SIZE = 25;
+
+/**
+ * Delete stored objects by key. Call only after the owning rows have committed:
+ * object deletion is best-effort per key - a transient R2 failure must not
+ * block the project delete - but every failure is logged so the orphan can be
+ * reclaimed manually.
+ *
+ * Deletes run in bounded batches: a large account can own tens of thousands of
+ * assets, and firing them all through one `Promise.all` exhausts sockets,
+ * hits S3 rate limits, and abandons the rest of the batch as soon as one call
+ * throws.
+ */
+export async function deleteAssetObjects(objectKeys: readonly string[]): Promise<void> {
+  for (let start = 0; start < objectKeys.length; start += ASSET_DELETE_BATCH_SIZE) {
+    await Promise.all(
+      objectKeys.slice(start, start + ASSET_DELETE_BATCH_SIZE).map((objectKey) =>
+        deleteFromR2(objectKey).catch((error) => {
+          console.error(`[project-assets] failed to delete object ${objectKey}`, error);
+        }),
+      ),
+    );
+  }
 }

@@ -31,6 +31,12 @@ export interface AgentExecutionParams {
   body: GenerateBody;
   runtimeEnabled: boolean;
   signal?: AbortSignal;
+  /**
+   * Wall-clock budget after which the run settles and releases its lease.
+   * Must stay below the hosting function's own timeout: a platform kill skips
+   * `finally`, so the project would stay locked until the lease goes stale.
+   */
+  softDeadlineMs?: number;
 }
 
 export type AgentStreamResult =

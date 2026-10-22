@@ -13,7 +13,7 @@ describe('resolveRuntimeCommand', () => {
   it('resolves every allowlisted command to its argv', () => {
     expect(resolveRuntimeCommand('npm install')).toEqual({
       command: 'npm install',
-      argv: ['npm', 'install'],
+      argv: ['npm', 'install', '--ignore-scripts'],
       timeoutMs: 180_000,
     });
     expect(resolveRuntimeCommand('npx tsc --noEmit')?.argv).toEqual(['npx', 'tsc', '--noEmit']);

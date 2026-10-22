@@ -108,6 +108,8 @@ function InviteForm({ realmId, onInvited }: { realmId: string; onInvited: () => 
   const [role, setRole] = useState<InviteRole>('MEMBER');
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  /** Set when the freshly rotated invite link could not be copied automatically. */
+  const [manualLink, setManualLink] = useState<string | null>(null);
   const [pending, setPending] = useState<'invite' | 'link' | null>(null);
 
   async function send(sendEmail: boolean) {
@@ -127,9 +129,20 @@ function InviteForm({ realmId, onInvited }: { realmId: string; onInvited: () => 
             ? `Invite sent to ${invite.email}.`
             : `Couldn't email ${invite.email}. Copy the invite link instead.`,
         );
+        // Replace the link every time: a new invite rotates the token, so a
+        // link left over from an earlier failed send is already dead.
+        setManualLink(invite.emailed ? null : invite.link);
       } else {
-        await navigator.clipboard.writeText(invite.link);
-        setNotice(`Invite link for ${invite.email} copied.`);
+        // The token has already rotated by the time this runs, so a rejected
+        // clipboard write must not swallow the only copy of the new link.
+        try {
+          await navigator.clipboard.writeText(invite.link);
+          setNotice(`Invite link for ${invite.email} copied.`);
+          setManualLink(null);
+        } catch {
+          setNotice(`Copy the invite link for ${invite.email} before leaving this page.`);
+          setManualLink(invite.link);
+        }
       }
       setEmail('');
       await onInvited();
@@ -190,6 +203,18 @@ function InviteForm({ realmId, onInvited }: { realmId: string; onInvited: () => 
           <p role="status" className="text-sm text-foreground-muted">
             {notice}
           </p>
+        )}
+        {manualLink && (
+          <label className="basis-full text-xs text-foreground-muted">
+            Invite link
+            <input
+              readOnly
+              value={manualLink}
+              onFocus={(event) => event.currentTarget.select()}
+              aria-label="Invite link"
+              className="mt-1 w-full rounded-control border border-border bg-background px-2 py-1 font-mono text-xs text-foreground"
+            />
+          </label>
         )}
       </div>
     </form>
@@ -302,6 +327,7 @@ function InviteRow({
   const resendMutation = trpc.realms.resendInvite.useMutation();
   const revokeMutation = trpc.realms.revokeInvite.useMutation({ onSuccess: onChanged });
   const [status, setStatus] = useState<string | null>(null);
+  const [link, setLink] = useState<string | null>(null);
 
   return (
     <li className="flex items-center gap-3 px-5 py-3">
@@ -311,6 +337,15 @@ function InviteRow({
           {ROLE_LABELS[invite.role]}
           {status ? ` · ${status}` : ''}
         </p>
+        {link && (
+          <input
+            readOnly
+            value={link}
+            onFocus={(event) => event.currentTarget.select()}
+            aria-label={`New invite link for ${invite.email}`}
+            className="mt-1 w-full rounded-control border border-border bg-background px-2 py-1 font-mono text-xs text-foreground"
+          />
+        )}
       </div>
       <Button
         variant="ghost"
@@ -320,7 +355,12 @@ function InviteRow({
           resendMutation.mutate(
             { realmId, inviteId: invite.id },
             {
-              onSuccess: (result) => setStatus(result.emailed ? 'Sent again' : "Couldn't send"),
+              onSuccess: (result) => {
+                setStatus(result.emailed ? 'Sent again' : "Couldn't email - copy the link");
+                // Resending replaced the old token; keep the replacement usable
+                // even when the mail did not go out.
+                setLink(result.emailed ? null : result.link);
+              },
               onError: (err) => setStatus(err.message),
             },
           )

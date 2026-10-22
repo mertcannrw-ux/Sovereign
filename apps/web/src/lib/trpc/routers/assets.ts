@@ -26,9 +26,14 @@ export const assetsRouter = router({
   getStatus: protectedProcedure.query(async ({ ctx }) => {
     const r2Status = getR2ConfigStatus();
 
-    // Check if current user has an active ImageProviderConfig
+    // Image providers belong to a Realm, so resolve through the caller's
+    // memberships: a userId-only lookup disagreed with what builds actually use.
     const imageConfig = await ctx.db.imageProviderConfig.findFirst({
-      where: { userId: ctx.user.id, enabled: true },
+      where: {
+        enabled: true,
+        realm: { members: { some: { userId: ctx.user.id } } },
+      },
+      orderBy: { createdAt: 'desc' },
     });
 
     return {

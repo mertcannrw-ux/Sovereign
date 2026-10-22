@@ -88,6 +88,16 @@ export const imageProviderRouter = router({
       if (input.apiKey && input.apiKey.trim().length > 0) {
         encryptedKey = encryptApiKey(input.apiKey.trim());
       } else if (existing) {
+        // Reusing the stored secret is only safe while it stays bound to the
+        // endpoint it was entered for. Otherwise one Realm admin could point
+        // the config at a host they control and have another admin's key sent
+        // there (the "Test" action, or the next image generation).
+        if (existing.baseUrl !== normalizedEndpoint) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'Re-enter the API key when changing the endpoint.',
+          });
+        }
         encryptedKey = existing.encryptedKey;
       } else {
         throw new TRPCError({
@@ -181,6 +191,7 @@ export const imageProviderRouter = router({
 
       const config = await ctx.db.imageProviderConfig.findFirst({
         where: { realmId: input.realmId, enabled: true },
+        orderBy: { createdAt: 'desc' },
       });
 
       if (!config) {
@@ -189,7 +200,16 @@ export const imageProviderRouter = router({
           message: 'No active image provider configuration found',
         });
       }
-      const plaintextKey = decryptApiKey(config.encryptedKey);
+
+      let plaintextKey: string;
+      try {
+        plaintextKey = decryptApiKey(config.encryptedKey);
+      } catch {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'The stored API key could not be read. Save the key again.',
+        });
+      }
 
       // Form test endpoint for models check (non-billable)
       let modelsUrl = config.baseUrl;

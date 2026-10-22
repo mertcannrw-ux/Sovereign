@@ -73,7 +73,8 @@ export interface UseGenerationOptions {
     | 'files'
     | 'flushPendingWrites'
     | 'handleRuntimeRequest'
-    | 'getPreviewErrors'
+    | 'peekPreviewErrors'
+    | 'consumePreviewErrors'
   >;
   history: GenerationHistoryMessage[] | undefined;
   onHistoryRefetch: () => Promise<unknown>;
@@ -124,7 +125,7 @@ export interface UseGenerationResult {
     directionResponseOverride?: GenerateDirectionResponse,
     editTargetOverride?: GenerationEditTarget,
     attachments?: GenerationAttachment[],
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   stop: () => void;
   /** The last run ended in an error (not a stop). Cleared when the next run starts. */
   lastRunFailed: boolean;
@@ -133,6 +134,34 @@ export interface UseGenerationResult {
   answerClarification: (answer: string) => void;
   cancelClarifications: () => void;
   submitClarifications: () => void;
+}
+
+/**
+ * Stop releases the client-side in-flight guard immediately so the user can
+ * type again, but the server keeps the generation lease until the aborted
+ * request unwinds. A prompt sent inside that window gets a lease-busy 409;
+ * retry briefly instead of showing a failure for a run the user just stopped.
+ */
+const STOP_RESEND_WINDOW_MS = 15_000;
+// About 10 s in total: the lease is normally freed within a poll tick of the
+// abort, but a run settling a slow provider call or DB write can take longer.
+const STOP_RESEND_DELAYS_MS = [200, 400, 800, 1_200, 1_600, 2_400, 3_400] as const;
+
+function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) {
+    return Promise.reject(new DOMException('The operation was aborted.', 'AbortError'));
+  }
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  const onAbort = () => {
+    clearTimeout(timer);
+    reject(new DOMException('The operation was aborted.', 'AbortError'));
+  };
+  const timer = setTimeout(() => {
+    signal.removeEventListener('abort', onAbort);
+    resolve();
+  }, ms);
+  signal.addEventListener('abort', onAbort, { once: true });
+  return promise;
 }
 
 function isTokenUsage(value: unknown): value is ChatMessage['tokenUsage'] {
@@ -229,6 +258,8 @@ export function useGeneration({
   const runFailureRef = useRef<ChatMessage | null>(null);
   // The arguments of the run that failed, for `retry`.
   const failedSendRef = useRef<Parameters<UseGenerationResult['send']> | null>(null);
+  /** When the user last pressed Stop; see `STOP_RESEND_WINDOW_MS`. */
+  const stoppedAtRef = useRef(0);
   const seenProjectIdRef = useRef(projectId);
   const previewRef = useRef(preview);
   previewRef.current = preview;
@@ -284,6 +315,14 @@ export function useGeneration({
 
   const stop = useCallback(() => {
     abortControllerRef.current?.abort();
+    // Release the guard now, not in the run's `finally`: the stream may be
+    // parked in a 120-180 s runtime request, and a user who pressed Stop must
+    // be able to send again immediately. The old run's `finally` compares the
+    // controller before touching shared state, so it cannot clobber a newer one.
+    // The server lease outlives this abort by a moment, so `send` retries the
+    // lease-busy conflict for a short window after this timestamp.
+    stoppedAtRef.current = Date.now();
+    inFlightRef.current = false;
     setIsSending(false);
     setGenerationPhase(null);
     setLiveThinking(null);
@@ -314,7 +353,9 @@ export function useGeneration({
         !selectedModel ||
         !selectedProvider
       ) {
-        return;
+        // `false`, not a bare return: the prompt bar only keeps the user's
+        // attachments when it learns the send was rejected.
+        return false;
       }
       const abortController = new AbortController();
       abortControllerRef.current = abortController;
@@ -402,27 +443,54 @@ export function useGeneration({
       setClarifyingQuestions([]);
       setActiveDesignDirections(null);
       try {
-        const previewErrors = runtime.getPreviewErrors();
-        const response = await fetch('/api/generate', {
-          method: 'POST',
-          // Capability handshake: the server offers the `run` tool only when
-          // this client can execute a `runtime-request` in its WebContainer.
-          headers: { 'Content-Type': 'application/json', 'X-Sovereign-Runtime': '1' },
-          signal: abortController.signal,
-          body: JSON.stringify({
-            projectId,
-            message: text,
-            modelName: selectedModel,
-            modelProvider: selectedProvider,
-            reasoningEffort: reasoningEffort === 'auto' ? undefined : reasoningEffort,
-            // Preview console errors the browser already saw, so a "it's
-            // broken" turn starts with evidence instead of a blind read pass.
-            ...(previewErrors.length > 0 ? { runtimeErrors: previewErrors } : {}),
-            ...(currentEditTarget ? { editTarget: currentEditTarget } : {}),
-            ...(directionResponseOverride ? { directionResponse: directionResponseOverride } : {}),
-            ...(attachments && attachments.length > 0 ? { files: attachments } : {}),
-          }),
+        const previewErrors = runtime.peekPreviewErrors();
+        const requestBody = JSON.stringify({
+          projectId,
+          message: text,
+          modelName: selectedModel,
+          modelProvider: selectedProvider,
+          reasoningEffort: reasoningEffort === 'auto' ? undefined : reasoningEffort,
+          // Preview console errors the browser already saw, so a "it's
+          // broken" turn starts with evidence instead of a blind read pass.
+          ...(previewErrors.length > 0 ? { runtimeErrors: previewErrors } : {}),
+          ...(currentEditTarget ? { editTarget: currentEditTarget } : {}),
+          ...(directionResponseOverride ? { directionResponse: directionResponseOverride } : {}),
+          ...(attachments && attachments.length > 0 ? { files: attachments } : {}),
         });
+        const postGeneration = () =>
+          fetch('/api/generate', {
+            method: 'POST',
+            // Capability handshake: the server offers the `run` tool only when
+            // this client can execute a `runtime-request` in its WebContainer.
+            headers: { 'Content-Type': 'application/json', 'X-Sovereign-Runtime': '1' },
+            signal: abortController.signal,
+            body: requestBody,
+          });
+
+        let response = await postGeneration();
+        for (let attempt = 0; attempt < STOP_RESEND_DELAYS_MS.length; attempt += 1) {
+          if (response.status !== 409) break;
+          if (Date.now() - stoppedAtRef.current > STOP_RESEND_WINDOW_MS) break;
+          const payload = (await response
+            .clone()
+            .json()
+            .catch(() => null)) as {
+            retryAfterMs?: number;
+          } | null;
+          // Only the generation-lease conflict carries retryAfterMs; other 409s
+          // are conflicts the user has to resolve themselves.
+          if (typeof payload?.retryAfterMs !== 'number') break;
+          setAgentLiveMessage('Waiting for the previous run to stop…');
+          await abortableDelay(STOP_RESEND_DELAYS_MS[attempt]!, abortController.signal);
+          response = await postGeneration();
+        }
+        stoppedAtRef.current = 0;
+        setAgentLiveMessage('Agent started');
+        if (response.ok) {
+          // The request body carried these errors, so they have been delivered.
+          // A rejected send left the ring untouched for the next attempt.
+          runtime.consumePreviewErrors(previewErrors);
+        }
 
         await consumeGenerationStream(response, async (event) => {
           if (event.type === 'phase') {
@@ -543,7 +611,15 @@ export function useGeneration({
           serverSettled = true;
           provisionalOriginals.clear();
           runFailureRef.current = null;
-          await runtime.applyFiles(event.data.files);
+          // The run is committed at this point. Sandbox or refetch failures are
+          // local problems: reporting them through the catch below would tell
+          // the user their API key is wrong and offer a Retry that starts a
+          // second billed run against an already-finished project.
+          try {
+            await runtime.applyFiles(event.data.files);
+          } catch (applyError) {
+            console.error('generation.apply_files_failed', applyError);
+          }
           const primaryFile =
             event.data.files.find((file) => file.path === 'index.html') ??
             event.data.files.find((file) => file.path.endsWith('.html')) ??
@@ -582,18 +658,44 @@ export function useGeneration({
           // the answer away while `applyFiles` still writes to the sandbox.
           setLiveAnswer('');
           setCurrentVersion(event.data.versionNumber);
-          await Promise.all([
-            onVersionsRefetchRef.current(),
-            onHistoryRefetchRef.current(),
-            onFilesRefetchRef.current(),
-          ]);
+          try {
+            await Promise.all([
+              onVersionsRefetchRef.current(),
+              onHistoryRefetchRef.current(),
+              onFilesRefetchRef.current(),
+            ]);
+          } catch (refetchError) {
+            console.error('generation.refetch_failed', refetchError);
+          }
         });
 
-        // A stream that ends without a terminal event (dropped connection, server
-        // restart) leaves the buffered previews unverified - treat that like a
-        // stop rather than flushing a possibly truncated fragment.
+        // A stream that ends without a terminal event (dropped connection,
+        // server restart) leaves the buffered previews unverified - treat that
+        // like a failed run rather than quietly resyncing: the user gets their
+        // prompt back, a Retry action, and an explanation.
         if (!serverSettled) {
           if (abortControllerRef.current === abortController) discardProvisionalWrites();
+          if (!abortController.signal.aborted) {
+            const detail = 'The connection closed before the run finished.';
+            const failureMessage: ChatMessage = {
+              id: crypto.randomUUID(),
+              role: 'system',
+              content: 'Generation was interrupted before it finished. Try again.',
+              timestamp: new Date(),
+              model: `${selectedProvider}:${selectedModel}`,
+              thinking: formatErrorDetail(detail),
+            };
+            runFailureRef.current = failureMessage;
+            setLocalMessages((previous) => [...previous, failureMessage]);
+            failedSendRef.current = [
+              messageOverride,
+              directionResponseOverride,
+              editTargetOverride,
+              attachments,
+            ];
+            setLastRunFailed(true);
+            onRestoreInputRef.current?.(text);
+          }
           resyncFromServer();
         }
       } catch (error) {
@@ -662,6 +764,7 @@ export function useGeneration({
           }
         }
       }
+      return true;
     },
     [isSending, selectedModel, selectedProvider, projectId, reasoningEffort],
   );

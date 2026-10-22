@@ -13,6 +13,55 @@ const DISCLOSURE_DISMISSED_KEY = 'sovereign.previewJsDisclosure.dismissed';
 
 export const VISUAL_EDITOR_SOURCE = 'sovereign-visual-editor';
 
+const ELEMENT_TEXT_MAX = 2_000;
+const ELEMENT_HTML_MAX = 8_000;
+const ELEMENT_FIELD_MAX = 500;
+
+/** Longest visual-editor instruction forwarded as the quick-edit prompt. */
+const QUICK_EDIT_PROMPT_MAX = 2_000;
+
+/**
+ * Cut a pasted instruction to the forwarded budget without splitting a
+ * surrogate pair, and say so in the message: a silent cut makes the agent
+ * execute a partial instruction (a trailing "don't touch X" simply vanishes).
+ */
+function truncateQuickEditPrompt(value: string): string {
+  const chars = Array.from(value);
+  if (chars.length <= QUICK_EDIT_PROMPT_MAX) return value;
+  return `${chars.slice(0, QUICK_EDIT_PROMPT_MAX).join('')}\n\n[Instruction truncated at ${QUICK_EDIT_PROMPT_MAX} characters]`;
+}
+
+/**
+ * Normalise an `element-selected` payload from the preview frame.
+ *
+ * The frame runs generated code, so this is untrusted input: every field is
+ * coerced to a bounded string and a `sourceFile` carrying traversal, an
+ * absolute path or a backslash is refused (it becomes an agent edit target).
+ * Returns null for anything that is not an object.
+ */
+export function sanitizeSelectedElement(value: unknown): SelectedPreviewElement | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const text = (field: unknown, max: number) =>
+    typeof field === 'string' ? field.slice(0, max) : '';
+
+  const sourceFile = text(record.sourceFile, ELEMENT_FIELD_MAX);
+  if (sourceFile.startsWith('/') || sourceFile.includes('\\') || sourceFile.includes('..')) {
+    return null;
+  }
+
+  return {
+    tagName: text(record.tagName, 40),
+    id: typeof record.id === 'string' ? record.id.slice(0, ELEMENT_FIELD_MAX) : null,
+    className: text(record.className, ELEMENT_FIELD_MAX),
+    text: text(record.text, ELEMENT_TEXT_MAX),
+    selector: text(record.selector, ELEMENT_FIELD_MAX),
+    sourceFile,
+    veId: typeof record.veId === 'string' ? record.veId.slice(0, ELEMENT_FIELD_MAX) : null,
+    outerHTML: text(record.outerHTML, ELEMENT_HTML_MAX),
+  };
+}
+
 export interface PreviewPaneProps {
   url: string | null;
   status: 'idle' | 'booting' | 'installing' | 'starting' | 'ready' | 'error';
@@ -166,7 +215,9 @@ export function PreviewPane({
         return;
       }
       if (event.data.type === 'element-selected') {
-        onSelectedElementChange(event.data.element as SelectedPreviewElement);
+        const element = sanitizeSelectedElement(event.data.element);
+        if (!element) return;
+        onSelectedElementChange(element);
         onElementSelected?.();
         return;
       }
@@ -175,8 +226,9 @@ export function PreviewPane({
         // Honor it only while the user has edit mode switched on - otherwise any
         // script in the preview could start a billable agent run.
         if (!isEditMode) return;
-        const element = event.data.element as SelectedPreviewElement | undefined;
-        const prompt = typeof event.data.prompt === 'string' ? event.data.prompt : '';
+        const element = sanitizeSelectedElement(event.data.element);
+        const prompt =
+          typeof event.data.prompt === 'string' ? truncateQuickEditPrompt(event.data.prompt) : '';
         if (element && prompt && onQuickEdit) {
           onQuickEdit(prompt, element);
         }

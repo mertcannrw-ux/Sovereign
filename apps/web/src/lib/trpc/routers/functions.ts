@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
+import { Prisma } from '@prisma-generated/prisma/client';
 import { protectedProcedure, router } from '../trpc';
 import { requireProjectAccess } from '@/server/authz';
 
@@ -39,9 +40,9 @@ export const functionsRouter = router({
     .input(
       z.object({
         projectId: z.string(),
-        path: z.string().min(1, 'Path is required').startsWith('/'),
-        method: z.string().default('GET'),
-        code: z.string().default(defaultHandlerCode()),
+        path: z.string().min(1, 'Path is required').max(300).startsWith('/'),
+        method: z.string().max(10).default('GET'),
+        code: z.string().max(200_000).default(defaultHandlerCode()),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -85,9 +86,9 @@ export const functionsRouter = router({
     .input(
       z.object({
         id: z.string(),
-        path: z.string().min(1).startsWith('/').optional(),
-        method: z.string().optional(),
-        code: z.string().optional(),
+        path: z.string().min(1).max(300).startsWith('/').optional(),
+        method: z.string().max(10).optional(),
+        code: z.string().max(200_000).optional(),
         enabled: z.boolean().optional(),
       }),
     )
@@ -105,15 +106,25 @@ export const functionsRouter = router({
 
       await requireProjectAccess(ctx, existing.projectId);
 
-      const updated = await ctx.db.backendFunction.update({
-        where: { id: input.id },
-        data: {
-          ...(input.path !== undefined && { path: input.path }),
-          ...(input.method !== undefined && { method: input.method }),
-          ...(input.code !== undefined && { code: input.code }),
-          ...(input.enabled !== undefined && { enabled: input.enabled }),
-        },
-      });
+      const updated = await ctx.db.backendFunction
+        .update({
+          where: { id: input.id },
+          data: {
+            ...(input.path !== undefined && { path: input.path }),
+            ...(input.method !== undefined && { method: input.method }),
+            ...(input.code !== undefined && { code: input.code }),
+            ...(input.enabled !== undefined && { enabled: input.enabled }),
+          },
+        })
+        .catch((error: unknown) => {
+          if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+            throw new TRPCError({
+              code: 'CONFLICT',
+              message: 'Another function already uses that method and path.',
+            });
+          }
+          throw error;
+        });
 
       return updated;
     }),

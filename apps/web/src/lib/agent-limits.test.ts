@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  assertPlanAllowsMaxDuration,
+  warnIfMaxDurationExceedsHobby,
   resolveNoProgressGuard,
   resolveOptionalLimit,
   VERCEL_HOBBY_MAX_DURATION,
@@ -32,7 +32,7 @@ describe('resolveNoProgressGuard', () => {
   });
 });
 
-describe('assertPlanAllowsMaxDuration', () => {
+describe('warnIfMaxDurationExceedsHobby', () => {
   const originalVercel = process.env.VERCEL;
   afterEach(() => {
     process.env.VERCEL = originalVercel;
@@ -40,16 +40,19 @@ describe('assertPlanAllowsMaxDuration', () => {
 
   it('is silent off Vercel, whatever the value', () => {
     delete process.env.VERCEL;
-    expect(() => assertPlanAllowsMaxDuration(800)).not.toThrow();
+    expect(() => warnIfMaxDurationExceedsHobby(800)).not.toThrow();
   });
 
   it('is silent on Vercel at or below the Hobby ceiling', () => {
     process.env.VERCEL = '1';
-    expect(() => assertPlanAllowsMaxDuration(VERCEL_HOBBY_MAX_DURATION)).not.toThrow();
+    expect(() => warnIfMaxDurationExceedsHobby(VERCEL_HOBBY_MAX_DURATION)).not.toThrow();
   });
 
-  it('throws on Vercel when the literal exceeds the Hobby ceiling', () => {
+  it('warns on Vercel when the literal exceeds the Hobby ceiling', () => {
     process.env.VERCEL = '1';
-    expect(() => assertPlanAllowsMaxDuration(800)).toThrowError(/Hobby/);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(() => warnIfMaxDurationExceedsHobby(800)).not.toThrow();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Hobby'));
+    warn.mockRestore();
   });
 });

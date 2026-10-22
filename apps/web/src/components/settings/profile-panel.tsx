@@ -185,7 +185,7 @@ export function ProfilePanel() {
 
       <Section title="Danger zone" className="!mt-16">
         <ExportRow />
-        <DeleteAccountRow email={account.email} />
+        <DeleteAccountRow email={account.email} hasPassword={account.hasPassword} />
       </Section>
     </div>
   );
@@ -806,7 +806,7 @@ function ExportRow() {
   );
 }
 
-function DeleteAccountRow({ email }: { email: string }) {
+function DeleteAccountRow({ email, hasPassword }: { email: string; hasPassword: boolean }) {
   const [open, setOpen] = useState(false);
   return (
     <Row
@@ -823,7 +823,9 @@ function DeleteAccountRow({ email }: { email: string }) {
             Delete account
           </Button>
           <Dialog open={open} onOpenChange={setOpen}>
-            <DialogContent>{open && <DeleteAccountForm email={email} />}</DialogContent>
+            <DialogContent>
+              {open && <DeleteAccountForm email={email} hasPassword={hasPassword} />}
+            </DialogContent>
           </Dialog>
         </>
       }
@@ -831,19 +833,24 @@ function DeleteAccountRow({ email }: { email: string }) {
   );
 }
 
-function DeleteAccountForm({ email }: { email: string }) {
+function DeleteAccountForm({ email, hasPassword }: { email: string; hasPassword: boolean }) {
   const summary = trpc.account.deletionSummary.useQuery();
   const deleteAccount = trpc.account.deleteAccount.useMutation(inline);
   const [typed, setTyped] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const matches = typed.trim().toLowerCase() === email.toLowerCase();
+  const confirmed = matches && (!hasPassword || password.length > 0);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!matches) return;
+    if (!confirmed) return;
     setError(null);
     try {
-      await deleteAccount.mutateAsync({ email: typed.trim() });
+      await deleteAccount.mutateAsync({
+        email: typed.trim(),
+        password: hasPassword ? password : undefined,
+      });
     } catch (err) {
       return setError(errorText(err));
     }
@@ -894,6 +901,21 @@ function DeleteAccountForm({ email }: { email: string }) {
             onChange={(event) => setTyped(event.target.value)}
           />
         </div>
+        {hasPassword && (
+          <div className="space-y-2">
+            <label htmlFor="delete-password" className="text-sm text-foreground-secondary">
+              Confirm with your password
+            </label>
+            <Input
+              id="delete-password"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              error={error !== null}
+              onChange={(event) => setPassword(event.target.value)}
+            />
+          </div>
+        )}
         {error && <FieldError>{error}</FieldError>}
       </div>
 
@@ -906,7 +928,7 @@ function DeleteAccountForm({ email }: { email: string }) {
         <Button
           type="submit"
           variant="destructive"
-          disabled={!matches || deleteAccount.isPending}
+          disabled={!confirmed || deleteAccount.isPending}
           className={cn(deleteAccount.isPending && 'cursor-wait')}
         >
           {deleteAccount.isPending && <Spinner />}

@@ -90,7 +90,19 @@ function ProjectWorkspace() {
   const versionsQuery = trpc.chat.getVersions.useQuery({ projectId });
   const filesQuery = trpc.projects.files.useQuery({ id: projectId });
   const restoreMutation = trpc.chat.restoreVersion.useMutation();
-  const updateProjectMutation = trpc.projects.update.useMutation();
+  const updateProjectMutation = trpc.projects.update.useMutation({
+    onSuccess: () => {
+      void utils.projects.getById.invalidate({ id: projectId });
+      void utils.projects.list.invalidate();
+    },
+    onError: (error) => {
+      // A rejected save used to leave the input showing a name that was never
+      // stored; put the persisted one back and surface the reason.
+      setProjectName(projectQuery.data?.name ?? projectName);
+      setRenameError(error.message);
+    },
+    onMutate: () => setRenameError(null),
+  });
   const deploymentsQuery = trpc.deployments.list.useQuery({ projectId });
   const deployMutation = trpc.deployments.deploy.useMutation({
     onSettled: () => utils.deployments.list.invalidate({ projectId }),
@@ -105,6 +117,7 @@ function ProjectWorkspace() {
   const liveUrl = latestDeployment?.status === 'LIVE' ? latestDeployment.url : null;
 
   const [projectName, setProjectName] = useState('Untitled Project');
+  const [renameError, setRenameError] = useState<string | null>(null);
   const [selectedModelKey, setSelectedModelKey] = useState('');
   const [input, setInput] = useState('');
   const [activeTab, setActiveTab] = useState('preview');
@@ -207,7 +220,8 @@ function ProjectWorkspace() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'e' && event.key !== 'E') return;
-      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.altKey || event.ctrlKey || event.metaKey || event.repeat) return;
+      if (event.isComposing || event.defaultPrevented) return;
       const target = event.target;
       if (!(target instanceof HTMLElement)) return;
       if (target.closest('input, textarea, select, [contenteditable="true"]')) return;
@@ -237,24 +251,6 @@ function ProjectWorkspace() {
     initialFiles: initialFilesMemo,
     enabled: status === 'authenticated' && filesQuery.isSuccess,
   });
-
-  const handleDeploy = useCallback(async () => {
-    setDeployError(null);
-    setDeployPhase('building');
-    try {
-      const build = await preview.buildForDeploy();
-      if (!build.ok) {
-        setDeployError(build.error);
-        return;
-      }
-      setDeployPhase('uploading');
-      await deployMutation.mutateAsync({ projectId, files: build.files });
-    } catch (error) {
-      setDeployError(error instanceof Error ? error.message : 'Deploy failed.');
-    } finally {
-      setDeployPhase('idle');
-    }
-  }, [deployMutation, preview, projectId]);
 
   const selectedProvider = selectedModelKey.split(':', 1)[0] || undefined;
   const selectedModel = selectedProvider ? selectedModelKey.slice(selectedProvider.length + 1) : '';
@@ -296,6 +292,28 @@ function ProjectWorkspace() {
   });
   useFaviconBlink(generation.isSending);
 
+  const handleDeploy = useCallback(async () => {
+    // The deploy reads the same file mirror the stream is still writing, so it
+    // must not snapshot a half-written tree (and must not race the agent's own
+    // install/build) while a run is in flight.
+    if (generation.isSending || deployPhase !== 'idle') return;
+    setDeployError(null);
+    setDeployPhase('building');
+    try {
+      const build = await preview.buildForDeploy();
+      if (!build.ok) {
+        setDeployError(build.error);
+        return;
+      }
+      setDeployPhase('uploading');
+      await deployMutation.mutateAsync({ projectId, files: build.files });
+    } catch (error) {
+      setDeployError(error instanceof Error ? error.message : 'Deploy failed.');
+    } finally {
+      setDeployPhase('idle');
+    }
+  }, [deployMutation, deployPhase, generation.isSending, preview, projectId]);
+
   const handleQuickEdit = useCallback(
     (prompt: string, element: SelectedPreviewElement) => {
       if (generation.isSending) return;
@@ -303,10 +321,20 @@ function ProjectWorkspace() {
       // pass it as an explicit override so the request cannot miss it even if
       // the send fires before the next render commits the selection state.
       setSelectedPreviewElement(element);
-      requestAnimationFrame(() => void generation.send(prompt, undefined, element));
+      requestAnimationFrame(() => {
+        void generation.send(prompt, undefined, element).then(() => {
+          // The one-shot override is finished: leaving the element selected
+          // silently attached it to the next, unrelated prompt.
+          setSelectedPreviewElement((current) => (current === element ? null : current));
+        });
+      });
     },
     [generation],
   );
+
+  const focusComposer = useCallback(() => {
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, []);
 
   const smoothCursor = useSmoothCursor(
     generation.activeFile
@@ -453,8 +481,19 @@ function ProjectWorkspace() {
     const last = generation.localMessages[generation.localMessages.length - 1];
     const tail = last ? `${last.id}:${last.content?.length ?? 0}` : null;
     const prev = lastMessageTailRef.current;
-    if (generation.isSending || prev === null || tail !== prev) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const end = messagesEndRef.current;
+    // Measure against the transcript's own scroll box: the sentinel can sit
+    // inside the window while still below the chat pane's fold, which made
+    // every check read "at the bottom" from the top of a long history.
+    const scroller = end?.parentElement ?? null;
+    const atBottom = scroller
+      ? scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 120
+      : true;
+    // The first load always lands on the newest message; afterwards only
+    // follow while the reader is already at the bottom - yanking the viewport
+    // back on every chunk made earlier messages unreadable mid-run.
+    if (prev === null || ((generation.isSending || tail !== prev) && atBottom)) {
+      end?.scrollIntoView({ behavior: 'auto', block: 'end' });
     }
     lastMessageTailRef.current = tail;
     // The streamed answer grows between messages, so it is an explicit trigger:
@@ -488,7 +527,8 @@ function ProjectWorkspace() {
   );
 
   const hasVersions = versionTimelineEntries.length > 0;
-  const canDeploy = hasVersions && preview.status === 'ready';
+  const canDeploy =
+    hasVersions && preview.status === 'ready' && !generation.isSending && deployPhase === 'idle';
   // Never built: no saved files and no version. The preview shows a bare dot
   // grid until the first build lands (files stream into the sandbox mid-run,
   // but the server copy only refetches when it ends).
@@ -506,6 +546,33 @@ function ProjectWorkspace() {
   if (status === 'unauthenticated') {
     router.push('/auth/signin');
     return null;
+  }
+
+  // Only NOT_FOUND navigates away. Every other failure (forbidden, revoked
+  // session, backend error) used to fall through to a fully interactive
+  // "Untitled Project" workspace whose actions could not possibly succeed.
+  if (
+    !projectQuery.data &&
+    projectQuery.isError &&
+    projectQuery.error?.data?.code !== 'NOT_FOUND'
+  ) {
+    const code = projectQuery.error?.data?.code;
+    return (
+      <div className="flex h-screen flex-col items-center justify-center gap-3 bg-background px-6 text-center">
+        <h1 className="text-lg font-bold text-foreground">This project can&apos;t be opened</h1>
+        <p className="text-muted-foreground max-w-md text-sm">
+          {code === 'FORBIDDEN' || code === 'UNAUTHORIZED'
+            ? 'Your account no longer has access to this project. If you were removed from its Realm, ask an owner to invite you again.'
+            : 'Something went wrong while loading it. Try again, or go back to your projects.'}
+        </p>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => void projectQuery.refetch()}>
+            Try again
+          </Button>
+          <Button onClick={() => router.push('/dashboard')}>Back to dashboard</Button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -532,9 +599,18 @@ function ProjectWorkspace() {
               updateProjectMutation.mutate({ id: projectId, name: nextName });
             }
           }}
+          maxLength={100}
           className="max-w-[160px] border-none bg-transparent text-base font-bold tracking-tight text-foreground outline-none focus:ring-0 sm:max-w-[300px]"
           aria-label="Project name"
+          aria-invalid={renameError ? true : undefined}
+          title={renameError ?? undefined}
         />
+
+        {renameError && (
+          <span role="alert" className="hidden text-xs text-error sm:inline">
+            {renameError}
+          </span>
+        )}
 
         <div className="ml-auto flex items-center gap-3">
           <VersionHistoryMenu
@@ -686,7 +762,9 @@ function ProjectWorkspace() {
             onCancelClarifications={generation.cancelClarifications}
             onSubmitClarifications={generation.submitClarifications}
             activeDesignDirections={generation.activeDesignDirections}
-            onDirectionResponse={(response) => generation.send(undefined, response)}
+            onDirectionResponse={(response) =>
+              generation.send(undefined, response).then(() => undefined)
+            }
             onClearDesignDirections={() => generation.setActiveDesignDirections(null)}
             messagesEndRef={messagesEndRef}
             footer={
@@ -706,7 +784,7 @@ function ProjectWorkspace() {
                 onClearSelectedElement={() => setSelectedPreviewElement(null)}
                 clarifyingLocked={generation.clarifyingQuestions.length > 0}
                 onSend={(message, attachments) =>
-                  void generation.send(message, undefined, undefined, attachments)
+                  generation.send(message, undefined, undefined, attachments)
                 }
                 onStop={generation.stop}
               />
@@ -844,7 +922,7 @@ function ProjectWorkspace() {
                 previewCursorTarget={previewCursorTarget}
                 selectedPreviewElement={selectedPreviewElement}
                 onSelectedElementChange={setSelectedPreviewElement}
-                onElementSelected={() => requestAnimationFrame(() => inputRef.current?.focus())}
+                onElementSelected={focusComposer}
                 onQuickEdit={handleQuickEdit}
                 onRetry={filesQuery.isError ? () => void filesQuery.refetch() : preview.retry}
                 isEmpty={isEmptyProject}

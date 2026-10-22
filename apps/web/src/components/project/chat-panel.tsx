@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, type ReactNode, type RefObject } from 'react';
+import { memo, useMemo, useState, type ReactNode, type RefObject } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { cn } from '@app-builder/ui/utils';
@@ -125,19 +125,45 @@ const markdownComponents: Components = {
     />
   ),
   del: ({ node: _node, ...props }) => <del className="text-foreground-muted" {...props} />,
+  // Markdown images are model output. `img-src` allows any https host, so a
+  // rendered <img> turns a prompt-injected URL into a zero-click request that
+  // leaks transcript content to a third party (and COEP blocks the render
+  // anyway). Show a link the reader has to choose instead.
+  img: ({ node: _node, src, alt }) => {
+    if (typeof src !== 'string' || !/^https?:\/\//i.test(src)) return null;
+    return (
+      <a
+        href={src}
+        target="_blank"
+        rel="noopener noreferrer nofollow"
+        className="break-all text-xs text-foreground-muted underline underline-offset-2"
+      >
+        [image: {alt?.trim() || src}]
+      </a>
+    );
+  },
 };
+
+/** Module-level so the unified processor is not rebuilt on every message/render. */
+const REMARK_PLUGINS = [remarkGfm];
 
 function Markdown({ text }: { text: string }) {
   return (
     <div className="min-w-0 space-y-0 [&_p:first-child]:mt-0 [&_pre:first-child]:mt-0">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={markdownComponents}>
         {text}
       </ReactMarkdown>
     </div>
   );
 }
 
-function MessageContent({ content, thinking }: { content: string; thinking?: string | null }) {
+const MessageContent = memo(function MessageContent({
+  content,
+  thinking,
+}: {
+  content: string;
+  thinking?: string | null;
+}) {
   const [showThinking, setShowThinking] = useState(false);
   const parts = useMemo(() => content.split(/(```\w*\n[\s\S]*?```)/g), [content]);
 
@@ -193,7 +219,7 @@ function MessageContent({ content, thinking }: { content: string; thinking?: str
       })}
     </div>
   );
-}
+});
 
 function isAgentStep(item: unknown): item is AgentStep {
   return (
@@ -544,7 +570,7 @@ export function ChatPanel({
                         <div className="space-y-2">
                           {item.options.map((option, optionIndex) => (
                             <button
-                              key={option}
+                              key={`${optionIndex}-${option}`}
                               type="button"
                               onClick={() => onAnswerClarification(option)}
                               className="flex w-full items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-left text-sm text-foreground-secondary transition-colors hover:border-primary/60 hover:bg-background-muted"
@@ -562,7 +588,7 @@ export function ChatPanel({
                               className="flex w-full items-center gap-3 rounded-lg border border-dashed border-border bg-transparent px-3 py-3 text-left text-sm text-foreground-muted transition-colors hover:border-primary/60 hover:text-foreground-secondary"
                             >
                               <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border text-[11px] font-semibold">
-                                4
+                                {item.options.length + 1}
                               </span>
                               Write my own answer
                             </button>
@@ -625,7 +651,7 @@ export function ChatPanel({
                     <div className="mt-4 space-y-3">
                       {clarifyingQuestions.map((item, index) => (
                         <button
-                          key={item.question}
+                          key={`${index}-${item.question}`}
                           type="button"
                           onClick={() => {
                             onClarificationStepChange(() => index);

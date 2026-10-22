@@ -76,7 +76,6 @@ export interface UsePreviewRuntimeResult {
   previewKey: number;
   writeFiles: (files: PreviewFile[]) => Promise<void>;
   replaceFiles: (previous: PreviewFile[], next: PreviewFile[]) => Promise<void>;
-  triggerRefresh: () => void;
   refreshPreview: () => void;
   /** Throttled 120 ms + trailing flush. Used for `file-preview` / `file-progress`. */
   applyFilePreview: (
@@ -99,10 +98,13 @@ export interface UsePreviewRuntimeResult {
   handleRuntimeRequest: (payload: RuntimeRequestPayload) => Promise<void>;
   /**
    * Preview console errors (iframe console.error / uncaught / rejections),
-   * newest last. Sent with each turn and attached to every run result so the
-   * agent can see how the preview is actually failing.
+   * newest last. `peek` is for a prompt that may still be rejected; `consume`
+   * removes only the lines the accepted request delivered; `get` drains the
+   * ring for a run result that is about to forward them.
    */
   getPreviewErrors: () => string[];
+  peekPreviewErrors: () => string[];
+  consumePreviewErrors: (lines: readonly string[]) => void;
   /** Production build of the current project files, ready for `deployments.deploy`. */
   buildForDeploy: () => Promise<DeployBuildResult>;
 }
@@ -140,18 +142,26 @@ export function usePreviewRuntime({
     setFilesRevision((n) => n + 1);
   }, []);
 
-  const previousProjectId = projectIdRef.current;
-  if (projectId !== undefined && previousProjectId !== projectId) {
+  // Reset and seed in effects, not during render: a discarded concurrent
+  // render must never clear the live file mirror.
+  useEffect(() => {
+    if (projectId === undefined || projectIdRef.current === projectId) return;
     projectIdRef.current = projectId;
     filesRef.current.clear();
     pendingWritesRef.current = new Map();
-  }
-  if (filesRef.current.size === 0 && initialFiles.length > 0) {
+    bumpRevision();
+  }, [projectId, bumpRevision]);
+
+  useEffect(() => {
+    // Seed only when nothing has been written yet (the first load); later
+    // fetches must not clobber streamed content.
+    if (filesRef.current.size > 0 || initialFiles.length === 0) return;
     for (const file of initialFiles) {
       if (isSovereignOverlayPath(file.path)) continue;
       filesRef.current.set(file.path, file.content);
     }
-  }
+    bumpRevision();
+  }, [initialFiles, bumpRevision]);
 
   const replaceMap = useCallback(
     (entries: PreviewFile[]) => {
@@ -252,7 +262,9 @@ export function usePreviewRuntime({
       if (changed) bumpRevision();
       // Deletes join the same serialized write chain as preview writes so an
       // in-flight write for the same path cannot resurrect the file.
-      void enqueueOp(() => sandboxRef.current.removeFiles(paths));
+      void enqueueOp(() => sandboxRef.current.removeFiles(paths)).catch((error) => {
+        console.error('[preview] failed to remove files from the sandbox', error);
+      });
     },
     [bumpRevision, enqueueOp],
   );
@@ -427,7 +439,11 @@ export function usePreviewRuntime({
     if (!enabled || initialFiles.length === 0 || !projectId) return;
     if (seededProjectRef.current === projectId) return;
     seededProjectRef.current = projectId;
-    void applyFiles(initialFiles);
+    void applyFiles(initialFiles).catch((error) => {
+      // An FS failure left the mirror claiming files the iframe never loaded;
+      // at least surface it instead of an unhandled rejection.
+      console.error('[preview] failed to seed project files', error);
+    });
   }, [applyFiles, enabled, initialFiles, projectId]);
 
   useEffect(() => {
@@ -453,7 +469,6 @@ export function usePreviewRuntime({
     previewKey,
     writeFiles: enqueueWrite,
     replaceFiles,
-    triggerRefresh: sandbox.triggerRefresh,
     refreshPreview,
     applyFilePreview,
     applyFileOperation,
@@ -464,6 +479,8 @@ export function usePreviewRuntime({
     applyOverlay,
     handleRuntimeRequest,
     getPreviewErrors: sandbox.getPreviewErrors,
+    peekPreviewErrors: sandbox.peekPreviewErrors,
+    consumePreviewErrors: sandbox.consumePreviewErrors,
     buildForDeploy,
   };
 }

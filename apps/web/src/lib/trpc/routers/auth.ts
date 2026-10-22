@@ -6,7 +6,6 @@ import { publicProcedure, protectedProcedure, router } from '../trpc';
 import { checkRateLimit } from '@/server/rate-limit';
 import { ensurePersonalRealm } from '@/server/onboarding';
 import { oauthProvidersEnabled } from '@/lib/auth';
-import { env } from '@/env';
 import { appUrl, isEmailConfigured, sendEmail } from '@/server/email';
 
 export const authRouter = router({
@@ -20,17 +19,17 @@ export const authRouter = router({
   register: publicProcedure
     .input(
       z.object({
-        email: z.string().email(),
-        password: z.string().min(8),
+        email: z.string().email().max(254),
+        password: z.string().min(8).max(200),
         name: z.string().min(1).max(100).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
       const email = input.email.trim().toLowerCase();
-      // Bucket per IP+email so a missing trusted-proxy header (every request
-      // seen as 127.0.0.1) can never collapse registration into ONE global
-      // bucket shared by all users.
-      const identity = env.TRUSTED_PROXY ? `${ctx.ipHash}:${email}` : email;
+      // Bucket per IP+email. `ctx.ipHash` is a constant (127.0.0.1) when no
+      // trusted proxy is configured, so this degrades to per-email keying
+      // rather than one global bucket shared by every user.
+      const identity = `${ctx.ipHash}:${email}`;
       const rate = await checkRateLimit('register', identity);
       if (!rate.allowed) {
         const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
@@ -79,58 +78,6 @@ export const authRouter = router({
     }),
 
   /**
-   * Sign in with email and password.
-   * Verifies credentials and returns the user profile.
-   * (Session tokens are handled client-side via NextAuth signIn.)
-   */
-  login: publicProcedure
-    .input(
-      z.object({
-        email: z.string().email(),
-        password: z.string().min(1),
-      }),
-    )
-    .mutation(async ({ ctx, input }) => {
-      const email = input.email.trim().toLowerCase();
-      // Bucket per IP+email (see register): without a trusted proxy header the
-      // fallback is per-email, never one shared global bucket.
-      const identity = env.TRUSTED_PROXY ? `${ctx.ipHash}:${email}` : email;
-      const rate = await checkRateLimit('signIn', identity);
-      if (!rate.allowed) {
-        const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: `Too many sign-in attempts. Try again in ${retryIn}s.`,
-        });
-      }
-
-      const user = await ctx.db.user.findFirst({
-        where: { email: { equals: email, mode: 'insensitive' } },
-      });
-      if (!user || !user.passwordHash) {
-        throw new TRPCError({
-          code: 'UNAUTHORIZED',
-          message: 'Invalid email or password',
-        });
-      }
-
-      const isValid = await bcrypt.compare(input.password, user.passwordHash);
-      if (!isValid) {
-        throw new TRPCError({
-          code: 'UNAUTHORIZED',
-          message: 'Invalid email or password',
-        });
-      }
-
-      return {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        avatarUrl: user.avatarUrl,
-      };
-    }),
-
-  /**
    * Returns the current session and user for the authenticated caller.
    */
   getSession: protectedProcedure.query(({ ctx }) => ({
@@ -139,15 +86,12 @@ export const authRouter = router({
   })),
 
   requestPasswordReset: publicProcedure
-    .input(z.object({ email: z.string().email() }))
+    .input(z.object({ email: z.string().email().max(254) }))
     .mutation(async ({ ctx, input }) => {
       const email = input.email.trim().toLowerCase();
-      // Bucket per IP+email (see register). Keying on `ctx.ipHash` alone would
-      // put every caller behind one bucket whenever no trusted proxy header is
-      // present (trustedClientIp returns null, which createContext maps to a
-      // constant 127.0.0.1), so a single anonymous attacker could exhaust the
-      // shared limit and block password resets for all users.
-      const identity = env.TRUSTED_PROXY ? `${ctx.ipHash}:${email}` : email;
+      // Bucket per IP+email: `ctx.ipHash` is constant without a trusted proxy,
+      // so this degrades to per-email keying instead of one shared bucket.
+      const identity = `${ctx.ipHash}:${email}`;
       const rate = await checkRateLimit('passwordReset', identity);
       if (!rate.allowed) {
         const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
@@ -215,22 +159,19 @@ export const authRouter = router({
   resetPassword: publicProcedure
     .input(
       z.object({
-        token: z.string().min(16),
-        password: z.string().min(8),
+        token: z.string().min(16).max(256),
+        password: z.string().min(8).max(200),
       }),
     )
     .mutation(async ({ ctx, input }) => {
       const tokenHash = crypto.createHash('sha256').update(input.token).digest('hex');
       // Gate the endpoint before the expensive work: an unauthenticated caller
       // could otherwise burn a cost-12 bcrypt hash on every fabricated token.
-      // There is no email/account input here, so the token itself is the only
-      // meaningful identity. Under a trusted proxy we can additionally separate
-      // callers by IP; without one every request is seen as 127.0.0.1, so the
-      // key must stay a single shared bucket (never per-request, which would
-      // let a caller reset the limiter at will). Using the token hash prefix -
-      // not the raw token - also keeps tokens out of rate-limit keys/logs, and
-      // the 20/15min budget is unchanged in both modes.
-      const identity = env.TRUSTED_PROXY ? `${ctx.ipHash}:${tokenHash.slice(0, 16)}` : 'global';
+      // Key on the client only. Deriving the key from the presented token let
+      // any caller mint a fresh bucket per guess, which made the limit
+      // decorative; 32 random bytes make guessing infeasible anyway, so this
+      // budget exists to bound the endpoint, not to protect the token.
+      const identity = ctx.ipHash;
       const rate = await checkRateLimit('passwordResetSubmit', identity);
       if (!rate.allowed) {
         const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));

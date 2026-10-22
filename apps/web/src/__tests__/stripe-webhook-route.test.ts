@@ -24,9 +24,16 @@ vi.mock('@/env', () => ({
     STRIPE_PRICE_ID_BUSINESS: 'price_business',
   },
 }));
-vi.mock('@/lib/db', () => ({
-  getDb: () => ({ subscription: { findUnique: mocks.findUnique, update: mocks.update } }),
-}));
+vi.mock('@/lib/db', () => {
+  // syncSubscription wraps its read-modify-write in a transaction; the fake
+  // client is handed back as its own tx.
+  const client = {
+    subscription: { findUnique: mocks.findUnique, update: mocks.update },
+    $executeRaw: vi.fn().mockResolvedValue(1),
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(client)),
+  };
+  return { getDb: () => client };
+});
 
 const stripe = getStripe();
 const retrieve = vi.spyOn(stripe.subscriptions, 'retrieve');
@@ -73,7 +80,11 @@ beforeEach(() => {
   retrieve.mockReset();
   listSessions.mockReset().mockReturnValue(listOf([]));
   expireSession.mockReset().mockResolvedValue({} as never);
-  mocks.findUnique.mockResolvedValue({ id: 'row-1', stripeSubscriptionId: null });
+  mocks.findUnique.mockResolvedValue({
+    id: 'row-1',
+    stripeSubscriptionId: null,
+    updatedAt: new Date(0),
+  });
   mocks.update.mockResolvedValue({});
 });
 
@@ -157,7 +168,11 @@ describe('POST /api/stripe/webhook', () => {
 
   it('flags a second live subscription for the same customer', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    mocks.findUnique.mockResolvedValue({ id: 'row-1', stripeSubscriptionId: 'sub_old' });
+    mocks.findUnique.mockResolvedValue({
+      id: 'row-1',
+      stripeSubscriptionId: 'sub_old',
+      updatedAt: new Date(0),
+    });
     retrieve.mockImplementation((async (id: string) =>
       stripeSubscription({ id, status: 'active' })) as never);
     const res = await post(event('customer.subscription.created', { id: 'sub_new' }));
@@ -168,7 +183,11 @@ describe('POST /api/stripe/webhook', () => {
 
   it('does not flag a replacement for an ended subscription', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    mocks.findUnique.mockResolvedValue({ id: 'row-1', stripeSubscriptionId: 'sub_old' });
+    mocks.findUnique.mockResolvedValue({
+      id: 'row-1',
+      stripeSubscriptionId: 'sub_old',
+      updatedAt: new Date(0),
+    });
     retrieve.mockImplementation((async (id: string) =>
       stripeSubscription({ id, status: id === 'sub_old' ? 'canceled' : 'active' })) as never);
     const res = await post(event('customer.subscription.created', { id: 'sub_new' }));
@@ -186,11 +205,34 @@ describe('POST /api/stripe/webhook', () => {
   });
 
   it('does not let a late event for an ended subscription overwrite the current one', async () => {
-    mocks.findUnique.mockResolvedValue({ id: 'row-1', stripeSubscriptionId: 'sub_new' });
+    mocks.findUnique.mockResolvedValue({
+      id: 'row-1',
+      stripeSubscriptionId: 'sub_new',
+      updatedAt: new Date(0),
+    });
     retrieve.mockResolvedValue(stripeSubscription({ id: 'sub_old', status: 'canceled' }) as never);
     const res = await post(event('customer.subscription.deleted', { id: 'sub_old' }));
     expect(res.status).toBe(200);
     expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  it('retries the sync when another webhook commits between the read and the write', async () => {
+    const stale = new Date(0);
+    const fresh = new Date(1_000);
+    mocks.findUnique
+      .mockResolvedValueOnce({ id: 'row-1', stripeSubscriptionId: null, updatedAt: stale })
+      .mockResolvedValueOnce({ id: 'row-1', stripeSubscriptionId: null, updatedAt: fresh })
+      .mockResolvedValueOnce({ id: 'row-1', stripeSubscriptionId: null, updatedAt: fresh })
+      .mockResolvedValueOnce({ id: 'row-1', stripeSubscriptionId: null, updatedAt: fresh });
+    retrieve.mockResolvedValue(stripeSubscription() as never);
+
+    const res = await post(event('customer.subscription.updated', { id: 'sub_new' }));
+
+    expect(res.status).toBe(200);
+    // One write after the retry, not one for each snapshot.
+    expect(mocks.update).toHaveBeenCalledTimes(1);
+    // initial customer resolution + one snapshot per attempt.
+    expect(retrieve).toHaveBeenCalledTimes(3);
   });
 
   it('acknowledges events it does not handle', async () => {

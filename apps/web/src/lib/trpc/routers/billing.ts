@@ -11,12 +11,12 @@ import {
 } from '@/server/plans';
 import {
   arePaidPlansAvailable,
-  expireOpenCheckoutSessions,
   getCustomerSubscriptionState,
   getPlanPrices,
   getStripe,
   isBillingConfigured,
 } from '@/server/stripe';
+import { enforceRateLimit } from '../rate-limit';
 
 const TRIAL_DAYS = 14;
 
@@ -90,6 +90,7 @@ export const billingRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       await requireRealmRole(ctx, input.realmId, 'OWNER');
+      await enforceRateLimit('billing', ctx.user.id, 'Too many billing requests.');
       requireBillingConfigured();
       if (!arePaidPlansAvailable()) {
         throw new TRPCError({
@@ -146,25 +147,38 @@ export const billingRouter = router({
           message: 'This Realm already has a subscription. Change it from the billing portal.',
         });
       }
-      // Only the newest checkout can be paid, so two open tabs cannot both
-      // subscribe.
-      await expireOpenCheckoutSessions(stripe, subscription.stripeCustomerId);
-
       // One trial per Realm: any earlier subscription, even a canceled
       // one, uses it up.
       const trialEligible = !subscription.stripeSubscriptionId && !existing.hasAny;
-      const session = await stripe.checkout.sessions.create({
-        mode: 'subscription',
-        customer: subscription.stripeCustomerId,
-        client_reference_id: input.realmId,
-        line_items: [{ price, quantity: 1 }],
-        subscription_data: {
-          metadata: { realmId: input.realmId },
-          ...(trialEligible && { trial_period_days: TRIAL_DAYS }),
+      const session = await stripe.checkout.sessions.create(
+        {
+          mode: 'subscription',
+          customer: subscription.stripeCustomerId,
+          client_reference_id: input.realmId,
+          line_items: [{ price, quantity: 1 }],
+          subscription_data: {
+            metadata: { realmId: input.realmId },
+            ...(trialEligible && { trial_period_days: TRIAL_DAYS }),
+          },
+          success_url: appUrl('/settings?tab=billing&checkout=success'),
+          cancel_url: appUrl('/settings?tab=billing'),
         },
-        success_url: appUrl('/settings?tab=billing&checkout=success'),
-        cancel_url: appUrl('/settings?tab=billing'),
-      });
+        {
+          // Collapse concurrent creates for the same Realm onto one session:
+          // two tabs (or a double click) could otherwise both pass the
+          // "already subscribed" guard and both be payable. The bucket is
+          // time-based so a retry after the window starts a fresh checkout,
+          // and the plan is part of the key: reusing it across plans makes
+          // Stripe reject the request as an idempotency error.
+          idempotencyKey: `realm-checkout:${input.realmId}:${input.plan}:${Math.floor(Date.now() / 120_000)}`,
+        },
+      );
+      // Deliberately not expiring other open sessions here: doing it while
+      // creating one made two concurrent checkouts expire each other, and a
+      // session replayed from Stripe's idempotency cache could already have
+      // been expired by a checkout for another plan. Stale sessions are expired
+      // once one completes (see the webhook), when a subscription exists and
+      // none of them can be paid any more.
       if (!session.url) {
         throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR' });
       }
@@ -179,6 +193,7 @@ export const billingRouter = router({
     .input(z.object({ realmId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
       await requireRealmRole(ctx, input.realmId, 'OWNER');
+      await enforceRateLimit('billing', ctx.user.id, 'Too many billing requests.');
       requireBillingConfigured();
 
       const subscription = await ctx.db.subscription.findUnique({

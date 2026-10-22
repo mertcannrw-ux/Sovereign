@@ -18,6 +18,9 @@ export function oauthProvidersEnabled(): { google: boolean; github: boolean } {
   };
 }
 
+/** Cost-12 hash used to keep the unknown-user sign-in path as slow as a real check. */
+let dummyPasswordHash: string | undefined;
+
 function buildProviders(): NextAuthOptions['providers'] {
   const enabled = oauthProvidersEnabled();
   const providers: NextAuthOptions['providers'] = [];
@@ -76,8 +79,15 @@ function buildProviders(): NextAuthOptions['providers'] {
           where: { email: { equals: email, mode: 'insensitive' } },
         });
 
-        if (!user) return null;
-        if (!user.passwordHash) return null;
+        // Compare against a dummy hash when the account is missing or has no
+        // password, so "no such user" and "wrong password" take the same time.
+        // Without this, the missing-user branch returns before any bcrypt work
+        // and turns the endpoint into an account-existence oracle.
+        if (!user?.passwordHash) {
+          dummyPasswordHash ??= bcrypt.hashSync('not-a-real-password', 12);
+          await bcrypt.compare(credentials.password, dummyPasswordHash);
+          return null;
+        }
 
         const isValid = await bcrypt.compare(credentials.password, user.passwordHash);
         if (!isValid) return null;

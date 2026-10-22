@@ -37,7 +37,12 @@ export async function POST(
   const db = getDb();
   const trace = await db.generationToolTrace.findFirst({
     where: { requestId },
-    select: { id: true, status: true, run: { select: { userId: true, projectId: true } } },
+    select: {
+      id: true,
+      status: true,
+      expiresAt: true,
+      run: { select: { userId: true, projectId: true } },
+    },
   });
   // All denials are 404: a request id from another run (or another user) must
   // not be distinguishable from one that never existed.
@@ -54,15 +59,23 @@ export async function POST(
     // on): acknowledge so the client stops retrying.
     return Response.json({ ok: true, duplicate: true });
   }
+  if (trace.expiresAt && trace.expiresAt.getTime() < Date.now()) {
+    // The waiter already timed out and told the model so; accepting the bytes
+    // now would overwrite that trace with a result the model never saw.
+    return Response.json({ ok: true, duplicate: true });
+  }
 
-  await db.generationToolTrace.update({
-    where: { id: trace.id },
+  // Conditional on PENDING so a late POST cannot race the waiter's timeout
+  // write: whoever moves the row first wins, the other becomes a duplicate.
+  const claimed = await db.generationToolTrace.updateMany({
+    where: { id: trace.id, status: RUNTIME_TRACE_PENDING },
     data: {
       status: result.status,
       result: result as unknown as Prisma.InputJsonValue,
       durationMs: result.durationMs,
     },
   });
+  if (claimed.count === 0) return Response.json({ ok: true, duplicate: true });
   putRuntimeResult(requestId, result);
   return Response.json({ ok: true });
 }

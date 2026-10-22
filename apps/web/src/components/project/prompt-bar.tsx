@@ -246,7 +246,10 @@ export function PromptBar({
       );
 
     const listbox = container.querySelector<HTMLElement>('[role="listbox"]');
-    (listbox ?? focusable()[0])?.focus();
+    // The Models submenu opens on a search box: focusing the listbox instead
+    // left the box unreachable, and typing there hit the page's `e` shortcut.
+    const searchInput = container.querySelector<HTMLElement>('[data-model-search]');
+    (searchInput ?? listbox ?? focusable()[0])?.focus();
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -423,7 +426,10 @@ export function PromptBar({
   );
 
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
+    // Enter confirms an IME candidate (CJK input); sending there cut the
+    // message off mid-composition.
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+    if (event.key === 'Enter' && !event.shiftKey && !event.repeat) {
       event.preventDefault();
       send(input);
     }
@@ -539,6 +545,7 @@ export function PromptBar({
               <div className="relative mb-2.5">
                 <input
                   type="text"
+                  data-model-search
                   placeholder="Search models..."
                   value={modelSearchQuery}
                   onChange={(e) => setModelSearchQuery(e.target.value)}

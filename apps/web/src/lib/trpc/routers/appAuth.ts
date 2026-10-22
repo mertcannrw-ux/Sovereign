@@ -97,7 +97,7 @@ export const appAuthRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      await requireProjectAccess(ctx, input.projectId);
+      await requireProjectAccess(ctx, input.projectId, 'ADMIN');
 
       const existing = await ctx.db.appAuthConfig.findUnique({
         where: { projectId: input.projectId },
@@ -171,7 +171,7 @@ export const appAuthRouter = router({
    * Create a new user in the project's app (admin only - owner or admin role).
    */
   createUser: protectedProcedure.input(createUserSchema).mutation(async ({ ctx, input }) => {
-    await requireProjectAccess(ctx, input.projectId);
+    await requireProjectAccess(ctx, input.projectId, 'ADMIN');
 
     // Normalize like register/login so the case-sensitive unique constraint
     // ([projectId, email]) can't be bypassed with a case variant.
@@ -223,7 +223,7 @@ export const appAuthRouter = router({
   deleteUser: protectedProcedure
     .input(z.object({ projectId: z.string(), userId: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      await requireProjectAccess(ctx, input.projectId);
+      await requireProjectAccess(ctx, input.projectId, 'ADMIN');
 
       const user = await ctx.db.appUser.findUnique({
         where: { id: input.userId },

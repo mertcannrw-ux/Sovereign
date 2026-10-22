@@ -85,7 +85,10 @@ export const databaseRouter = router({
     .input(
       z.object({
         projectId: z.string(),
-        tableName: z.string().regex(/^[a-z][a-z0-9_]*$/, 'Invalid table name format'),
+        tableName: z
+          .string()
+          .max(63)
+          .regex(/^[a-z][a-z0-9_]*$/, 'Invalid table name format'),
       }),
     )
     .query(async ({ ctx, input }) => {
@@ -178,8 +181,20 @@ export const databaseRouter = router({
         await ctx.db.$executeRawUnsafe(sql);
         return { success: true, tableName: input.tableName };
       } catch (err) {
+        console.error('[database] failed to create table', err);
         const message = err instanceof Error ? err.message : 'Failed to create table';
-        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message });
+        // Surface constraint/identifier problems without echoing the whole
+        // driver error (which can include the schema name and SQL).
+        if (/already exists|duplicate key/i.test(message)) {
+          throw new TRPCError({
+            code: 'CONFLICT',
+            message: 'A table with that name already exists.',
+          });
+        }
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'Failed to create table. Check the column definitions and try again.',
+        });
       }
     }),
 
@@ -190,7 +205,10 @@ export const databaseRouter = router({
     .input(
       z.object({
         projectId: z.string(),
-        tableName: z.string().regex(/^[a-z][a-z0-9_]*$/, 'Invalid table name format'),
+        tableName: z
+          .string()
+          .max(63)
+          .regex(/^[a-z][a-z0-9_]*$/, 'Invalid table name format'),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -257,7 +275,11 @@ export const databaseRouter = router({
             `SELECT * FROM (${statement}) AS _q LIMIT 501`,
           );
         });
-        return { rows: rows.slice(0, 500), rowCount: rows.length };
+        return {
+          rows: rows.slice(0, 500),
+          rowCount: Math.min(rows.length, 500),
+          truncated: rows.length > 500,
+        };
       } catch (err) {
         console.error('Failed to execute query:', err);
         throw new TRPCError({
