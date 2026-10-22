@@ -382,6 +382,11 @@ model Project {
   description          String?
   slug                 String        @unique
   status               ProjectStatus @default(DRAFT)
+  // Manual dashboard order within the Realm. Cards are dragged between
+  // neighbours and get a fractional value so only the moved card is written;
+  // identical values fall back to updatedAt, which keeps pre-drag lists in
+  // their original newest-first order.
+  sortOrder            Float         @default(0) @map("sort_order")
   thumbnailUrl         String?       @map("thumbnail_url")
   modelProvider        String        @default("openai") @map("model_provider")
   modelName            String        @default("") @map("model_name")
@@ -422,6 +427,7 @@ model Project {
 
   @@index([ownerId])
   @@index([realmId])
+  @@index([realmId, sortOrder])
   @@index([status])
   @@index([createdAt])
   @@map("projects")
