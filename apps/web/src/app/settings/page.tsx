@@ -1,8 +1,8 @@
 'use client';
 
 import { useSession } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Suspense, useEffect, useState } from 'react';
 import { CircleUser, CodeXml, CreditCard, Loader2, Users } from 'lucide-react';
 import { AIKey } from '@/components/ui/ai-key-icon';
 import { Card, CardContent } from '@/components/ui/card';
@@ -34,28 +34,45 @@ type SettingsTabId = (typeof SETTINGS_TABS)[number]['id'];
 /* ── Page ────────────────────────────────────────────────── */
 
 export default function SettingsPage() {
+  // `useSearchParams` suspends during prerendering. Without a Suspense
+  // boundary Next fails the build with a CSR-bailout error instead of serving
+  // the shell and hydrating the tab selection.
+  return (
+    <Suspense fallback={<SettingsLoading />}>
+      <SettingsPageContent />
+    </Suspense>
+  );
+}
+
+function SettingsLoading() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background">
+      <Loader2 className="h-8 w-8 animate-spin text-foreground-muted" />
+    </div>
+  );
+}
+
+function SettingsPageContent() {
   const { data: session, status } = useSession();
-  const router = useRouter();
   const { realm } = useCurrentRealm();
   const [activeTab, setActiveTab] = useState<SettingsTabId>('providers');
 
   // Stripe Checkout and the Customer Portal return to `?tab=billing`; connecting
   // a sign-in provider returns to `?tab=profile`; "Realm settings" opens
   // `?tab=members`.
+  // Reads the search params reactively: the sidebar's "Realm settings" link is
+  // a same-route navigation, so the component does not remount and a mount-only
+  // effect never ran again.
+  const searchParams = useSearchParams();
+  const tabParam = searchParams.get('tab');
   useEffect(() => {
-    const tab = new URLSearchParams(window.location.search).get('tab');
-    if (SETTINGS_TABS.some((t) => t.id === tab)) setActiveTab(tab as SettingsTabId);
-  }, []);
+    if (SETTINGS_TABS.some((t) => t.id === tabParam)) setActiveTab(tabParam as SettingsTabId);
+  }, [tabParam]);
 
-  if (status === 'loading')
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-foreground-muted" />
-      </div>
-    );
+  if (status === 'loading') return <SettingsLoading />;
   if (!session) {
-    router.push('/auth/signin');
-    return null;
+    // Redirect from an effect, never during render.
+    return <SignInRedirect />;
   }
 
   const tabButton = (tab: (typeof SETTINGS_TABS)[number]) => (
@@ -110,6 +127,14 @@ export default function SettingsPage() {
       </div>
     </div>
   );
+}
+
+function SignInRedirect() {
+  const router = useRouter();
+  useEffect(() => {
+    router.replace('/auth/signin');
+  }, [router]);
+  return <SettingsLoading />;
 }
 
 function Placeholder({ title, desc }: { title: string; desc: string }) {

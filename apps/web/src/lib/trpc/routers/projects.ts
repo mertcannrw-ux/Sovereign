@@ -13,6 +13,8 @@ import { persistProjectFiles } from '@/lib/project-files';
 import { lockRealm } from '@/server/realm-lock';
 import { assertCanCreateProject } from '@/server/plans';
 import { getPlanPrices } from '@/server/stripe';
+import { deploySubdomain, isDeployConfigured, unpublishBundle } from '@/server/deploy/user-apps';
+import { deleteAssetObjects, listProjectAssetObjectKeys } from '@/server/assets/project-assets';
 
 function generateSlug(name: string): string {
   return (
@@ -389,8 +391,33 @@ export const projectsRouter = router({
  * Delete a project and its app database. The caller has already authorized it.
  */
 export async function deleteProject(db: Context['db'], projectId: string): Promise<void> {
+  const project = await db.project.findUnique({
+    where: { id: projectId },
+    select: { id: true, slug: true, status: true },
+  });
   const appDb = await db.appDatabase.findFirst({ where: { projectId } });
   const schemaName = appDb ? assertTenantSchemaName(appDb.schemaName) : null;
+
+  // Take the live app down first: the deployment row cascades with the project
+  // and is the only handle that can address its R2 prefix, so deleting the row
+  // while the bundle is published leaves an app nobody can un-publish.
+  if (project?.status === 'PUBLISHED' && isDeployConfigured()) {
+    try {
+      await unpublishBundle(deploySubdomain(project));
+    } catch (error) {
+      console.error('[projects] failed to unpublish app before delete', error);
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: "We couldn't take the live app offline. Nothing was deleted. Try again.",
+      });
+    }
+  }
+
+  // Asset rows cascade with the project but the stored objects do not. Read the
+  // keys first and delete the objects only after the row delete commits: a
+  // failed transaction must not destroy the assets of a project that still
+  // exists.
+  const assetKeys = await listProjectAssetObjectKeys([projectId]);
 
   await db.$transaction(async (tx) => {
     // The tenant schema holds the end users' data; deleting the project row
@@ -401,4 +428,6 @@ export async function deleteProject(db: Context['db'], projectId: string): Promi
     }
     await tx.project.delete({ where: { id: projectId } });
   });
+
+  await deleteAssetObjects(assetKeys);
 }

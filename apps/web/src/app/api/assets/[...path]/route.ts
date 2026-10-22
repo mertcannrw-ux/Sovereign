@@ -112,7 +112,12 @@ export async function GET(request: NextRequest, context: { params: Promise<{ pat
       headers: {
         'Content-Type': contentType,
         'X-Content-Type-Options': 'nosniff',
-        'Cache-Control': 'private, max-age=31536000, immutable',
+        // Token URLs are immutable (the object key never changes); a
+        // cookie-authorised response must not outlive access revocation, so it
+        // is cached only briefly.
+        'Cache-Control': hasValidPreviewToken
+          ? 'private, max-age=31536000, immutable'
+          : 'private, max-age=300',
         ...corsHeaders,
       },
     });

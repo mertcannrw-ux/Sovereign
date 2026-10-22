@@ -1,8 +1,8 @@
 import { NextRequest } from 'next/server';
-import { assertPlanAllowsMaxDuration } from '@/lib/agent-limits';
+import { warnIfMaxDurationExceedsHobby } from '@/lib/agent-limits';
 import { getVerifiedSession } from '@/lib/auth';
 import { checkRateLimit } from '@/server/rate-limit';
-import { createAgentStream, validateGeneratePayload, type GenerateBody } from '@/server/agent';
+import { createAgentStream, validateGeneratePayload } from '@/server/agent';
 
 export const dynamic = 'force-dynamic';
 /**
@@ -18,7 +18,12 @@ export const dynamic = 'force-dynamic';
  * longer function timeout.
  */
 export const maxDuration = 800;
-assertPlanAllowsMaxDuration(maxDuration);
+warnIfMaxDurationExceedsHobby(maxDuration);
+
+/** Soft deadline: settle and release the lease before the platform kills the function. */
+const SOFT_DEADLINE_MS = (maxDuration - 60) * 1000;
+/** Nothing legitimate comes close; anything larger is a payload bomb. */
+const MAX_BODY_BYTES = 2 * 1024 * 1024;
 
 /**
  * Authorize a project generation request and stream its progress and result as SSE.
@@ -30,9 +35,14 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  let body: GenerateBody;
+  const contentLength = Number(request.headers.get('content-length') ?? '0');
+  if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) {
+    return Response.json({ error: 'Request body too large' }, { status: 413 });
+  }
+
+  let body: unknown;
   try {
-    body = (await request.json()) as GenerateBody;
+    body = (await request.json()) as unknown;
   } catch {
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
@@ -56,6 +66,7 @@ export async function POST(request: NextRequest) {
     body: validation.data,
     runtimeEnabled: request.headers.get('x-sovereign-runtime') === '1',
     signal: request.signal,
+    softDeadlineMs: SOFT_DEADLINE_MS,
   });
 
   if (!result.ok) {

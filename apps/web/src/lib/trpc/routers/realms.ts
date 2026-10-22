@@ -6,6 +6,8 @@ import { protectedProcedure, router } from '../trpc';
 import { hasRealmRole, requireRealmRole } from '@/server/authz';
 import { lockRealm } from '@/server/realm-lock';
 import { appUrl, sendEmail } from '@/server/email';
+import { checkRateLimit } from '@/server/rate-limit';
+import { cancelStripeSubscriptions, assertStripeCancellationAvailable } from '@/server/stripe';
 import type { RealmRole } from '@app-builder/shared';
 
 // ─── Helpers ──────────────────────────────────────────────
@@ -226,14 +228,40 @@ export const realmsRouter = router({
         });
       }
 
-      await ctx.db.$transaction(async (tx) => {
+      // Capture and preflight the billing handles inside the same transaction
+      // that deletes them, then cancel *after* it commits. Cancelling first
+      // meant a failed transaction left the Realm alive with a permanently
+      // cancelled subscription; Stripe cancellation cannot be undone.
+      const subscriptionIds = await ctx.db.$transaction(async (tx) => {
+        const subscriptions = await tx.subscription.findMany({
+          where: { realmId: input.realmId },
+          select: { stripeSubscriptionId: true },
+        });
+        const ids = subscriptions.map((sub) => sub.stripeSubscriptionId);
+        // Checked before the first delete: afterwards no row is left with which
+        // to retry the cancellation.
+        assertStripeCancellationAvailable(ids);
+
         await tx.auditEvent.deleteMany({ where: { realmId: input.realmId } });
         await tx.usageLedger.deleteMany({ where: { realmId: input.realmId } });
         await tx.subscription.deleteMany({ where: { realmId: input.realmId } });
         await tx.entitlement.deleteMany({ where: { realmId: input.realmId } });
         await tx.backgroundJob.deleteMany({ where: { realmId: input.realmId } });
         await tx.realm.delete({ where: { id: input.realmId } });
+        return ids;
       });
+
+      try {
+        await cancelStripeSubscriptions(subscriptionIds);
+      } catch (error) {
+        // The deletion is already committed: reporting failure would invite a
+        // retry that now answers NOT_FOUND. Leave an actionable, greppable log.
+        console.error(
+          '[realms] CRITICAL: Realm deleted but Stripe cancellation failed',
+          { realmId: input.realmId, subscriptionIds },
+          error,
+        );
+      }
 
       return { success: true as const };
     }),
@@ -257,6 +285,10 @@ export const realmsRouter = router({
       }
 
       return ctx.db.$transaction(async (tx) => {
+        // Same advisory lock as role changes/removal, so a concurrent
+        // updateMemberRole or leave cannot read the target's role before this
+        // commits and then overwrite the new owner's membership row.
+        await lockRealm(tx, input.realmId);
         // Lock the Realm row so two transfers cannot both pass the owner check.
         await tx.$executeRaw`SELECT id FROM realms WHERE id = ${input.realmId} FOR UPDATE`;
         const locked = await tx.realm.findUnique({
@@ -350,6 +382,14 @@ export const realmsRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       await requireSharedRealm(ctx, input.realmId);
+      const rate = await checkRateLimit('invite', ctx.user.id);
+      if (!rate.allowed) {
+        const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 60_000));
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: `Too many invites. Try again in ${retryIn} min.`,
+        });
+      }
       const email = input.email.toLowerCase();
 
       const alreadyMember = await ctx.db.realmMember.findFirst({
@@ -488,7 +528,14 @@ export const realmsRouter = router({
         },
       });
       if (!invite) return { state: 'invalid' as const };
-      if ((ctx.user.email ?? '').toLowerCase() !== invite.email) {
+      // Compare against the account row, not the JWT claim: the token carries
+      // the address it was minted with, which survives an email change for up
+      // to 30 days.
+      const me = await ctx.db.user.findUnique({
+        where: { id: ctx.user.id },
+        select: { email: true },
+      });
+      if ((me?.email ?? '').toLowerCase() !== invite.email) {
         return { state: 'wrong-account' as const, email: invite.email };
       }
       if (invite.status === 'REVOKED') return { state: 'invalid' as const };
@@ -518,7 +565,11 @@ export const realmsRouter = router({
       if (!invite || invite.status === 'REVOKED') {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'This invite link is not valid.' });
       }
-      if ((ctx.user.email ?? '').trim().toLowerCase() !== invite.email) {
+      const me = await ctx.db.user.findUnique({
+        where: { id: ctx.user.id },
+        select: { email: true },
+      });
+      if ((me?.email ?? '').trim().toLowerCase() !== invite.email) {
         throw new TRPCError({
           code: 'FORBIDDEN',
           message: 'This invite was sent to a different email address.',
@@ -568,27 +619,45 @@ export const realmsRouter = router({
 
   /**
    * Remove someone from the Realm. Owner/Admin; the owner cannot be removed.
+   * Members may remove themselves (leave) without an admin.
    * Their projects stay in the Realm, as everyone's work does.
    */
   removeMember: protectedProcedure
     .input(z.object({ realmId: z.string().uuid(), userId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
-      const { role } = await requireRealmRole(ctx, input.realmId, 'ADMIN');
-      const membership = await ctx.db.realmMember.findUnique({
-        where: { realmId_userId: { realmId: input.realmId, userId: input.userId } },
-      });
-      if (!membership) throw new TRPCError({ code: 'NOT_FOUND' });
-      if (!canManageMember(role, membership.role)) {
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: 'The owner cannot be removed. Transfer ownership first.',
-        });
-      }
+      const isSelf = input.userId === ctx.user.id;
 
       await ctx.db.$transaction(async (tx) => {
-        // Same lock as project creation, so a request already in flight from
-        // the person being removed cannot add a project after they are gone.
+        // Serialize with role changes and transfers: the guards below must read
+        // the membership rows this delete actually applies to.
         await lockRealm(tx, input.realmId);
+
+        const caller = await tx.realmMember.findUnique({
+          where: { realmId_userId: { realmId: input.realmId, userId: ctx.user.id } },
+          select: { role: true },
+        });
+        if (!caller) throw new TRPCError({ code: 'NOT_FOUND' });
+        if (!hasRealmRole(caller.role, isSelf ? 'MEMBER' : 'ADMIN')) {
+          throw new TRPCError({ code: 'FORBIDDEN' });
+        }
+
+        const membership = await tx.realmMember.findUnique({
+          where: { realmId_userId: { realmId: input.realmId, userId: input.userId } },
+        });
+        if (!membership) throw new TRPCError({ code: 'NOT_FOUND' });
+        if (!isSelf && !canManageMember(caller.role, membership.role)) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'The owner cannot be removed. Transfer ownership first.',
+          });
+        }
+        if (isSelf && membership.role === 'OWNER') {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'Transfer ownership or delete the Realm instead of leaving it.',
+          });
+        }
+
         await tx.realmMember.delete({
           where: { realmId_userId: { realmId: input.realmId, userId: input.userId } },
         });
@@ -608,7 +677,8 @@ export const realmsRouter = router({
 
   /**
    * Make someone an Admin or a Member. Owner/Admin; the owner's role only
-   * changes through a transfer.
+   * changes through a transfer. Passing your own id with `MEMBER` demotes you
+   * to a member; leaving the Realm is `removeMember`.
    */
   updateMemberRole: protectedProcedure
     .input(
@@ -619,33 +689,49 @@ export const realmsRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const { role } = await requireRealmRole(ctx, input.realmId, 'ADMIN');
-      const membership = await ctx.db.realmMember.findUnique({
-        where: { realmId_userId: { realmId: input.realmId, userId: input.userId } },
-      });
-      if (!membership) throw new TRPCError({ code: 'NOT_FOUND' });
-      if (!canManageMember(role, membership.role)) {
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: "The owner's role changes only by transferring ownership.",
-        });
-      }
+      return ctx.db.$transaction(async (tx) => {
+        // Same lock as removal/transfer, and every check runs *after* it: an
+        // ownership transfer that commits between a pre-lock read and this
+        // write would otherwise be overwritten, leaving the Realm with no
+        // member holding OWNER - and no path back.
+        await lockRealm(tx, input.realmId);
 
-      const updated = await ctx.db.realmMember.update({
-        where: { realmId_userId: { realmId: input.realmId, userId: input.userId } },
-        data: { role: input.role },
-        select: { userId: true, role: true },
+        const caller = await tx.realmMember.findUnique({
+          where: { realmId_userId: { realmId: input.realmId, userId: ctx.user.id } },
+          select: { role: true },
+        });
+        if (!caller) throw new TRPCError({ code: 'NOT_FOUND' });
+        if (!hasRealmRole(caller.role, 'ADMIN')) {
+          throw new TRPCError({ code: 'FORBIDDEN' });
+        }
+
+        const membership = await tx.realmMember.findUnique({
+          where: { realmId_userId: { realmId: input.realmId, userId: input.userId } },
+        });
+        if (!membership) throw new TRPCError({ code: 'NOT_FOUND' });
+        if (!canManageMember(caller.role, membership.role)) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: "The owner's role changes only by transferring ownership.",
+          });
+        }
+
+        const updated = await tx.realmMember.update({
+          where: { realmId_userId: { realmId: input.realmId, userId: input.userId } },
+          data: { role: input.role },
+          select: { userId: true, role: true },
+        });
+        await createAuditEvent(
+          tx,
+          ctx.user.id,
+          ctx.ipHash,
+          input.realmId,
+          'realm.member_role_updated',
+          'realm_member',
+          input.userId,
+          { previousRole: membership.role, newRole: input.role },
+        );
+        return updated;
       });
-      await createAuditEvent(
-        ctx.db,
-        ctx.user.id,
-        ctx.ipHash,
-        input.realmId,
-        'realm.member_role_updated',
-        'realm_member',
-        input.userId,
-        { previousRole: membership.role, newRole: input.role },
-      );
-      return updated;
     }),
 });

@@ -238,8 +238,16 @@ export async function publishBundle(subdomain: string, files: BundleFile[]): Pro
   for (let i = 0; i < assets.length; i += 8) await Promise.all(assets.slice(i, i + 8).map(put));
   for (const html of ordered.filter((f) => f.path.endsWith('.html'))) await put(html);
 
-  const keep = new Set(files.map((f) => prefix + f.path));
-  await deleteKeys((await listKeys(prefix)).filter((key) => !keep.has(key)));
+  // The app is live at this point. Pruning keys the new bundle does not
+  // reference is housekeeping: a failure must not report the deploy as failed
+  // while the files are already public (that hid the app from the accounting
+  // that gates the next publish).
+  try {
+    const keep = new Set(files.map((f) => prefix + f.path));
+    await deleteKeys((await listKeys(prefix)).filter((key) => !keep.has(key)));
+  } catch (error) {
+    console.warn(`[deploy] stale-key prune failed for ${prefix}; leaving old keys`, error);
+  }
 }
 
 /** Take an app offline. The Worker never caches HTML, so it answers 404 right away. */

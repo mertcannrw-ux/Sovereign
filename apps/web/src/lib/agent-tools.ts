@@ -1,6 +1,7 @@
+import { isForbiddenEnvPath } from '@app-builder/codegen';
 import type { ProviderCompleteOptions } from '@app-builder/ai-gateway';
 import type { AIProvider } from '@app-builder/shared';
-import { parseAgentAction, type AgentAction } from '@/lib/agent-protocol';
+import { isSafeAgentPath, parseAgentAction, type AgentAction } from '@/lib/agent-protocol';
 import { RUNTIME_COMMAND_NAMES } from '@/lib/runtime-commands';
 
 export const NATIVE_TOOL_PROVIDERS: ReadonlySet<AIProvider> = new Set([
@@ -192,7 +193,9 @@ export function parseToolCallAction(name: string, rawArguments: string): AgentAc
     throw new Error(`Tool ${name} arguments are not valid JSON`);
   }
   const body = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
-  return parseAgentAction(JSON.stringify({ type: name, ...body }));
+  // Spread first: an arguments object carrying its own `type` must not be able
+  // to dispatch a different action than the tool that was called.
+  return parseAgentAction(JSON.stringify({ ...body, type: name }));
 }
 
 export function actionsFromToolCalls(
@@ -218,13 +221,21 @@ export function getStreamingFileFromToolCalls(
     if (name === 'write_file') {
       const path = extractJsonString(args, 'path');
       const content = extractJsonString(args, 'content');
-      if (path && content !== null) return { type: 'write_file', path, content };
+      if (path && content !== null && isSafeAgentPath(path) && !isForbiddenEnvPath(path)) {
+        return { type: 'write_file', path, content };
+      }
     }
     if (name === 'edit_file') {
       const path = extractJsonString(args, 'path');
       const search = extractJsonString(args, 'search');
       const replace = extractJsonString(args, 'replace');
-      if (path && search !== null && replace !== null) {
+      if (
+        path &&
+        search !== null &&
+        replace !== null &&
+        isSafeAgentPath(path) &&
+        !isForbiddenEnvPath(path)
+      ) {
         return { type: 'edit_file', path, search, replace };
       }
     }

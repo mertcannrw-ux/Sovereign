@@ -42,6 +42,14 @@ export class VersionNotFoundError extends Error {
   }
 }
 
+/** Raised when a write path no longer owns the project's generation lease. */
+export class LeaseLostError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'LeaseLostError';
+  }
+}
+
 /** Reconstruct the complete filesystem by applying snapshots in chronological order. */
 export function reconstructProjectFiles(manifests: unknown[]): RestoredProjectFile[] {
   const files = new Map<string, string>();
@@ -299,11 +307,17 @@ export async function reconstructVersionFiles(
  * Reads and writes run in one transaction under the project's advisory lock so
  * a concurrent generation cannot interleave between the reconstruction and the
  * file rewrite, and so two restores cannot allocate the same version number.
+ *
+ * When `leaseToken` is supplied the transaction re-asserts ownership of the
+ * generation lease before writing: a restore can spend longer than the stale
+ * window replaying history, and a run that claimed the lease in the meantime
+ * must not have its tree rewritten under it.
  */
 export async function restoreVersion(
   db: DbClient,
   projectId: string,
   versionNumber: number,
+  leaseToken?: string,
 ): Promise<{ id: string; versionNumber: number; files: RestoredProjectFile[] }> {
   const lockKey = projectIdToAdvisoryKey(projectId);
 
@@ -313,6 +327,10 @@ export async function restoreVersion(
   return db.$transaction(
     async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(${lockKey})`;
+
+      if (leaseToken && !(await assertGenerationLeaseOwned(tx, projectId, leaseToken))) {
+        throw new LeaseLostError('Lost the project lease before the restore could be committed.');
+      }
 
       const files = await reconstructVersionFiles(tx, projectId, versionNumber);
       const currentFiles = await tx.projectFile.findMany({

@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { createHmac } from 'node:crypto';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { getR2ConfigStatus, signAssetUrl, verifyAssetToken } from './r2';
 import { uploadProjectAsset, deleteProjectAsset, detectImageMediaType } from './project-assets';
@@ -31,15 +32,30 @@ vi.mock('@aws-sdk/client-s3', () => {
 const mockDbCreate = vi.fn();
 const mockDbFindFirst = vi.fn();
 const mockDbDelete = vi.fn();
+const mockDbAggregate = vi.fn();
+const mockDbExecuteRaw = vi.fn();
 
 vi.mock('@/lib/db', () => ({
-  getDb: () => ({
-    projectAsset: {
+  getDb: () => {
+    const projectAsset = {
       create: mockDbCreate,
       findFirst: mockDbFindFirst,
       delete: mockDbDelete,
-    },
-  }),
+      aggregate: mockDbAggregate,
+    };
+    return {
+      projectAsset,
+      $executeRaw: mockDbExecuteRaw,
+      // Mirror Prisma's interactive transaction: run the callback with the same
+      // mocked client so the locked re-check is exercised.
+      $transaction: (
+        run: (tx: {
+          projectAsset: typeof projectAsset;
+          $executeRaw: typeof mockDbExecuteRaw;
+        }) => unknown,
+      ) => run({ projectAsset, $executeRaw: mockDbExecuteRaw }),
+    };
+  },
 }));
 
 describe('getR2ConfigStatus', () => {
@@ -53,6 +69,7 @@ describe('getR2ConfigStatus', () => {
 describe('uploadProjectAsset', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockDbAggregate.mockResolvedValue({ _count: { _all: 0 }, _sum: { byteSize: 0 } });
   });
 
   it('uploads to R2 first then saves DB record', async () => {
@@ -77,6 +94,30 @@ describe('uploadProjectAsset', () => {
     expect(mockS3Send).toHaveBeenCalledTimes(1);
     expect(mockDbCreate).toHaveBeenCalledTimes(1);
     expect(asset.id).toBe('asset-1');
+  });
+
+  it('rejects a concurrent upload that slipped past the pre-upload check', async () => {
+    // Fast-path aggregate is under the cap; the locked re-check sees the burst
+    // that committed in between.
+    mockDbAggregate
+      .mockResolvedValueOnce({ _count: { _all: 0 }, _sum: { byteSize: 0 } })
+      .mockResolvedValueOnce({
+        _count: { _all: 1 },
+        _sum: { byteSize: 2 * 1024 * 1024 * 1024 },
+      });
+
+    await expect(
+      uploadProjectAsset({
+        projectId: 'proj-1',
+        bytes: PNG_BYTES,
+        mediaType: 'image/png',
+      }),
+    ).rejects.toThrow('asset storage limit');
+
+    expect(mockDbExecuteRaw).toHaveBeenCalledTimes(1);
+    expect(mockDbCreate).not.toHaveBeenCalled();
+    // The object uploaded before the transaction was compensated.
+    expect(mockS3Send).toHaveBeenCalledTimes(2);
   });
 
   it('deletes R2 object if DB insert fails', async () => {
@@ -122,6 +163,24 @@ describe('signAssetUrl', () => {
     expect(
       verifyAssetToken('projects/p1/assets/other.png', params.get('expires')!, params.get('sig')!),
     ).toBe(false);
+  });
+
+  it('accepts URLs signed with the pre-deploy payload', () => {
+    // Tokens minted before the domain-separated payload are already persisted
+    // in generated app source and deployed bundles; rejecting them 401s every
+    // image that was signed before the deploy.
+    const expires = Math.floor(Date.now() / 1000) + 3_600;
+    const legacySig = createHmac('sha256', 'a'.repeat(32))
+      .update(`projects/p1/assets/a.png:${expires}`)
+      .digest('hex');
+
+    expect(verifyAssetToken('projects/p1/assets/a.png', String(expires), legacySig)).toBe(true);
+    expect(verifyAssetToken('projects/p1/assets/other.png', String(expires), legacySig)).toBe(
+      false,
+    );
+    expect(verifyAssetToken('projects/p1/assets/a.png', String(expires + 1), legacySig)).toBe(
+      false,
+    );
   });
 });
 

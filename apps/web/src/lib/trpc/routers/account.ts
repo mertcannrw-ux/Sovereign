@@ -15,10 +15,13 @@ import {
   encodeLinkIntent,
 } from '@/server/account-link';
 import { appUrl, isEmailConfigured, sendEmail } from '@/server/email';
-import { checkRateLimit, type RateLimitKey } from '@/server/rate-limit';
+import { trustedClientIp } from '@/server/rate-limit';
 import { assertTenantSchemaName } from '@/server/app-database';
 import { quotePgIdent } from '@/server/db-browser';
 import { deploySubdomain, isDeployConfigured, unpublishBundle } from '@/server/deploy/user-apps';
+import { cancelStripeSubscriptions, assertStripeCancellationAvailable } from '@/server/stripe';
+import { deleteAssetObjects, listProjectAssetObjectKeys } from '@/server/assets/project-assets';
+import { enforceRateLimit } from '../rate-limit';
 
 // ─── Helpers ──────────────────────────────────────────────
 
@@ -28,17 +31,6 @@ const EMAIL_CHANGE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_AVATAR_BYTES = 256 * 1024;
 
 const providerSchema = z.enum(LINKABLE_PROVIDERS);
-
-async function enforceRateLimit(key: RateLimitKey, identity: string, message: string) {
-  const rate = await checkRateLimit(key, identity);
-  if (!rate.allowed) {
-    const retryIn = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 60_000));
-    throw new TRPCError({
-      code: 'TOO_MANY_REQUESTS',
-      message: `${message} Try again in ${retryIn} min.`,
-    });
-  }
-}
 
 async function loadUser(ctx: Context & { user: { id: string } }) {
   const user = await ctx.db.user.findUnique({ where: { id: ctx.user.id } });
@@ -267,9 +259,17 @@ export const accountRouter = router({
     .input(z.object({ token: z.string().min(16) }))
     .mutation(async ({ ctx, input }) => {
       const tokenHash = hashToken(input.token);
+      // With a trusted proxy the caller has a real address, so key on it: that
+      // bounds guessing per client. Without one every request hashes to the same
+      // sentinel, so a client key would put every user in one 20/15-min bucket
+      // and let a handful of junk links block everyone. Fall back to the
+      // presented token there: it cannot collapse, and guessing one would need
+      // 256 random bits, while the deployment is already misconfigured for every
+      // other per-client limit (rate-limit.ts warns about it at boot).
+      const clientAddress = trustedClientIp(ctx.req.headers);
       await enforceRateLimit(
         'emailConfirm',
-        `${ctx.ipHash}:${tokenHash.slice(0, 16)}`,
+        clientAddress ? ctx.ipHash : `${ctx.ipHash}:${tokenHash.slice(0, 16)}`,
         'Too many attempts.',
       );
 
@@ -296,6 +296,20 @@ export const accountRouter = router({
             where: { id: record.userId },
             data: { email: record.email!, pendingEmail: null, emailVerified: true },
           });
+
+          // A reset link minted for the previous address is still redeemable
+          // for an hour after the change, which would let whoever controlled
+          // that address take the account back right after a defensive change.
+          await tx.passwordResetToken.updateMany({
+            where: { userId: record.userId, usedAt: null },
+            data: { usedAt: new Date() },
+          });
+          // No `sessionVersion` bump here: it is one counter for the whole
+          // account, not per device, so it would also revoke the browser that
+          // just confirmed - the page then reports "Email updated" while every
+          // protected call from it fails. Other devices keep working under the
+          // same user; the reset-token revocation above is what closes the
+          // old-address takeover path.
         });
       } catch (error) {
         if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
@@ -451,7 +465,7 @@ export const accountRouter = router({
 
    */
   deleteAccount: protectedProcedure
-    .input(z.object({ email: z.string() }))
+    .input(z.object({ email: z.string().max(254), password: z.string().max(200).optional() }))
     .mutation(async ({ ctx, input }) => {
       const user = await loadUser(ctx);
       if (input.email.trim().toLowerCase() !== user.email.toLowerCase()) {
@@ -460,6 +474,13 @@ export const accountRouter = router({
           message: "That doesn't match your account email.",
         });
       }
+      // The typed email is a speed bump, not a credential. Every other
+      // destructive account action (email change, password change) re-checks
+      // the password, so this one does too - and shares the password-change
+      // budget, because a stolen session must not be able to grind guesses
+      // against an endpoint that cannot be undone.
+      await enforceRateLimit('passwordChange', ctx.user.id, 'Too many attempts.');
+      await assertPassword(user.passwordHash, input.password);
 
       const ownedRealms = await ctx.db.realm.findMany({
         where: { ownerId: user.id },
@@ -516,8 +537,27 @@ export const accountRouter = router({
         }
       }
 
-      await ctx.db.$transaction(
+      // Stored asset objects do not cascade with their rows. Read the keys now
+      // and delete the objects only after the transaction commits: the schema
+      // drops can time out, and a rolled-back deletion must not leave a live
+      // account whose assets are already gone.
+      const assetKeys = await listProjectAssetObjectKeys(projects.map((p) => p.id));
+
+      // Capture and preflight the billing handles inside the deleting
+      // transaction, then cancel after it commits. Cancelling first meant a
+      // failed transaction left the account alive but stripped of its paid
+      // subscription, and a Stripe cancellation cannot be undone.
+      const subscriptionIds = await ctx.db.$transaction(
         async (tx) => {
+          const subscriptions = await tx.subscription.findMany({
+            where: { realmId: { in: realmIds } },
+            select: { stripeSubscriptionId: true },
+          });
+          const ids = subscriptions.map((sub) => sub.stripeSubscriptionId);
+          // Checked before the first delete: afterwards no row is left with
+          // which to retry the cancellation.
+          assertStripeCancellationAvailable(ids);
+
           for (const project of projects) {
             // Tenant schemas hold end users' data and outlive the project row.
             for (const database of project.databases) {
@@ -560,9 +600,24 @@ export const accountRouter = router({
           await tx.realmInvite.deleteMany({ where: { invitedById: user.id } });
 
           await tx.user.delete({ where: { id: user.id } });
+          return ids;
         },
         { timeout: 30_000 },
       );
+
+      try {
+        await cancelStripeSubscriptions(subscriptionIds);
+      } catch (error) {
+        // The account is already gone, so an error here cannot be retried
+        // through this endpoint. Log every handle needed for manual cleanup.
+        console.error(
+          '[account] CRITICAL: account deleted but Stripe cancellation failed',
+          { userId: user.id, subscriptionIds },
+          error,
+        );
+      }
+
+      await deleteAssetObjects(assetKeys);
 
       return { ok: true as const };
     }),

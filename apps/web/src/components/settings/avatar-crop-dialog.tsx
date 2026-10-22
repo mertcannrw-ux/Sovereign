@@ -71,6 +71,12 @@ function CropForm({ file, onSave }: { file: File; onSave: (base64: string) => Pr
     let current = true;
     img.onload = () => {
       if (!current) return;
+      // An SVG without an intrinsic size (or a corrupt header) reports 0 and
+      // turns every crop coordinate into Infinity/NaN.
+      if (!img.naturalWidth || !img.naturalHeight) {
+        setError("That image has no readable dimensions. Try a PNG or JPEG.");
+        return;
+      }
       setImage(img);
       const s = coverScale(img);
       setCrop({
@@ -157,6 +163,10 @@ function CropForm({ file, onSave }: { file: File; onSave: (base64: string) => Pr
       const context = canvas.getContext('2d');
       if (!context) throw new Error("Your browser couldn't crop the image.");
       context.imageSmoothingQuality = 'high';
+      // JPEG has no alpha: without an opaque base every transparent pixel of a
+      // logo PNG turned black.
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, OUTPUT, OUTPUT);
       context.drawImage(
         image,
         -crop.x / scale,

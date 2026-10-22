@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
   getVerifiedSession: vi.fn(),
   requireProjectAccess: vi.fn(),
   traceFindFirst: vi.fn(),
-  traceUpdate: vi.fn(),
+  traceUpdateMany: vi.fn(),
 }));
 
 vi.mock('@/lib/auth', () => ({ getVerifiedSession: mocks.getVerifiedSession }));
@@ -26,7 +26,7 @@ vi.mock('@/lib/db', () => ({
   getDb: () => ({
     generationToolTrace: {
       findFirst: mocks.traceFindFirst,
-      update: mocks.traceUpdate,
+      updateMany: mocks.traceUpdateMany,
     },
   }),
 }));
@@ -38,6 +38,7 @@ const REQUEST_ID = 'req-1';
 const ROW = {
   id: 'trace-1',
   status: RUNTIME_TRACE_PENDING,
+  expiresAt: new Date(Date.now() + 60_000),
   run: { userId: USER_ID, projectId: PROJECT_ID },
 };
 
@@ -55,7 +56,7 @@ describe('POST /api/generate/runtime/[requestId]', () => {
     mocks.getVerifiedSession.mockReset().mockResolvedValue({ user: { id: USER_ID } });
     mocks.requireProjectAccess.mockReset().mockResolvedValue(undefined);
     mocks.traceFindFirst.mockReset().mockResolvedValue(ROW);
-    mocks.traceUpdate.mockReset().mockResolvedValue({});
+    mocks.traceUpdateMany.mockReset().mockResolvedValue({ count: 1 });
     takeRuntimeResult(REQUEST_ID);
   });
 
@@ -69,9 +70,9 @@ describe('POST /api/generate/runtime/[requestId]', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(mocks.traceUpdate).toHaveBeenCalledTimes(1);
-    expect(mocks.traceUpdate.mock.calls[0]![0]).toMatchObject({
-      where: { id: 'trace-1' },
+    expect(mocks.traceUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.traceUpdateMany.mock.calls[0]![0]).toMatchObject({
+      where: { id: 'trace-1', status: RUNTIME_TRACE_PENDING },
       data: { status: 'complete', durationMs: 8_100 },
     });
     expect(takeRuntimeResult(REQUEST_ID)).toMatchObject({
@@ -117,7 +118,7 @@ describe('POST /api/generate/runtime/[requestId]', () => {
     });
 
     expect(response.status).toBe(404);
-    expect(mocks.traceUpdate).not.toHaveBeenCalled();
+    expect(mocks.traceUpdateMany).not.toHaveBeenCalled();
     expect(takeRuntimeResult(REQUEST_ID)).toBeNull();
   });
 
@@ -132,13 +133,13 @@ describe('POST /api/generate/runtime/[requestId]', () => {
     });
 
     expect(response.status).toBe(404);
-    expect(mocks.traceUpdate).not.toHaveBeenCalled();
+    expect(mocks.traceUpdateMany).not.toHaveBeenCalled();
   });
 
   it('rejects malformed payloads and unknown request ids', async () => {
     const badPayload = await postRuntimePayload({ status: 'done' });
     expect(badPayload.status).toBe(400);
-    expect(mocks.traceUpdate).not.toHaveBeenCalled();
+    expect(mocks.traceUpdateMany).not.toHaveBeenCalled();
 
     mocks.traceFindFirst.mockResolvedValue(null);
     const unknownId = await postRuntimePayload({
@@ -162,7 +163,7 @@ describe('POST /api/generate/runtime/[requestId]', () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ ok: true, duplicate: true });
-    expect(mocks.traceUpdate).not.toHaveBeenCalled();
+    expect(mocks.traceUpdateMany).not.toHaveBeenCalled();
   });
 
   it('requires a session', async () => {

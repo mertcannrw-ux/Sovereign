@@ -17,10 +17,10 @@ function isProtectedPath(pathname: string): boolean {
   );
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
 
-  // Page-level gate: UX plus defense in depth. Middleware only sees the JWT (no
+  // Page-level gate: UX plus defense in depth. Proxy only sees the JWT (no
   // database), so token revocation still happens in the API routes, which
   // compare sessionVersion against the database on every call.
   if (isProtectedPath(pathname)) {
@@ -37,6 +37,9 @@ export async function middleware(request: NextRequest) {
   requestHeaders.set('x-nonce', nonce);
 
   const isDev = process.env.NODE_ENV === 'development';
+  // Deployed user apps are served from their own site (DEPLOY_DOMAIN); the
+  // dashboard embeds them and must be allowed to frame that origin.
+  const deployOrigins = process.env.DEPLOY_DOMAIN ? [`https://*.${process.env.DEPLOY_DOMAIN}`] : [];
   const connectSrc = [
     `'self'`,
     'https://*.vercel.app',
@@ -44,6 +47,7 @@ export async function middleware(request: NextRequest) {
     'https://*.stackblitz.com',
     'https://stackblitz.com',
     'https://*.webcontainer-api.io',
+    ...deployOrigins,
     // Dev-only: the Next.js HMR socket. Production app code opens no socket of
     // its own - preview sockets live inside the sandboxed iframe's own origin.
     ...(isDev ? ['ws:', 'wss:'] : []),
@@ -57,7 +61,12 @@ export async function middleware(request: NextRequest) {
     `img-src 'self' data: blob: https:`,
     `font-src 'self'`,
     `connect-src ${connectSrc}`,
-    `frame-src 'self' https://*.e2b.dev https://*.vercel.app https://*.stackblitz.com https://stackblitz.com https://*.webcontainer-api.io`,
+    // Nonces do not apply to workers; without this, a worker created from a
+    // blob URL is blocked in production because it falls back to script-src.
+    `worker-src 'self' blob:`,
+    `child-src 'self' blob:`,
+    `media-src 'self' blob:`,
+    `frame-src 'self' https://*.e2b.dev https://*.vercel.app https://*.stackblitz.com https://stackblitz.com https://*.webcontainer-api.io ${deployOrigins.join(' ')}`.trim(),
     `frame-ancestors 'none'`,
     `base-uri 'self'`,
     `form-action 'self'`,

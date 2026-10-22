@@ -22,6 +22,7 @@ import {
   getStreamingAnswer,
   getStreamingFileAction,
   getStreamingThought,
+  MAX_FILE_BYTES,
   parseAgentAction,
   MAX_IMAGES_PER_RUN,
   type AgentAction,
@@ -99,7 +100,7 @@ async function mapWithConcurrency<T, R>(
 }
 
 export async function createAgentStream(params: AgentExecutionParams): Promise<AgentStreamResult> {
-  const { user, body, runtimeEnabled, signal: externalSignal } = params;
+  const { user, body, runtimeEnabled, signal: externalSignal, softDeadlineMs } = params;
   const projectId = body.projectId?.trim();
   if (!projectId) {
     return { ok: false, status: 400, body: { error: 'Missing generation input' } };
@@ -115,16 +116,6 @@ export async function createAgentStream(params: AgentExecutionParams): Promise<A
       return { ok: false, status: 404, body: { error: 'Project not found' } };
     }
     throw error;
-  }
-
-  const project = await db.project.findUnique({
-    where: { id: projectId },
-    include: {
-      files: { orderBy: { path: 'asc' } },
-    },
-  });
-  if (!project) {
-    return { ok: false, status: 404, body: { error: 'Project not found' } };
   }
 
   const leaseToken = randomUUID();
@@ -151,6 +142,27 @@ export async function createAgentStream(params: AgentExecutionParams): Promise<A
       console.error('generate.lease_release_failed', error);
     }
   };
+
+  // Read the files *after* claiming: the previous run only stops writing once
+  // it releases this lease, so a snapshot taken earlier can miss its last
+  // flushed batch (and then overwrite it).
+  const project = await db.project
+    .findUnique({
+      where: { id: projectId },
+      include: {
+        files: { orderBy: { path: 'asc' } },
+      },
+    })
+    // The lease is already claimed here and nothing below would release it, so
+    // a transient read failure must not strand the project until it goes stale.
+    .catch(async (error: unknown) => {
+      await releaseGenerationLease();
+      throw error;
+    });
+  if (!project) {
+    await releaseGenerationLease();
+    return { ok: false, status: 404, body: { error: 'Project not found' } };
+  }
 
   const failWithLeaseReleased = async (
     errBody: { error: string; retryAfterMs?: number },
@@ -189,6 +201,7 @@ export async function createAgentStream(params: AgentExecutionParams): Promise<A
     const apiKey = decryptApiKey(storedKey.encryptedKey);
     const imageConfig = await db.imageProviderConfig.findFirst({
       where: { realmId: project.realmId, enabled: true },
+      orderBy: { createdAt: 'desc' },
     });
     const r2Status = getR2ConfigStatus();
     const isAssetStorageDurable = r2Status.isConfigured || process.env.NODE_ENV !== 'production';
@@ -210,6 +223,8 @@ export async function createAgentStream(params: AgentExecutionParams): Promise<A
     }
 
     let effectivePrompt = prompt ?? '';
+    // Set when this request commits a design direction; a failed run reverts it.
+    let selectedDirectionSetId: string | null = null;
     if (body.directionResponse) {
       const { action, setId, directionId } = body.directionResponse;
       const directionSet = await db.designDirectionSet.findFirst({
@@ -236,6 +251,10 @@ export async function createAgentStream(params: AgentExecutionParams): Promise<A
           where: { id: setId },
           data: { status: 'selected', selectedDirectionId: directionId },
         });
+        // Remembered so a failed run can put the set back: committing the
+        // selection before the provider is even called means an auth error or
+        // a Stop would otherwise leave it un-selectable forever.
+        selectedDirectionSetId = setId;
 
         effectivePrompt = `[Selected Visual Direction: "${selected.title}"]\nVisual Brief: ${selected.visualBrief}\nPalette: ${JSON.stringify(selected.palette)}\nTypography: ${JSON.stringify(selected.typography)}\nLayout Notes: ${selected.layoutNotes}${selected.previewAsset?.publicUrl ? `\nHero Asset URL: ${selected.previewAsset.publicUrl}` : ''}\n\n${prompt ? `User Prompt: ${prompt}` : 'Apply the selected visual direction and construct the application.'}`;
       } else if (action === 'skip') {
@@ -309,6 +328,20 @@ export async function createAgentStream(params: AgentExecutionParams): Promise<A
         );
       }
     }
+
+    // Settle before the hosting function is killed: a platform kill skips
+    // `finally`, leaving the lease and the RUNNING row behind for the full
+    // stale window. The timer drives the same abort path a Stop uses, so the
+    // run still commits what it wrote and releases the lease.
+    let deadlineExceeded = false;
+    const softDeadlineTimer =
+      softDeadlineMs && softDeadlineMs > 0
+        ? setTimeout(() => {
+            deadlineExceeded = true;
+            abortController.abort();
+          }, softDeadlineMs)
+        : undefined;
+    softDeadlineTimer?.unref?.();
 
     const isExistingProject = project.files.length > 0;
 
@@ -634,10 +667,17 @@ export async function createAgentStream(params: AgentExecutionParams): Promise<A
                 toolCalls: runSteps as never,
               },
             });
-            await db.apiKey.update({
-              where: { id: storedKey.id },
-              data: { lastUsedAt: new Date() },
-            });
+            // Bookkeeping must not turn a committed run into a reported
+            // failure: the transcript and files are already durable at this
+            // point, so a concurrent key rotation only costs a timestamp.
+            try {
+              await db.apiKey.update({
+                where: { id: storedKey.id },
+                data: { lastUsedAt: new Date() },
+              });
+            } catch (error) {
+              console.error('generate.api_key_timestamp_failed', error);
+            }
             await settleGenerationRun('SUCCEEDED', finalUsage);
             send('ready', {
               userMessage: messageRecord(userMessage),
@@ -958,6 +998,12 @@ export async function createAgentStream(params: AgentExecutionParams): Promise<A
                   });
                 });
                 consecutiveProtocolFailures = 0;
+                consecutiveNoProgressIterations += 1;
+                if (consecutiveNoProgressIterations >= maxNoProgressTurns) {
+                  throw new Error(
+                    `The model kept issuing unusable tool calls (${maxNoProgressTurns} turns without a change).`,
+                  );
+                }
                 continue;
               }
 
@@ -1138,6 +1184,11 @@ export async function createAgentStream(params: AgentExecutionParams): Promise<A
                 let remainingBudget = MAX_READ_RESULT_CHARS;
                 const observations = currentAction.files
                   .map((request) => {
+                    if (isForbiddenEnvPath(request.path)) {
+                      const refusal = `${request.path}: refused - environment files are never sent to the model. Use .env.example for variable names.`;
+                      remainingBudget = Math.max(0, remainingBudget - refusal.length - 2);
+                      return refusal;
+                    }
                     const observation = formatReadObservation(
                       request.path,
                       files.get(request.path),
@@ -1167,7 +1218,6 @@ export async function createAgentStream(params: AgentExecutionParams): Promise<A
                   );
                   continue;
                 }
-                handledFilesystemMutation = true;
                 const existed = files.has(currentAction.path);
                 const before = files.get(currentAction.path);
                 const step = provisionalSteps.get(`write_file:${currentAction.path}`) ?? {
@@ -1179,6 +1229,7 @@ export async function createAgentStream(params: AgentExecutionParams): Promise<A
                 };
                 if (!provisionalSteps.has(`write_file:${currentAction.path}`)) emitStep(step);
                 files.set(currentAction.path, currentAction.content);
+                handledFilesystemMutation = true;
                 pendingBatch.push({
                   change: {
                     file: currentAction.path,
@@ -1202,7 +1253,6 @@ export async function createAgentStream(params: AgentExecutionParams): Promise<A
                   );
                   continue;
                 }
-                handledFilesystemMutation = true;
                 const before = files.get(currentAction.path);
                 if (before === undefined) {
                   toolResults.push(
@@ -1220,7 +1270,13 @@ export async function createAgentStream(params: AgentExecutionParams): Promise<A
                 if (!provisionalSteps.has(`edit_file:${currentAction.path}`)) emitStep(step);
                 try {
                   const after = applyAgentEdit(before, currentAction.search, currentAction.replace);
+                  if (Buffer.byteLength(after, 'utf8') > MAX_FILE_BYTES) {
+                    throw new Error(
+                      `the file would grow past the ${MAX_FILE_BYTES}-byte limit; split it or rewrite it with write_file`,
+                    );
+                  }
                   files.set(currentAction.path, after);
+                  handledFilesystemMutation = true;
                   pendingBatch.push({
                     change: { file: currentAction.path, operation: 'update', before, after },
                     step,
@@ -1245,7 +1301,6 @@ export async function createAgentStream(params: AgentExecutionParams): Promise<A
 
               if (currentAction.type === 'delete_file') {
                 handledFilesystemAction = true;
-                handledFilesystemMutation = true;
                 const before = files.get(currentAction.path);
                 if (before === undefined) {
                   toolResults.push(`delete_file result: ${currentAction.path} was already absent.`);
@@ -1260,6 +1315,7 @@ export async function createAgentStream(params: AgentExecutionParams): Promise<A
                 };
                 emitStep(step);
                 files.delete(currentAction.path);
+                handledFilesystemMutation = true;
                 pendingBatch.push({
                   change: { file: currentAction.path, operation: 'delete', before },
                   step,
@@ -1337,10 +1393,15 @@ export async function createAgentStream(params: AgentExecutionParams): Promise<A
                         throw new Error('Image generation is unavailable');
                       }
                       const decryptedKey = decryptApiKey(imageConfig.encryptedKey);
+                      // Retry the provider call only. Uploading the bytes and
+                      // recording the asset are not idempotent, so a transient
+                      // storage/DB failure used to re-run a generation the user
+                      // had already been billed for.
+                      let imgRes: { bytes: Uint8Array; mediaType: string } | undefined;
                       let lastError: unknown;
                       for (let attempt = 1; attempt <= 2; attempt += 1) {
                         try {
-                          const imgRes = await generateImage(
+                          imgRes = await generateImage(
                             imageConfig.model,
                             spec.prompt,
                             decryptedKey,
@@ -1350,40 +1411,42 @@ export async function createAgentStream(params: AgentExecutionParams): Promise<A
                               timeoutMs: 120_000,
                             },
                           );
-                          const asset = await uploadProjectAsset({
-                            projectId,
-                            createdById: user.id,
-                            bytes: imgRes.bytes,
-                            mediaType: imgRes.mediaType,
-                            prompt: spec.prompt,
-                            source: 'generated',
-                          });
-                          await db.imageProviderConfig.update({
-                            where: { id: imageConfig.id },
-                            data: { lastUsedAt: new Date() },
-                          });
-                          const completedAt = new Date();
-                          emitStep({
-                            ...step,
-                            status: 'complete',
-                            completedAt: completedAt.toISOString(),
-                            durationMs: completedAt.getTime() - new Date(step.startedAt).getTime(),
-                          });
-                          send('image-job', {
-                            id: jobId,
-                            status: 'complete',
-                            publicUrl: asset.publicUrl,
-                            assetId: asset.id,
-                            placeholderToken: spec.placeholderToken,
-                          });
-                          return `${spec.semanticUse}: ${asset.publicUrl}`;
+                          break;
                         } catch (error) {
                           lastError = error;
                           if (abortController.signal.aborted) throw error;
                           if (!isRetryableImageError(error)) break;
                         }
                       }
-                      throw lastError;
+                      if (!imgRes) throw lastError;
+
+                      const asset = await uploadProjectAsset({
+                        projectId,
+                        createdById: user.id,
+                        bytes: imgRes.bytes,
+                        mediaType: imgRes.mediaType,
+                        prompt: spec.prompt,
+                        source: 'generated',
+                      });
+                      await db.imageProviderConfig.update({
+                        where: { id: imageConfig.id },
+                        data: { lastUsedAt: new Date() },
+                      });
+                      const completedAt = new Date();
+                      emitStep({
+                        ...step,
+                        status: 'complete',
+                        completedAt: completedAt.toISOString(),
+                        durationMs: completedAt.getTime() - new Date(step.startedAt).getTime(),
+                      });
+                      send('image-job', {
+                        id: jobId,
+                        status: 'complete',
+                        publicUrl: asset.publicUrl,
+                        assetId: asset.id,
+                        placeholderToken: spec.placeholderToken,
+                      });
+                      return `${spec.semanticUse}: ${asset.publicUrl}`;
                     } catch (error) {
                       const completedAt = new Date();
                       const message =
@@ -1659,7 +1722,27 @@ export async function createAgentStream(params: AgentExecutionParams): Promise<A
                 : { operation: 'update', path, content: original },
             );
           }
-          if (stoppedByClient) {
+          // Put an uncommitted selection back only when the run did not commit:
+          // a Stop or a provider failure leaves the user with nothing, so the
+          // directions must be selectable again. A soft-deadline stop is
+          // different - its changes are kept and a follow-up continues the same
+          // direction, so reverting there would strand the user.
+          if (selectedDirectionSetId && !deadlineExceeded) {
+            try {
+              await db.designDirectionSet.update({
+                where: { id: selectedDirectionSetId },
+                data: { status: 'ready', selectedDirectionId: null },
+              });
+            } catch (revertError) {
+              console.error('generate.direction_revert_failed', revertError);
+            }
+          }
+          if (deadlineExceeded) {
+            send('failed', {
+              message:
+                'This run reached its time limit. Completed changes were kept; send a follow-up to continue.',
+            });
+          } else if (stoppedByClient) {
             send('failed', { message: 'Generation stopped. Completed changes were kept.' });
           } else {
             send('failed', {
@@ -1671,8 +1754,12 @@ export async function createAgentStream(params: AgentExecutionParams): Promise<A
                   : undefined,
             });
           }
-          await settleGenerationRun(stoppedByClient ? 'CANCELED' : 'FAILED', finalUsage);
+          await settleGenerationRun(
+            deadlineExceeded ? 'FAILED' : stoppedByClient ? 'CANCELED' : 'FAILED',
+            finalUsage,
+          );
         } finally {
+          clearTimeout(softDeadlineTimer);
           await releaseGenerationLease();
           queue.end();
         }
@@ -1685,6 +1772,7 @@ export async function createAgentStream(params: AgentExecutionParams): Promise<A
           yield chunk;
         }
       } finally {
+        clearTimeout(softDeadlineTimer);
         abortController.abort();
         await releaseGenerationLease();
       }

@@ -8,7 +8,17 @@ describe('safeCallbackUrl', () => {
   });
 
   it('falls back for anything that could leave the site', () => {
-    for (const raw of ['https://evil.test', '//evil.test', '/\\evil.test', 'javascript:x', '']) {
+    for (const raw of [
+      'https://evil.test',
+      '//evil.test',
+      '/\\evil.test',
+      'javascript:x',
+      '',
+      // Pass the raw-string checks but normalize to a protocol-relative path.
+      '/.//evil.test',
+      '/%2e//evil.test',
+      '/foo/..//evil.test',
+    ]) {
       expect(safeCallbackUrl(raw)).toBe('/dashboard');
     }
     expect(safeCallbackUrl(null)).toBe('/dashboard');

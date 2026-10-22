@@ -1,5 +1,6 @@
 import {
   AXE_RUNTIME_SCRIPT,
+  buildOverlayScripts,
   instrumentPreviewHtml,
   VISUAL_EDITOR_SCRIPT,
 } from '@/lib/visual-editor';
@@ -291,11 +292,15 @@ export function getPreviewOverlayFiles(): PreviewSourceFile[] {
   // fallback server; public/ copy is Vite's static asset root (`/__sovereign_*`).
   // `__sovereign_axe.js` is a real collector file, not axe-core min (too large
   // to vendor here). It reports `skipped` unless window.axe is present.
+  const hostOrigin = typeof window === 'undefined' ? '' : window.location.origin;
+  const scripts = hostOrigin
+    ? buildOverlayScripts(hostOrigin)
+    : { editor: VISUAL_EDITOR_SCRIPT, axe: AXE_RUNTIME_SCRIPT };
   return [
-    { path: '__sovereign_edit.js', content: VISUAL_EDITOR_SCRIPT },
-    { path: 'public/__sovereign_edit.js', content: VISUAL_EDITOR_SCRIPT },
-    { path: '__sovereign_axe.js', content: AXE_RUNTIME_SCRIPT },
-    { path: 'public/__sovereign_axe.js', content: AXE_RUNTIME_SCRIPT },
+    { path: '__sovereign_edit.js', content: scripts.editor },
+    { path: 'public/__sovereign_edit.js', content: scripts.editor },
+    { path: '__sovereign_axe.js', content: scripts.axe },
+    { path: 'public/__sovereign_axe.js', content: scripts.axe },
     { path: '.sovereign-preview.mjs', content: STATIC_PREVIEW_SERVER_SOURCE },
   ];
 }

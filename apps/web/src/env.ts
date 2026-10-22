@@ -97,10 +97,6 @@ export const env = createEnv({
     GITHUB_APP_ID: z.string().optional(),
     GITHUB_APP_PRIVATE_KEY: z.string().optional(),
     GITHUB_APP_WEBHOOK_SECRET: z.string().optional(),
-
-    // Observability
-    SENTRY_DSN: z.string().url().optional(),
-    OTEL_EXPORTER_OTLP_ENDPOINT: z.string().url().optional(),
   },
 
   /**
@@ -166,9 +162,6 @@ export const env = createEnv({
     GITHUB_APP_ID: process.env.GITHUB_APP_ID,
     GITHUB_APP_PRIVATE_KEY: process.env.GITHUB_APP_PRIVATE_KEY,
     GITHUB_APP_WEBHOOK_SECRET: process.env.GITHUB_APP_WEBHOOK_SECRET,
-
-    SENTRY_DSN: process.env.SENTRY_DSN,
-    OTEL_EXPORTER_OTLP_ENDPOINT: process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
 
     NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
     NEXT_PUBLIC_POSTHOG_KEY: process.env.NEXT_PUBLIC_POSTHOG_KEY,

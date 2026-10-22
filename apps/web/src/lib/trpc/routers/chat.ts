@@ -22,6 +22,7 @@ import {
   tryClaimGenerationLease,
   clearGenerationLease,
   assertGenerationLeaseOwned,
+  LeaseLostError,
   VersionNotFoundError,
 } from '@/lib/versioning';
 import type { VersionDiffEntry } from '@/lib/versioning';
@@ -108,7 +109,7 @@ export const chatRouter = router({
     .input(
       z.object({
         projectId: z.string(),
-        message: z.string().min(1),
+        message: z.string().min(1).max(32_000),
         modelProvider: z.string().optional(),
         modelName: z.string().optional(),
       }),
@@ -139,7 +140,7 @@ export const chatRouter = router({
 
         const project = await ctx.db.project.findUnique({
           where: { id: input.projectId },
-          select: { id: true, modelProvider: true, modelName: true },
+          select: { id: true, modelProvider: true, modelName: true, realmId: true },
         });
 
         if (!project) {
@@ -153,9 +154,12 @@ export const chatRouter = router({
         const provider = input.modelProvider ?? project.modelProvider;
         const model = input.modelName ?? project.modelName;
 
-        // ── 3. Fetch & decrypt the user's API key ───────────────────
+        // ── 3. Fetch & decrypt the Realm's API key ──────────────────
+        // Scoped by Realm like the agent runner: a userId-only lookup picked an
+        // arbitrary key when the caller holds keys in several Realms.
         const storedKey = await ctx.db.apiKey.findFirst({
-          where: { userId: ctx.user.id, provider },
+          where: { realmId: project.realmId, provider },
+          orderBy: { createdAt: 'desc' },
         });
 
         if (!storedKey) {
@@ -234,6 +238,15 @@ export const chatRouter = router({
             error instanceof ProviderError &&
             error.status === 0 &&
             error.code === 'loopback_blocked';
+          // The client only ever sees a generic line for non-loopback failures,
+          // so without this the cause of a failed legacy run was invisible.
+          if (!blockedLoopback) {
+            console.error('[chat.send] provider request failed', {
+              provider,
+              model,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
           throw new TRPCError(
             blockedLoopback
               ? {
@@ -475,7 +488,7 @@ export const chatRouter = router({
     .input(
       z.object({
         projectId: z.string(),
-        versionNumber: z.number().int().positive(),
+        versionNumber: z.number().int().positive().max(2_147_483_647),
       }),
     )
     .query(async ({ ctx, input }) => {
@@ -499,7 +512,7 @@ export const chatRouter = router({
     .input(
       z.object({
         projectId: z.string(),
-        versionNumber: z.number().int().positive(),
+        versionNumber: z.number().int().positive().max(2_147_483_647),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -516,10 +529,13 @@ export const chatRouter = router({
       }
 
       try {
-        return await restoreVersion(ctx.db, input.projectId, input.versionNumber);
+        return await restoreVersion(ctx.db, input.projectId, input.versionNumber, leaseToken);
       } catch (error) {
         if (error instanceof VersionNotFoundError) {
           throw new TRPCError({ code: 'NOT_FOUND', message: error.message });
+        }
+        if (error instanceof LeaseLostError) {
+          throw new TRPCError({ code: 'CONFLICT', message: error.message });
         }
         throw error;
       } finally {

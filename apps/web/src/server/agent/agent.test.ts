@@ -105,11 +105,14 @@ describe('agent service validation', () => {
       message: 'Build a counter app',
       modelProvider: 'anthropic',
       modelName: 'claude-3-5-sonnet-20241022',
+      reasoningEffort: 'high',
     };
     const res = validateGeneratePayload(valid);
     expect(res.ok).toBe(true);
     if (res.ok) {
       expect(res.data.projectId).toBe('p1');
+      // The runner reads this; a re-built payload must not drop it.
+      expect(res.data.reasoningEffort).toBe('high');
     }
   });
 });

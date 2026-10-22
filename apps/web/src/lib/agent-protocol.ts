@@ -91,7 +91,7 @@ export interface AgentToolResult {
 
 const MAX_PATH_LENGTH = 240;
 const MAX_READ_FILES = 12;
-const MAX_FILE_BYTES = 1024 * 1024;
+export const MAX_FILE_BYTES = 1024 * 1024;
 /** Longest accepted `run` command string; the allowlist entries are far shorter. */
 const MAX_RUN_COMMAND_LENGTH = 120;
 export const MAX_IMAGES_PER_ACTION = 8;
@@ -143,7 +143,9 @@ function extractJsonObjects(raw: string): unknown[] {
       continue;
     }
     if (character === '"') {
-      inString = true;
+      // Quotes in surrounding prose must not toggle string state: `say "hi`
+      // would otherwise swallow every later action object.
+      if (start >= 0) inString = true;
       continue;
     }
     if (character === '{') {
@@ -154,6 +156,8 @@ function extractJsonObjects(raw: string): unknown[] {
     if (character !== '}' || depth === 0) continue;
     depth -= 1;
     if (depth !== 0 || start < 0) continue;
+    inString = false;
+    escaped = false;
     try {
       values.push(JSON.parse(raw.slice(start, index + 1)) as unknown);
     } catch {
@@ -165,8 +169,12 @@ function extractJsonObjects(raw: string): unknown[] {
 }
 
 function extractJson(raw: string): unknown {
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
-  const candidate = (fenced ?? raw).trim();
+  const trimmed = raw.trim();
+  // Only a fence that wraps the *entire* completion can be stripped. Matching
+  // anywhere let a `write_file` whose content embeds a fence (a README, a doc
+  // page) be parsed as the inner block instead of the action.
+  const wholeFence = /^```(?:json)?\s*([\s\S]*?)```$/i.exec(trimmed)?.[1];
+  const candidate = (wholeFence ?? trimmed).trim();
   try {
     return JSON.parse(candidate);
   } catch {
@@ -617,7 +625,10 @@ export function applyAgentEdit(content: string, search: string, replace: string)
   const occurrences = content.split(search).length - 1;
   if (occurrences !== 1)
     throw new Error(`Edit search must match exactly once; found ${occurrences}`);
-  return content.replace(search, replace);
+  // Function replacement: a string replacement expands `$$`, `$&`, `` $` ``
+  // and `$'`, so model-authored code containing those sequences (template
+  // literals, prices) landed silently altered.
+  return content.replace(search, () => replace);
 }
 
 /**

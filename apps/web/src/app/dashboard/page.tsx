@@ -401,7 +401,11 @@ function DashboardContent() {
     },
   );
 
-  const createMutation = trpc.projects.create.useMutation();
+  const createMutation = trpc.projects.create.useMutation({
+    // Without this a quick return to the dashboard shows the cached first page
+    // (staleTime 30 s) with the project that was just created missing.
+    onSuccess: () => utils.projects.list.invalidate(),
+  });
   const renameMutation = trpc.projects.update.useMutation({
     onSuccess: () => utils.projects.list.invalidate(),
   });
@@ -622,6 +626,7 @@ function DashboardContent() {
                 placeholder="Search projects"
                 aria-label="Search projects"
                 value={search}
+                maxLength={100}
                 onChange={(e) => setSearch(e.target.value)}
                 className="h-9 pl-9"
               />
@@ -704,7 +709,20 @@ function DashboardContent() {
         </section>
 
         <section className="mt-12">
-          {!realm || projectsQuery.isLoading ? (
+          {realmsError && !realm ? (
+            <div className="rounded-card border border-dashed border-border py-16 text-center">
+              <h2 className="text-sm font-medium">Could not load your Realm</h2>
+              <p className="mt-1 text-sm text-foreground-muted">
+                Your projects are still there. Retry to load them.
+              </p>
+              <button
+                onClick={() => void refetchRealms()}
+                className="mt-4 rounded-control bg-primary px-4 py-2 text-primary-foreground hover:bg-primary-hover"
+              >
+                Try again
+              </button>
+            </div>
+          ) : !realm || projectsQuery.isLoading ? (
             <div className="flex justify-center py-20">
               <div className="h-7 w-7 animate-spin rounded-full border-2 border-border border-t-primary" />
             </div>
