@@ -183,6 +183,10 @@ describe("a non-member cannot reach a Realm's projects or keys", () => {
     await expectCode(outsider.projects.list({ realmId: REALM }), 'NOT_FOUND');
     await expectCode(outsider.projects.getById({ id: PROJECT }), 'NOT_FOUND');
     await expectCode(outsider.projects.files({ id: PROJECT }), 'NOT_FOUND');
+    await expectCode(
+      outsider.projects.reorder({ realmId: REALM, id: PROJECT, previousId: null, nextId: null }),
+      'NOT_FOUND',
+    );
     await expectCode(outsider.apiKeys.list({ realmId: REALM }), 'NOT_FOUND');
     await expectCode(outsider.realms.listMembers({ realmId: REALM }), 'NOT_FOUND');
     expect(outsider.db.project.findMany).not.toHaveBeenCalled();

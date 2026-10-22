@@ -16,6 +16,7 @@ import { getPlanPrices } from '@/server/stripe';
 import { deploySubdomain, isDeployConfigured, unpublishBundle } from '@/server/deploy/user-apps';
 import { countInFlightDeployments } from '@/server/deploy/in-flight';
 import { deleteAssetObjects, listProjectAssetObjectKeys } from '@/server/assets/project-assets';
+import { PROJECT_SORT_GAP, moveProject } from '@/lib/project-order';
 
 function generateSlug(name: string): string {
   return (
@@ -30,8 +31,9 @@ function generateSlug(name: string): string {
 /** A generation run counts as in flight for this long: the generate route's 800s cap, rounded up. */
 const ACTIVE_RUN_WINDOW_MS = 15 * 60 * 1000;
 
-type ProjectRow = { id: string; updatedAt: Date };
+type ProjectRow = { id: string; updatedAt: Date; sortOrder: number };
 interface ProjectListCursor {
+  s: number;
   u: string;
   id: string;
 }
@@ -51,29 +53,31 @@ function parseProjectListCursor(raw: string | undefined): ProjectListCursor | nu
   }
   if (typeof parsed !== 'object' || parsed === null) return null;
   const candidate = parsed as Record<string, unknown>;
+  if (typeof candidate.s !== 'number' || !Number.isFinite(candidate.s)) return null;
   if (typeof candidate.u !== 'string' || typeof candidate.id !== 'string') return null;
   if (Number.isNaN(Date.parse(candidate.u))) return null;
-  return { u: candidate.u, id: candidate.id };
+  return { s: candidate.s, u: candidate.u, id: candidate.id };
 }
 
 /**
- * Exclusive compound cursor predicate: (updatedAt, id) strictly below the
- * cursor in the query's (updatedAt DESC, id DESC) sort order. The id
- * tiebreaker keeps the walk stable when rows share updatedAt (bulk-created
- * projects) and prevents pagination skips.
+ * Exclusive compound cursor predicate: (sortOrder, updatedAt, id) strictly
+ * after the cursor in the list's (sortOrder ASC, updatedAt DESC, id DESC)
+ * order. Manual sortOrder is primary; updatedAt and id keep the walk stable
+ * while every project still shares the default position 0.
  */
 function belowCursor(cursor: ProjectListCursor) {
   return {
     OR: [
-      { updatedAt: { lt: new Date(cursor.u) } },
-      { updatedAt: new Date(cursor.u), id: { lt: cursor.id } },
+      { sortOrder: { gt: cursor.s } },
+      { sortOrder: cursor.s, updatedAt: { lt: new Date(cursor.u) } },
+      { sortOrder: cursor.s, updatedAt: new Date(cursor.u), id: { lt: cursor.id } },
     ],
   };
 }
 
 /**
- * Split a (updatedAt DESC, id DESC) page fetched with limit+1 rows into the
- * page plus the compound cursor for the next older page.
+ * Split a (sortOrder ASC, updatedAt DESC, id DESC) page fetched with limit+1
+ * rows into the page plus the compound cursor for the next page.
  */
 function paginateProjects<T extends ProjectRow>(rows: T[], limit: number) {
   const hasMore = rows.length === limit + 1;
@@ -83,7 +87,11 @@ function paginateProjects<T extends ProjectRow>(rows: T[], limit: number) {
     projects: page,
     nextCursor:
       hasMore && last
-        ? JSON.stringify({ u: new Date(last.updatedAt).toISOString(), id: last.id })
+        ? JSON.stringify({
+            s: Number(last.sortOrder),
+            u: new Date(last.updatedAt).toISOString(),
+            id: last.id,
+          })
         : null,
   };
 }
@@ -180,7 +188,8 @@ async function createProjectRecord(
 
 export const projectsRouter = router({
   /**
-   * The projects of one Realm, newest first. Members only.
+   * The projects of one Realm, in its manual dashboard order (newest-first
+   * until the first drag). Members only.
    */
   list: protectedProcedure
     .input(
@@ -196,7 +205,7 @@ export const projectsRouter = router({
     .query(async ({ ctx, input }) => {
       await requireRealmRole(ctx, input.realmId, 'MEMBER');
       // A Realm's project count is unbounded, so the query is paged. Cursor =
-      // JSON {u, id} of the last item of the previous page, per
+      // JSON {s, u, id} of the last item of the previous page, per
       // paginateProjects below.
       const cursor = parseProjectListCursor(input.cursor);
       const take = input.limit + 1;
@@ -218,7 +227,7 @@ export const projectsRouter = router({
               : []),
           ],
         },
-        orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+        orderBy: [{ sortOrder: 'asc' }, { updatedAt: 'desc' }, { id: 'desc' }],
         take,
         include: {
           owner: {
@@ -248,6 +257,72 @@ export const projectsRouter = router({
         },
       });
       return paginateProjects(projects, input.limit);
+    }),
+
+  /**
+   * Move one project between two neighbours in the Realm's dashboard order.
+   * Any member may rearrange the shared list. The read-compute-write runs
+   * under the Realm's advisory lock so concurrent drags cannot interleave.
+   * Positions are written with raw SQL so a card's `updatedAt` (its
+   * "Edited ..." label) stays untouched.
+   */
+  reorder: protectedProcedure
+    .input(
+      z.object({
+        realmId: z.string().uuid(),
+        id: z.string(),
+        previousId: z.string().nullable(),
+        nextId: z.string().nullable(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      await requireRealmRole(ctx, input.realmId, 'MEMBER');
+      if (input.previousId === input.id || input.nextId === input.id) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'A project cannot be its own neighbour.',
+        });
+      }
+
+      // Serialized like create/delete: under read-committed, two simultaneous
+      // drags compute from the same snapshot — both can land on the same
+      // fractional position (the updatedAt tiebreak silently picks a winner)
+      // and the rewrite-everything path would revert an interleaved
+      // single-row move.
+      return ctx.db.$transaction(async (tx) => {
+        await lockRealm(tx, input.realmId);
+
+        const ordered = await tx.project.findMany({
+          where: { realmId: input.realmId },
+          select: { id: true, sortOrder: true, updatedAt: true },
+          orderBy: [{ sortOrder: 'asc' }, { updatedAt: 'desc' }, { id: 'desc' }],
+        });
+        if (!ordered.some((project) => project.id === input.id)) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Project not found' });
+        }
+
+        const { order, position } = moveProject(ordered, input.id, input.previousId, input.nextId);
+
+        if (position === null) {
+          // The neighbours have no float gap left: rewrite the whole order
+          // with even spacing in one statement, leaving updatedAt untouched.
+          const values = order.map(
+            (project, index) =>
+              Prisma.sql`(${project.id}, ${(index + 1) * PROJECT_SORT_GAP}::double precision)`,
+          );
+          await tx.$executeRaw`
+            UPDATE "projects" AS p
+            SET "sort_order" = v.position
+            FROM (VALUES ${Prisma.join(values)}) AS v(id, position)
+            WHERE p."id" = v.id AND p."realm_id" = ${input.realmId}
+          `;
+          return { success: true as const };
+        }
+
+        await tx
+          .$executeRaw`UPDATE "projects" SET "sort_order" = ${position} WHERE "id" = ${input.id} AND "realm_id" = ${input.realmId}`;
+        return { success: true as const };
+      });
     }),
 
   /**

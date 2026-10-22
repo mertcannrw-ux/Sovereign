@@ -9,15 +9,34 @@ import {
   useSyncExternalStore,
   type FormEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  arrayMove,
+  rectSortingStrategy,
+  sortableKeyboardCoordinates,
+  useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import {
   ArrowUp,
   Copy,
   ExternalLink,
   FolderKanban,
+  GripVertical,
   MoreHorizontal,
   Pencil,
   Search,
@@ -58,6 +77,12 @@ const PROMPT_LIMIT = 500;
 
 // How often the list refetches while a project is building.
 const BUILD_POLL_MS = 5000;
+
+// Stable option objects keep dnd-kit from tearing down and reattaching its
+// sensor listeners on every dashboard render (the prompt placeholder animates
+// continuously while empty).
+const POINTER_SENSOR_OPTIONS = { activationConstraint: { distance: 6 } };
+const KEYBOARD_SENSOR_OPTIONS = { coordinateGetter: sortableKeyboardCoordinates };
 
 // Shortcuts to catalog templates; each inserts that template's brief.
 const promptStarters = [
@@ -326,7 +351,15 @@ function BuildMark({ isGenerating }: { isGenerating: boolean }) {
  * The card's link is a stretched overlay rather than a wrapper, so the menu
  * and live-site link stay valid, independently focusable siblings.
  */
-function ProjectCard({ project, actions }: { project: ProjectSummary; actions: ProjectActions }) {
+function ProjectCard({
+  project,
+  actions,
+  dragHandle,
+}: {
+  project: ProjectSummary;
+  actions: ProjectActions;
+  dragHandle?: ReactNode;
+}) {
   return (
     <div className="group relative min-w-0 overflow-hidden rounded-card border border-border bg-background-subtle transition-colors hover:border-border-strong has-[a[data-card-link]:focus-visible]:ring-2 has-[a[data-card-link]:focus-visible]:ring-border-focus/40">
       <Link
@@ -339,6 +372,7 @@ function ProjectCard({ project, actions }: { project: ProjectSummary; actions: P
         project={project}
         className="aspect-[16/10] w-full border-b border-border"
       />
+      {dragHandle}
       <ProjectMenu
         project={project}
         actions={actions}
@@ -368,6 +402,59 @@ function ProjectCard({ project, actions }: { project: ProjectSummary; actions: P
   );
 }
 
+/**
+ * Grid item for a project card. The handle is the only drag activator so
+ * clicking the card still opens it, and dnd-kit's keyboard sensor lets the
+ * list be reordered without a pointer.
+ */
+function SortableProjectCard({
+  project,
+  actions,
+  reorderable,
+}: {
+  project: ProjectSummary;
+  actions: ProjectActions;
+  reorderable: boolean;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: project.id, disabled: !reorderable });
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={cn('min-w-0', isDragging && 'relative z-30')}
+    >
+      <ProjectCard
+        project={project}
+        actions={actions}
+        dragHandle={
+          reorderable ? (
+            <button
+              ref={setActivatorNodeRef}
+              type="button"
+              {...attributes}
+              {...listeners}
+              aria-label={`Reorder ${project.name}`}
+              title="Drag to reorder"
+              className="absolute left-2.5 top-2.5 z-10 grid h-7 w-7 cursor-grab touch-none place-items-center rounded-control-inner border border-border bg-background-subtle text-foreground-secondary opacity-100 transition-opacity hover:bg-background-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus/40 active:cursor-grabbing [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:focus-visible:opacity-100 [@media(hover:hover)]:group-hover:opacity-100"
+            >
+              <GripVertical className="h-4 w-4" />
+            </button>
+          ) : null
+        }
+      />
+    </div>
+  );
+}
+
 /** Render the authenticated project list, the prompt-first project creator, and card actions. */
 function DashboardContent() {
   const { data: session, status: authStatus } = useSession();
@@ -384,8 +471,9 @@ function DashboardContent() {
   }, [search]);
 
   const { realm, error: realmsError, refetch: refetchRealms } = useCurrentRealm();
-  // The current Realm's projects, paginated newest-first and filtered
-  // server-side so search matches every project, not just the pages loaded.
+  // The current Realm's projects in its manual dashboard order (newest-first
+  // until the first drag), paginated and filtered server-side so search
+  // matches every project, not just the pages loaded.
   const projectsQuery = trpc.projects.list.useInfiniteQuery(
     { realmId: realm?.id ?? '', search: debouncedSearch || undefined },
     {
@@ -415,6 +503,12 @@ function DashboardContent() {
   const deleteMutation = trpc.projects.delete.useMutation({
     onSuccess: () => utils.projects.list.invalidate(),
   });
+  const reorderMutation = trpc.projects.reorder.useMutation();
+  const sensors = useSensors(
+    // A short threshold lets the handle accept a click without starting a drag.
+    useSensor(PointerSensor, POINTER_SENSOR_OPTIONS),
+    useSensor(KeyboardSensor, KEYBOARD_SENSOR_OPTIONS),
+  );
 
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const [prompt, setPrompt] = useState('');
@@ -477,7 +571,7 @@ function DashboardContent() {
     return () => window.removeEventListener('open-new-project', handleOpenNew);
   }, []);
 
-  const projects = useMemo<ProjectSummary[]>(() => {
+  const serverProjects = useMemo<ProjectSummary[]>(() => {
     const raw = projectsQuery.data?.pages.flatMap((page) => page.projects) ?? [];
     return raw.map((p) => {
       const live = p.deployments[0];
@@ -499,10 +593,145 @@ function DashboardContent() {
       };
     });
   }, [projectsQuery.data]);
+
+  // Optimistic order after a drop. It applies only to the query it was based
+  // on, until that query returns newer data (or the move fails), so there is
+  // no effect writing state back from the query.
+  const [reordered, setReordered] = useState<{
+    data: unknown;
+    realmId: string;
+    search: string;
+    projects: ProjectSummary[];
+  } | null>(null);
+  const [pendingReorderCount, setPendingReorderCount] = useState(0);
+  const [, bumpDragRender] = useState(0);
+  const pendingReorders = useRef(0);
+  const dragging = useRef(false);
+  const dragOrder = useRef<ProjectSummary[] | null>(null);
+
+  // While a drag is active its item list must not change underneath dnd-kit:
+  // a background build poll or invalidation would otherwise reorder the grid
+  // mid-gesture and can drive dnd-kit's layout effect into a render loop.
+  // `dragOrder` freezes the last rendered order for the gesture.
+  const optimistic = useMemo(() => {
+    if (
+      !reordered ||
+      reordered.realmId !== (realm?.id ?? '') ||
+      reordered.search !== debouncedSearch ||
+      !(pendingReorderCount > 0 || reordered.data === projectsQuery.data)
+    ) {
+      return null;
+    }
+    // Keep the dragged order, but reconcile membership with whatever the
+    // query now holds: a project deleted while a drop is in flight must not
+    // linger as a ghost card. Pages fetched while a drop is pending are not
+    // merged in either — a card appearing at a guessed position flashes
+    // worse than arriving when the settled refetch returns.
+    const known = new Set(
+      projectsQuery.data?.pages.flatMap((page) => page.projects).map((row) => row.id) ?? [],
+    );
+    return reordered.projects.filter((project) => known.has(project.id));
+  }, [reordered, realm?.id, debouncedSearch, pendingReorderCount, projectsQuery.data]);
+  const projects =
+    dragging.current && dragOrder.current ? dragOrder.current : (optimistic ?? serverProjects);
+
+  function settleReorder(failed: boolean) {
+    pendingReorders.current = Math.max(0, pendingReorders.current - 1);
+    setPendingReorderCount(pendingReorders.current);
+    if (pendingReorders.current > 0) return;
+    // A failed drop must not leave its optimistic position behind; keep a
+    // successful one until the invalidated refetch returns the same order.
+    if (failed) setReordered(null);
+    void utils.projects.list.invalidate();
+  }
+
   // Fetch the next (older) page into the accumulated list.
   const loadMoreProjects = () => {
     void projectsQuery.fetchNextPage();
   };
+
+  /**
+   * Persist a drop relative to its new neighbours. A search hides the handles
+   * because a filtered list cannot express where the card belongs among the
+   * projects the search left out.
+   */
+  const reorderable = !search.trim() && !debouncedSearch && projects.length > 1;
+  const projectIds = useMemo(() => projects.map((project) => project.id), [projects]);
+  const accessibility = useMemo(() => {
+    const names = new Map(projects.map((project) => [project.id, project.name]));
+    const nameOf = (id: string | number) => names.get(String(id)) ?? 'project';
+    return {
+      screenReaderInstructions: {
+        draggable:
+          'To reorder a project, press Space or Enter to pick it up, use the arrow keys to move it, then press Space or Enter to drop it. Press Escape to cancel.',
+      },
+      announcements: {
+        onDragStart: ({ active }: { active: { id: string | number } }) =>
+          `Picked up ${nameOf(active.id)}.`,
+        onDragOver: ({
+          active,
+          over,
+        }: {
+          active: { id: string | number };
+          over: { id: string | number } | null;
+        }) =>
+          over && active.id !== over.id
+            ? `${nameOf(active.id)} is over ${nameOf(over.id)}.`
+            : undefined,
+        onDragEnd: ({
+          active,
+          over,
+        }: {
+          active: { id: string | number };
+          over: { id: string | number } | null;
+        }) =>
+          over
+            ? `Dropped ${nameOf(active.id)} over ${nameOf(over.id)}.`
+            : `Dropped ${nameOf(active.id)}.`,
+        onDragCancel: ({ active }: { active: { id: string | number } }) =>
+          `Reordering ${nameOf(active.id)} cancelled.`,
+      },
+    };
+  }, [projects]);
+
+  function handleReorderEnd(event: DragEndEvent) {
+    dragging.current = false;
+    dragOrder.current = null;
+    const { active, over } = event;
+    if (!over || active.id === over.id || !realm) {
+      // Unfreeze the grid even when the drop changed nothing.
+      bumpDragRender((version) => version + 1);
+      return;
+    }
+    const oldIndex = projects.findIndex((project) => project.id === String(active.id));
+    const newIndex = projects.findIndex((project) => project.id === String(over.id));
+    if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) {
+      bumpDragRender((version) => version + 1);
+      return;
+    }
+
+    const next = arrayMove(projects, oldIndex, newIndex);
+    setReordered({
+      data: projectsQuery.data,
+      realmId: realm.id,
+      search: debouncedSearch,
+      projects: next,
+    });
+    pendingReorders.current += 1;
+    setPendingReorderCount(pendingReorders.current);
+    reorderMutation.mutate(
+      {
+        realmId: realm.id,
+        id: String(active.id),
+        previousId: next[newIndex - 1]?.id ?? null,
+        nextId: next[newIndex + 1]?.id ?? null,
+      },
+      {
+        onSuccess: () => settleReorder(false),
+        onError: () => settleReorder(true),
+      },
+    );
+  }
 
   const actions: ProjectActions = {
     onRename: (project) => {
@@ -741,16 +970,40 @@ function DashboardContent() {
               )}
             </div>
           ) : (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.18, ease: 'easeOut' }}
-              className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              accessibility={accessibility}
+              onDragStart={() => {
+                dragging.current = true;
+                dragOrder.current = projects;
+              }}
+              onDragCancel={() => {
+                dragging.current = false;
+                dragOrder.current = null;
+                // Re-read the query in case it refetched under the gesture.
+                bumpDragRender((version) => version + 1);
+              }}
+              onDragEnd={handleReorderEnd}
             >
-              {projects.map((project) => (
-                <ProjectCard key={project.id} project={project} actions={actions} />
-              ))}
-            </motion.div>
+              <SortableContext items={projectIds} strategy={rectSortingStrategy}>
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.18, ease: 'easeOut' }}
+                  className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
+                >
+                  {projects.map((project) => (
+                    <SortableProjectCard
+                      key={project.id}
+                      project={project}
+                      actions={actions}
+                      reorderable={reorderable}
+                    />
+                  ))}
+                </motion.div>
+              </SortableContext>
+            </DndContext>
           )}
           {projectsQuery.hasNextPage && !projectsQuery.isFetchingNextPage && (
             <div className="mt-8 flex justify-center">
