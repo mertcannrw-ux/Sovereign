@@ -4,7 +4,8 @@ import { getProvider, SsrfError, validateOutboundUrl } from '@app-builder/ai-gat
 import { protectedProcedure, router } from '../trpc';
 import { encryptApiKey, decryptApiKey, maskApiKey } from '@/lib/crypto';
 import { checkRateLimit } from '@/server/rate-limit';
-import { hasRealmRole, requireRealmRole } from '@/server/authz';
+import { canManageKey, keyAddedByOtherError, requireRealmRole } from '@/server/authz';
+import type { RealmRole } from '@app-builder/shared';
 
 const providerSchema = z.enum([
   'openai',
@@ -23,6 +24,7 @@ const OLLAMA_KEY = 'ollama';
 
 interface StoredKeyRecord {
   id: string;
+  userId: string;
   provider: string;
   encryptedKey: string;
   label: string | null;
@@ -47,16 +49,30 @@ async function fetchModels(key: StoredKeyRecord, signal?: AbortSignal): Promise<
   const plaintext = decryptApiKey(key.encryptedKey);
   return getProvider(provider).listModels(plaintext, key.baseUrl ?? undefined, signal);
 }
+/** Who added a key, as everyone in the Realm sees it. */
+const addedBySelect = { user: { select: { name: true, email: true } } } as const;
+
+type KeyWithAdder = StoredKeyRecord & { user: { name: string | null; email: string } };
+
+function adderName(key: KeyWithAdder): string {
+  return key.user.name ?? key.user.email;
+}
+
 /**
- * A Realm's key as a member may see it: which provider is connected, never the
- * key. Owner/Admin also get the masked form (first and last three characters)
- * so they can tell keys apart. The plaintext never leaves the server.
+ * A Realm's key as the viewer may see it. Everyone sees which provider is
+ * connected and who added it, so they know whose account their builds use.
+ * Whoever may change the key (see `canManageKey`) also gets the masked form
+ * and endpoint. The plaintext never leaves the server.
  */
-export function presentKey(key: StoredKeyRecord, canManage: boolean) {
+export function presentKey(key: KeyWithAdder, viewer: { role: RealmRole; userId: string }) {
+  const canManage = canManageKey(viewer.role, key.userId, viewer.userId);
   return {
     id: key.id,
     provider: parseProvider(key.provider),
     label: key.label,
+    addedBy: adderName(key),
+    addedByYou: key.userId === viewer.userId,
+    canManage,
     baseUrl: canManage ? key.baseUrl : null,
     createdAt: key.createdAt,
     lastUsedAt: key.lastUsedAt,
@@ -67,19 +83,21 @@ export function presentKey(key: StoredKeyRecord, canManage: boolean) {
 const realmInput = z.object({ realmId: z.string().uuid() });
 
 export const apiKeysRouter = router({
-  /** The Realm's provider keys. Any member; see `presentKey` for what each role sees. */
+  /** The Realm's provider keys. Any member; see `presentKey` for what each viewer sees. */
   list: protectedProcedure.input(realmInput).query(async ({ ctx, input }) => {
     const { role } = await requireRealmRole(ctx, input.realmId, 'MEMBER');
-    const keys: StoredKeyRecord[] = await ctx.db.apiKey.findMany({
+    const keys: KeyWithAdder[] = await ctx.db.apiKey.findMany({
       where: { realmId: input.realmId },
       orderBy: { createdAt: 'desc' },
+      include: addedBySelect,
     });
-    return keys.map((key) => presentKey(key, hasRealmRole(role, 'ADMIN')));
+    return keys.map((key) => presentKey(key, { role, userId: ctx.user.id }));
   }),
 
   /**
    * Verify the key against the provider, then store it in the Realm. A key
-   * that fails verification is never saved. Owner/Admin.
+   * that fails verification is never saved. Owner/Admin may add a key; only
+   * whoever added the one in its place, or the Owner, may replace it.
    */
   save: protectedProcedure
     .input(
@@ -93,7 +111,20 @@ export const apiKeysRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      await requireRealmRole(ctx, input.realmId, 'ADMIN');
+      const { role } = await requireRealmRole(ctx, input.realmId, 'ADMIN');
+
+      // The unique key is (realmId, provider, label): matching on provider alone
+      // silently overwrote (and renamed) a key stored under another label.
+      // Checked before anything is verified, so a refusal costs no rate limit.
+      const label = input.label ?? null;
+      const existing = await ctx.db.apiKey.findFirst({
+        where: { realmId: input.realmId, provider: input.provider, label },
+        include: addedBySelect,
+      });
+      if (existing && !canManageKey(role, existing.userId, ctx.user.id)) {
+        throw keyAddedByOtherError(adderName(existing));
+      }
+
       const plaintextKey = input.provider === 'ollama' ? OLLAMA_KEY : input.key?.trim();
       if (!plaintextKey) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'Paste an API key to connect.' });
@@ -143,13 +174,7 @@ export const apiKeysRouter = router({
       }
 
       const encryptedKey = encryptApiKey(plaintextKey);
-      // The unique key is (realmId, provider, label): matching on provider alone
-      // silently overwrote (and renamed) a key stored under another label.
-      const label = input.label ?? null;
-      const existing = await ctx.db.apiKey.findFirst({
-        where: { realmId: input.realmId, provider: input.provider, label },
-      });
-
+      // Whoever saves the key now provides it, so it is recorded as theirs.
       const key = existing
         ? await ctx.db.apiKey.update({
             where: { id: existing.id },
@@ -176,16 +201,20 @@ export const apiKeysRouter = router({
       };
     }),
 
-  /** Remove a key from the Realm. Owner/Admin. */
+  /** Remove a key from the Realm. Whoever added it, or the Owner. */
   delete: protectedProcedure
     .input(z.object({ realmId: z.string().uuid(), id: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      await requireRealmRole(ctx, input.realmId, 'ADMIN');
+      const { role } = await requireRealmRole(ctx, input.realmId, 'ADMIN');
       const key = await ctx.db.apiKey.findFirst({
         where: { id: input.id, realmId: input.realmId },
+        include: addedBySelect,
       });
       if (!key) {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'API key not found' });
+      }
+      if (!canManageKey(role, key.userId, ctx.user.id)) {
+        throw keyAddedByOtherError(adderName(key));
       }
       await ctx.db.apiKey.delete({ where: { id: input.id } });
       return { success: true as const };

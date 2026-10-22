@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
-import { hasRealmRole, requireProjectAccess, requireRealmRole } from './authz';
+import { canManageKey, hasRealmRole, requireProjectAccess, requireRealmRole } from './authz';
 import type { AuthzContext } from './authz';
 
 /**
@@ -117,5 +117,14 @@ describe('requireProjectAccess', () => {
     await expect(requireProjectAccess(admin, 'proj-1', 'ADMIN')).resolves.toMatchObject({
       role: 'ADMIN',
     });
+  });
+});
+
+describe('canManageKey', () => {
+  it('lets the owner manage any key, an admin only their own, and a member none', () => {
+    expect(canManageKey('OWNER', 'someone-else', 'me')).toBe(true);
+    expect(canManageKey('ADMIN', 'me', 'me')).toBe(true);
+    expect(canManageKey('ADMIN', 'someone-else', 'me')).toBe(false);
+    expect(canManageKey('MEMBER', 'me', 'me')).toBe(false);
   });
 });

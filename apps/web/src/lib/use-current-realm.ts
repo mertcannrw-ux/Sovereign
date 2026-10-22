@@ -38,6 +38,22 @@ export function selectRealm(realmId: string) {
   window.dispatchEvent(new Event(CHANGE_EVENT));
 }
 
+export type RealmSettingsSection = 'general' | 'members' | 'providers' | 'billing';
+
+const OPEN_SETTINGS_EVENT = 'sovereign:open-realm-settings';
+
+/** Open the current Realm's settings menu at `section`, from anywhere in the app. */
+export function openRealmSettings(section: RealmSettingsSection = 'general') {
+  window.dispatchEvent(new CustomEvent(OPEN_SETTINGS_EVENT, { detail: section }));
+}
+
+/** Calls `onOpen` whenever something asks for the Realm settings menu. */
+export function onOpenRealmSettings(onOpen: (section: RealmSettingsSection) => void) {
+  const listener = (event: Event) => onOpen((event as CustomEvent<RealmSettingsSection>).detail);
+  window.addEventListener(OPEN_SETTINGS_EVENT, listener);
+  return () => window.removeEventListener(OPEN_SETTINGS_EVENT, listener);
+}
+
 /** Owner and Admin manage a Realm's members, keys, brief, memory and rules. */
 export function canManageRealm(role: RealmRole | undefined): boolean {
   return role === 'OWNER' || role === 'ADMIN';

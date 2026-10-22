@@ -19,16 +19,21 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { CreateRealmDialog } from '@/components/realms/create-realm-dialog';
+import { LeaveRealmDialog } from '@/components/realms/leave-realm-dialog';
 import { initials } from '@/lib/initials';
 import { trpc } from '@/lib/trpc/client';
 import { canManageRealm, useCurrentRealm } from '@/lib/use-current-realm';
+import type { RealmRole } from '@app-builder/shared';
 
 type InviteRole = 'MEMBER' | 'ADMIN';
 
 const ROLE_LABELS = { OWNER: 'Owner', ADMIN: 'Admin', MEMBER: 'Member' } as const;
 
-/** Settings > Members: who builds in the current Realm, and who is invited. */
-export function MembersPanel() {
+/**
+ * Realm settings > Members: who builds in the current Realm, and who is
+ * invited. `onLeft` runs after you leave the Realm from your own row.
+ */
+export function MembersPanel({ onLeft }: { onLeft?: () => void }) {
   const { realm } = useCurrentRealm();
   const [creating, setCreating] = useState(false);
 
@@ -50,15 +55,28 @@ export function MembersPanel() {
           <CreateRealmDialog open={creating} onOpenChange={setCreating} />
         </div>
       ) : (
-        <SharedRealmMembers realmId={realm.id} canManage={canManageRealm(realm.role)} />
+        <SharedRealmMembers realm={realm} onLeft={onLeft} />
       )}
     </section>
   );
 }
 
-function SharedRealmMembers({ realmId, canManage }: { realmId: string; canManage: boolean }) {
+function SharedRealmMembers({
+  realm,
+  onLeft,
+}: {
+  realm: { id: string; name: string; role: RealmRole };
+  onLeft?: () => void;
+}) {
+  const realmId = realm.id;
+  const canManage = canManageRealm(realm.role);
   const utils = trpc.useUtils();
+  const { data: me } = trpc.auth.getSession.useQuery();
+  const [leaving, setLeaving] = useState(false);
   const membersQuery = trpc.realms.listMembers.useQuery({ realmId });
+  const others = (membersQuery.data ?? [])
+    .filter((member) => member.userId !== me?.user.id)
+    .map((member) => ({ userId: member.userId, name: member.user.name ?? member.user.email }));
   const invitesQuery = trpc.realms.listInvites.useQuery({ realmId }, { enabled: canManage });
   const refresh = () =>
     Promise.all([
@@ -83,6 +101,8 @@ function SharedRealmMembers({ realmId, canManage }: { realmId: string; canManage
             realmId={realmId}
             member={member}
             canManage={canManage}
+            isSelf={member.userId === me?.user.id}
+            onLeave={() => setLeaving(true)}
             onChanged={refresh}
           />
         ))}
@@ -98,6 +118,16 @@ function SharedRealmMembers({ realmId, canManage }: { realmId: string; canManage
           </ul>
         </div>
       )}
+
+      <LeaveRealmDialog
+        open={leaving}
+        onOpenChange={setLeaving}
+        realmId={realmId}
+        realmName={realm.name}
+        isOwner={realm.role === 'OWNER'}
+        others={others}
+        onLeft={() => onLeft?.()}
+      />
     </div>
   );
 }
@@ -225,6 +255,8 @@ function MemberRow({
   realmId,
   member,
   canManage,
+  isSelf,
+  onLeave,
   onChanged,
 }: {
   realmId: string;
@@ -234,13 +266,16 @@ function MemberRow({
     user: { name: string | null; email: string; avatarUrl: string | null };
   };
   canManage: boolean;
+  /** Your own row: never editable here, and it offers Leave instead. */
+  isSelf: boolean;
+  onLeave: () => void;
   onChanged: () => unknown;
 }) {
   const roleMutation = trpc.realms.updateMemberRole.useMutation({ onSuccess: onChanged });
   const removeMutation = trpc.realms.removeMember.useMutation({ onSuccess: onChanged });
   const [error, setError] = useState<string | null>(null);
   const name = member.user.name ?? member.user.email;
-  const editable = canManage && member.role !== 'OWNER';
+  const editable = canManage && member.role !== 'OWNER' && !isSelf;
 
   return (
     <li className="flex items-center gap-3 px-5 py-3.5">
@@ -251,7 +286,10 @@ function MemberRow({
         </AvatarFallback>
       </Avatar>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-foreground">{name}</p>
+        <p className="truncate text-sm font-medium text-foreground">
+          {name}
+          {isSelf && <span className="font-normal text-foreground-muted"> (you)</span>}
+        </p>
         <p className="truncate text-xs text-foreground-muted">{member.user.email}</p>
         {error && (
           <p role="alert" className="mt-1 text-xs text-error">
@@ -284,33 +322,37 @@ function MemberRow({
           {ROLE_LABELS[member.role]}
         </span>
       )}
-      {editable ? (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon-sm" aria-label={`More for ${name}`}>
-              <Ellipsis className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem
-              className="text-error focus:text-error"
-              onSelect={() => {
-                if (!window.confirm(`Remove ${name} from this Realm?`)) return;
-                setError(null);
-                removeMutation.mutate(
-                  { realmId, userId: member.userId },
-                  { onError: (err) => setError(err.message) },
-                );
-              }}
-            >
-              Remove
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      ) : (
-        // Keeps every row's columns aligned.
-        <span aria-hidden className="w-8" />
-      )}
+      {/* One fixed-width action column keeps every row aligned. */}
+      <div className="flex w-16 shrink-0 justify-end">
+        {isSelf ? (
+          <Button variant="secondary" size="sm" className="h-8 px-3" onClick={onLeave}>
+            Leave
+          </Button>
+        ) : editable ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon-sm" aria-label={`More for ${name}`}>
+                <Ellipsis className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                className="text-error focus:text-error"
+                onSelect={() => {
+                  if (!window.confirm(`Remove ${name} from this Realm?`)) return;
+                  setError(null);
+                  removeMutation.mutate(
+                    { realmId, userId: member.userId },
+                    { onError: (err) => setError(err.message) },
+                  );
+                }}
+              >
+                Remove
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
+      </div>
     </li>
   );
 }

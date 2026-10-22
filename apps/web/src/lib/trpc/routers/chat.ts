@@ -165,7 +165,7 @@ export const chatRouter = router({
         if (!storedKey) {
           throw new TRPCError({
             code: 'NOT_FOUND',
-            message: `No API key configured for ${provider}. Please add one in Settings.`,
+            message: `No API key configured for ${provider}. An owner or admin can add one in Realm settings.`,
           });
         }
 

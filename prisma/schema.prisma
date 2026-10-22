@@ -37,7 +37,10 @@ enum RealmType {
 enum RealmInviteStatus {
   PENDING
   ACCEPTED
+  /// Withdrawn by an Owner/Admin.
   REVOKED
+  /// Turned down by the invited person.
+  DECLINED
 
   @@map("realm_invite_status")
 }

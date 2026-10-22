@@ -192,7 +192,7 @@ export async function createAgentStream(params: AgentExecutionParams): Promise<A
     if (!storedKey) {
       return await failWithLeaseReleased(
         {
-          error: `This Realm has no ${providerName} key. An owner or admin can add one in Settings.`,
+          error: `This Realm has no ${providerName} key. An owner or admin can add one in Realm settings.`,
         },
         400,
       );

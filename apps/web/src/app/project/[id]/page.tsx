@@ -12,7 +12,7 @@ import type { VersionTimelineEntry } from '@/components/version-timeline';
 import { VersionHistoryMenu } from '@/components/project/version-history-menu';
 import { skipToken } from '@tanstack/react-query';
 import { trpc } from '@/lib/trpc/client';
-import { canManageRealm, selectRealm } from '@/lib/use-current-realm';
+import { canManageRealm, openRealmSettings, selectRealm } from '@/lib/use-current-realm';
 import { getPreviewCursorTarget, useSmoothCursor } from '@/lib/use-smooth-cursor';
 import { sortPreviewFiles, usePreviewRuntime } from '@/lib/use-preview-runtime';
 import { useGeneration } from '@/lib/use-generation';
@@ -739,7 +739,7 @@ function ProjectWorkspace() {
             hasApiKey={apiKeysQuery.data ? apiKeysQuery.data.length > 0 : undefined}
             onAddApiKey={
               canManageRealm(projectQuery.data?.role)
-                ? () => router.push('/settings?tab=providers')
+                ? () => openRealmSettings('providers')
                 : undefined
             }
             generationPhase={generation.generationPhase}

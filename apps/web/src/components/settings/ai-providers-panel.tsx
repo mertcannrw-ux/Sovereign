@@ -18,6 +18,7 @@ import { PROVIDER_LOGOS, ProviderMark } from '@/components/landing/provider-logo
 import { cn } from '@app-builder/ui/utils';
 import { trpc } from '@/lib/trpc/client';
 import { canManageRealm, useCurrentRealm } from '@/lib/use-current-realm';
+import type { RealmRole } from '@app-builder/shared';
 
 /* ── Providers ───────────────────────────────────────────── */
 
@@ -58,13 +59,23 @@ export function AIProvidersPanel() {
     return <Loader2 className="h-6 w-6 animate-spin text-foreground-muted" />;
   }
   // Keyed so switching Realms drops the previous Realm's open dialogs.
-  return (
-    <RealmProviders key={realm.id} realmId={realm.id} canManage={canManageRealm(realm.role)} />
-  );
+  return <RealmProviders key={realm.id} realmId={realm.id} role={realm.role} />;
 }
 
-/** The current Realm's keys. Everyone sees what is connected; Owner/Admin change it. */
-function RealmProviders({ realmId, canManage }: { realmId: string; canManage: boolean }) {
+const INTRO: Record<RealmRole, string> = {
+  OWNER:
+    'Everyone in this Realm builds with these keys. They are encrypted and only sent to the provider.',
+  ADMIN:
+    'Everyone in this Realm builds with these keys. You can change the ones you add; the owner can change any.',
+  MEMBER: 'Everyone in this Realm builds with these keys. Only owners and admins can add them.',
+};
+
+/**
+ * The current Realm's keys. Everyone sees what is connected and who added it;
+ * Owner/Admin add keys, and a key is changed only by its adder or the Owner.
+ */
+function RealmProviders({ realmId, role }: { realmId: string; role: RealmRole }) {
+  const canManage = canManageRealm(role);
   const utils = trpc.useUtils();
   const keysQuery = trpc.apiKeys.list.useQuery({ realmId });
   const modelsQuery = trpc.apiKeys.listModels.useQuery(
@@ -93,11 +104,7 @@ function RealmProviders({ realmId, canManage }: { realmId: string; canManage: bo
     <div className="space-y-10">
       <section>
         <h2 className="text-2xl font-semibold tracking-[-0.035em] text-foreground">AI providers</h2>
-        <p className="mt-2 text-sm text-foreground-muted">
-          {canManage
-            ? 'Everyone in this Realm builds with these keys. They are encrypted and only sent to the provider.'
-            : 'Everyone in this Realm builds with these keys. Only owners and admins can change them.'}
-        </p>
+        <p className="mt-2 text-sm text-foreground-muted">{INTRO[role]}</p>
 
         {keysQuery.isLoading ? (
           <div className="flex justify-center py-12">
@@ -118,8 +125,9 @@ function RealmProviders({ realmId, canManage }: { realmId: string; canManage: bo
                 <ProviderRow
                   key={provider.id}
                   provider={provider}
+                  apiKey={keyFor(provider.id)}
                   status={statusFor(provider.id)}
-                  canManage={canManage}
+                  canAdd={canManage}
                   onConnect={() => setConnecting(provider)}
                   onManage={() => setManaging(provider)}
                 />
@@ -156,29 +164,43 @@ function RealmProviders({ realmId, canManage }: { realmId: string; canManage: bo
 
 /* ── Row ─────────────────────────────────────────────────── */
 
+/** Who added a key, for everyone in the Realm: their account is the one builds use. */
+function addedByLabel(key: { addedBy: string; addedByYou: boolean }): string {
+  return `Added by ${key.addedByYou ? 'you' : key.addedBy}`;
+}
+
 function ProviderRow({
   provider,
+  apiKey,
   status,
-  canManage,
+  canAdd,
   onConnect,
   onManage,
 }: {
   provider: ProviderInfo;
+  apiKey?: { addedBy: string; addedByYou: boolean; canManage: boolean };
   status: RowStatus;
-  canManage: boolean;
+  /** Owner/Admin may connect a provider nobody has connected yet. */
+  canAdd: boolean;
   onConnect: () => void;
   onManage: () => void;
 }) {
   const mark = markFor(provider.name);
+  // A connected key is changed only by whoever added it, or the Owner.
+  const actionable = apiKey ? apiKey.canManage : canAdd;
 
   return (
     <li className="flex min-h-16 items-center gap-3 px-4 py-3 sm:px-5">
       {mark && <ProviderMark d={mark} className="h-[18px] w-[18px] text-foreground" />}
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium text-foreground">{provider.name}</p>
-        <StatusLine status={status} isOllama={provider.id === 'ollama'} />
+        <StatusLine
+          status={status}
+          isOllama={provider.id === 'ollama'}
+          addedBy={apiKey && addedByLabel(apiKey)}
+        />
       </div>
-      {canManage && <RowAction status={status} onConnect={onConnect} onManage={onManage} />}
+      {actionable && <RowAction status={status} onConnect={onConnect} onManage={onManage} />}
     </li>
   );
 }
@@ -213,8 +235,17 @@ function RowAction({
   );
 }
 
-function StatusLine({ status, isOllama }: { status: RowStatus; isOllama: boolean }) {
+function StatusLine({
+  status,
+  isOllama,
+  addedBy,
+}: {
+  status: RowStatus;
+  isOllama: boolean;
+  addedBy?: string;
+}) {
   const base = 'mt-0.5 flex items-center gap-1.5 text-xs text-foreground-muted';
+  const by = addedBy ? ` · ${addedBy}` : '';
   switch (status.kind) {
     case 'disconnected':
       return <p className={base}>Not connected</p>;
@@ -222,7 +253,7 @@ function StatusLine({ status, isOllama }: { status: RowStatus; isOllama: boolean
       return (
         <p className={base}>
           <Loader2 aria-hidden className="h-3 w-3 animate-spin" />
-          Checking connection
+          Checking connection{by}
         </p>
       );
     case 'connected':
@@ -230,6 +261,7 @@ function StatusLine({ status, isOllama }: { status: RowStatus; isOllama: boolean
         <p className={base}>
           <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-success" />
           Connected · {status.models} {status.models === 1 ? 'model' : 'models'}
+          {by}
         </p>
       );
     case 'error':
@@ -237,6 +269,7 @@ function StatusLine({ status, isOllama }: { status: RowStatus; isOllama: boolean
         <p className={base}>
           <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-error" />
           {isOllama ? 'Server unreachable' : 'Key invalid'}
+          {by}
         </p>
       );
   }
@@ -566,14 +599,15 @@ function ImageGenerationSection({ realmId, canManage }: { realmId: string; canMa
             {config ? (
               <>
                 <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
-                Configured · {config.model}
+                Configured · {config.model} · {addedByLabel(config)}
               </>
             ) : (
               'Not configured'
             )}
           </p>
         </div>
-        {canManage &&
+        {/* Anyone who manages keys may set one up; only its adder or the Owner change it. */}
+        {(config ? config.canManage : canManage) &&
           (config ? (
             <Button variant="ghost" size="sm" onClick={openDialog}>
               Manage

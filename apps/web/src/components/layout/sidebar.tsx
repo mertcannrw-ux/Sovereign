@@ -20,10 +20,17 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { CreateRealmDialog } from '@/components/realms/create-realm-dialog';
+import { RealmInvitePrompt } from '@/components/realms/realm-invite-prompt';
+import { RealmSettingsDialog } from '@/components/realms/realm-settings-dialog';
 import { RealmMark } from '@/components/realms/realm-mark';
 import { initials } from '@/lib/initials';
 import { isTypingTarget } from '@/lib/keyboard';
-import { useCurrentRealm } from '@/lib/use-current-realm';
+import {
+  onOpenRealmSettings,
+  openRealmSettings,
+  useCurrentRealm,
+  type RealmSettingsSection,
+} from '@/lib/use-current-realm';
 import { NewProjectIcon, ProjectsIcon, type NavIconProps } from './nav-icons';
 import {
   Settings,
@@ -416,6 +423,8 @@ export function Sidebar({ open, onClose, defaultCollapsed = false, className }: 
           </TooltipProvider>
         </aside>
       </div>
+      {/* Every signed-in page has the sidebar, so invites surface wherever you are. */}
+      <RealmInvitePrompt />
     </>
   );
 }
@@ -423,7 +432,7 @@ export function Sidebar({ open, onClose, defaultCollapsed = false, className }: 
 /**
  * The current Realm, at the top of the rail. Its menu switches Realms (which
  * changes the projects and keys shown everywhere), creates one, or opens the
- * Realm's settings.
+ * Realm's own settings in a dialog.
  */
 function RealmSwitcher({
   rail,
@@ -438,7 +447,32 @@ function RealmSwitcher({
   const pathname = usePathname();
   const { realm, realms, selectRealm } = useCurrentRealm();
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [section, setSection] = useState<RealmSettingsSection>('general');
   const name = realm?.name ?? 'Realm';
+
+  // Other pages ask for the menu at a section, e.g. a project with no key yet.
+  useEffect(
+    () =>
+      onOpenRealmSettings((next) => {
+        setSection(next);
+        setEditing(true);
+      }),
+    [],
+  );
+
+  // Stripe returns to `?realmSettings=billing&realm=<id>`: open that Realm's
+  // menu there. `checkout` stays in the URL for the billing panel to read.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('realmSettings') !== 'billing') return;
+    const realmId = url.searchParams.get('realm');
+    if (realmId) selectRealm(realmId);
+    url.searchParams.delete('realmSettings');
+    url.searchParams.delete('realm');
+    window.history.replaceState(window.history.state, '', url);
+    openRealmSettings('billing');
+  }, [selectRealm]);
 
   // A project belongs to one Realm; switching away from it leaves the project.
   const afterSwitch = () => {
@@ -490,15 +524,25 @@ function RealmSwitcher({
             <Plus className="text-foreground-muted" />
             Create Realm
           </DropdownMenuItem>
-          <DropdownMenuItem asChild>
-            <Link href="/settings?tab=members" onClick={onNavigate}>
-              <Settings className="text-foreground-muted" />
-              Realm settings
-            </Link>
+          <DropdownMenuItem
+            onSelect={() => {
+              setSection('general');
+              setEditing(true);
+            }}
+          >
+            <Settings className="text-foreground-muted" />
+            Realm settings
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
       <CreateRealmDialog open={creating} onOpenChange={setCreating} onCreated={afterSwitch} />
+      <RealmSettingsDialog
+        open={editing}
+        section={section}
+        onSectionChange={setSection}
+        onOpenChange={setEditing}
+        onGone={afterSwitch}
+      />
     </>
   );
 }

@@ -8,6 +8,7 @@ import { lockRealm } from '@/server/realm-lock';
 import { appUrl, sendEmail } from '@/server/email';
 import { checkRateLimit } from '@/server/rate-limit';
 import { cancelStripeSubscriptions, assertStripeCancellationAvailable } from '@/server/stripe';
+import type { Context } from '@/lib/trpc/context';
 import type { RealmRole } from '@app-builder/shared';
 
 // ─── Helpers ──────────────────────────────────────────────
@@ -106,6 +107,72 @@ const pendingInviteWhere = (realmId: string) => ({
   status: 'PENDING' as const,
   expiresAt: { gt: new Date() },
 });
+
+/** What answering an invite needs from the tRPC context, signed in. */
+type InviteeContext = Pick<Context, 'db' | 'ipHash'> & { user: { id: string } };
+
+/**
+ * The caller's address, but only when it is verified. Password sign-ups do not
+ * verify theirs, so whoever registers an address first could otherwise be
+ * shown, and accept, invites meant for its real owner. Such accounts still
+ * join through the emailed link, which only the inbox owner holds.
+ */
+async function verifiedEmail(ctx: InviteeContext): Promise<string | null> {
+  const me = await ctx.db.user.findUnique({
+    where: { id: ctx.user.id },
+    select: { email: true, emailVerified: true },
+  });
+  if (!me?.email || !me.emailVerified) return null;
+  return me.email.trim().toLowerCase();
+}
+
+/**
+ * Add the caller to the invite's Realm. The status flip is the arbiter between
+ * concurrent accepts and a concurrent revoke or decline: only the writer that
+ * moves PENDING -> ACCEPTED adds the membership. The caller has already
+ * checked that the invite is theirs.
+ */
+async function joinThroughInvite(
+  ctx: InviteeContext,
+  invite: { id: string; realmId: string; role: RealmRole },
+): Promise<{ realmId: string }> {
+  return ctx.db.$transaction(async (tx) => {
+    const accepted = await tx.realmInvite.updateMany({
+      where: { id: invite.id, status: 'PENDING', expiresAt: { gt: new Date() } },
+      data: { status: 'ACCEPTED' },
+    });
+    if (accepted.count === 0) {
+      const member = await tx.realmMember.findUnique({
+        where: { realmId_userId: { realmId: invite.realmId, userId: ctx.user.id } },
+      });
+      if (member) return { realmId: invite.realmId };
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'This invite has expired or was withdrawn. Ask for a new one.',
+      });
+    }
+
+    await tx.realmMember.upsert({
+      where: { realmId_userId: { realmId: invite.realmId, userId: ctx.user.id } },
+      create: {
+        realmId: invite.realmId,
+        userId: ctx.user.id,
+        role: invite.role === 'OWNER' ? 'MEMBER' : invite.role,
+      },
+      update: {},
+    });
+    await createAuditEvent(
+      tx,
+      ctx.user.id,
+      ctx.ipHash,
+      invite.realmId,
+      'realm.invite_accepted',
+      'realm_invite',
+      invite.id,
+    );
+    return { realmId: invite.realmId };
+  });
+}
 
 // ─── Router ───────────────────────────────────────────────
 
@@ -538,7 +605,9 @@ export const realmsRouter = router({
       if ((me?.email ?? '').toLowerCase() !== invite.email) {
         return { state: 'wrong-account' as const, email: invite.email };
       }
-      if (invite.status === 'REVOKED') return { state: 'invalid' as const };
+      if (invite.status === 'REVOKED' || invite.status === 'DECLINED') {
+        return { state: 'invalid' as const };
+      }
       if (invite.status === 'ACCEPTED') {
         return { state: 'accepted' as const, realmId: invite.realmId };
       }
@@ -562,7 +631,7 @@ export const realmsRouter = router({
       const invite = await ctx.db.realmInvite.findUnique({
         where: { tokenHash: hashInviteToken(input.token) },
       });
-      if (!invite || invite.status === 'REVOKED') {
+      if (!invite || invite.status === 'REVOKED' || invite.status === 'DECLINED') {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'This invite link is not valid.' });
       }
       const me = await ctx.db.user.findUnique({
@@ -576,56 +645,167 @@ export const realmsRouter = router({
         });
       }
 
-      // The status flip is the arbiter between concurrent accepts and a
-      // concurrent revoke: only the writer that moves PENDING -> ACCEPTED adds
-      // the membership.
-      return ctx.db.$transaction(async (tx) => {
-        const accepted = await tx.realmInvite.updateMany({
-          where: { id: invite.id, status: 'PENDING', expiresAt: { gt: new Date() } },
-          data: { status: 'ACCEPTED' },
+      return joinThroughInvite(ctx, invite);
+    }),
+
+  /**
+   * Invites waiting for the caller, for the in-app prompt. Empty unless the
+   * caller's address is verified (see `verifiedEmail`).
+   */
+  myInvites: protectedProcedure.query(async ({ ctx }) => {
+    const email = await verifiedEmail(ctx);
+    if (!email) return [];
+    const invites = await ctx.db.realmInvite.findMany({
+      where: { email, status: 'PENDING', expiresAt: { gt: new Date() } },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        role: true,
+        realm: { select: { id: true, name: true } },
+        invitedBy: { select: { name: true, email: true } },
+      },
+    });
+    return invites.map((invite) => ({
+      id: invite.id,
+      role: invite.role,
+      realmId: invite.realm.id,
+      realmName: invite.realm.name,
+      invitedBy: invite.invitedBy.name ?? invite.invitedBy.email,
+    }));
+  }),
+
+  /**
+   * Accept or decline an invite from the in-app prompt. Like `myInvites`, only
+   * for the verified owner of the invited address.
+   */
+  respondToInvite: protectedProcedure
+    .input(z.object({ inviteId: z.string().uuid(), accept: z.boolean() }))
+    .mutation(async ({ ctx, input }) => {
+      const email = await verifiedEmail(ctx);
+      const invite = email
+        ? await ctx.db.realmInvite.findUnique({ where: { id: input.inviteId } })
+        : null;
+      // One answer for a missing invite, someone else's and an unverified
+      // caller, so invite ids cannot be probed.
+      if (!invite || invite.email !== email) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'This invite is no longer available.' });
+      }
+
+      if (input.accept) {
+        const { realmId } = await joinThroughInvite(ctx, invite);
+        return { realmId, joined: true };
+      }
+
+      // Conditional write, as with revoke: an invite already accepted,
+      // withdrawn or declined stays as it is.
+      const declined = await ctx.db.realmInvite.updateMany({
+        where: { id: invite.id, status: 'PENDING' },
+        data: { status: 'DECLINED' },
+      });
+      if (declined.count === 0) {
+        throw new TRPCError({
+          code: 'CONFLICT',
+          message: 'This invite was already answered or withdrawn.',
         });
-        if (accepted.count === 0) {
-          const member = await tx.realmMember.findUnique({
-            where: { realmId_userId: { realmId: invite.realmId, userId: ctx.user.id } },
-          });
-          if (member) return { realmId: invite.realmId };
+      }
+      await createAuditEvent(
+        ctx.db,
+        ctx.user.id,
+        ctx.ipHash,
+        invite.realmId,
+        'realm.invite_declined',
+        'realm_invite',
+        invite.id,
+      );
+      return { realmId: invite.realmId, joined: false };
+    }),
+
+  /**
+   * Leave the Realm, whatever your role. The owner names who owns it next, and
+   * the handover and the leaving commit together, so the Realm is never left
+   * without an owner. A personal Realm cannot be left.
+   * Your projects stay in the Realm, as everyone's work does.
+   */
+  leave: protectedProcedure
+    .input(z.object({ realmId: z.string().uuid(), newOwnerId: z.string().uuid().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      await ctx.db.$transaction(async (tx) => {
+        // Same lock as role changes, removals and transfers.
+        await lockRealm(tx, input.realmId);
+
+        const caller = await tx.realmMember.findUnique({
+          where: { realmId_userId: { realmId: input.realmId, userId: ctx.user.id } },
+          select: { role: true, realm: { select: { type: true } } },
+        });
+        if (!caller) throw new TRPCError({ code: 'NOT_FOUND' });
+        if (caller.realm.type !== 'SHARED') {
           throw new TRPCError({
             code: 'BAD_REQUEST',
-            message: 'This invite has expired or was withdrawn. Ask for a new one.',
+            message: 'Your personal Realm cannot be left.',
           });
         }
 
-        await tx.realmMember.upsert({
-          where: { realmId_userId: { realmId: invite.realmId, userId: ctx.user.id } },
-          create: {
-            realmId: invite.realmId,
-            userId: ctx.user.id,
-            role: invite.role === 'OWNER' ? 'MEMBER' : invite.role,
-          },
-          update: {},
+        if (caller.role === 'OWNER') {
+          if (!input.newOwnerId || input.newOwnerId === ctx.user.id) {
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'Choose who owns the Realm after you leave.',
+            });
+          }
+          const next = await tx.realmMember.findUnique({
+            where: { realmId_userId: { realmId: input.realmId, userId: input.newOwnerId } },
+          });
+          if (!next) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'That person is not a member.' });
+          }
+          await tx.realmMember.update({
+            where: { realmId_userId: { realmId: input.realmId, userId: input.newOwnerId } },
+            data: { role: 'OWNER' },
+          });
+          await tx.realm.update({
+            where: { id: input.realmId },
+            data: { ownerId: input.newOwnerId },
+          });
+          await createAuditEvent(
+            tx,
+            ctx.user.id,
+            ctx.ipHash,
+            input.realmId,
+            'realm.ownership_transferred',
+            'realm',
+            input.realmId,
+            { fromUserId: ctx.user.id, toUserId: input.newOwnerId },
+          );
+        }
+
+        await tx.realmMember.delete({
+          where: { realmId_userId: { realmId: input.realmId, userId: ctx.user.id } },
         });
         await createAuditEvent(
           tx,
           ctx.user.id,
           ctx.ipHash,
-          invite.realmId,
-          'realm.invite_accepted',
-          'realm_invite',
-          invite.id,
+          input.realmId,
+          'realm.member_left',
+          'realm_member',
+          ctx.user.id,
+          { role: caller.role },
         );
-        return { realmId: invite.realmId };
       });
+      return { success: true as const };
     }),
 
   /**
-   * Remove someone from the Realm. Owner/Admin; the owner cannot be removed.
-   * Members may remove themselves (leave) without an admin.
+   * Remove someone else from the Realm. Owner/Admin; the owner cannot be
+   * removed. To remove yourself, `leave`.
    * Their projects stay in the Realm, as everyone's work does.
    */
   removeMember: protectedProcedure
     .input(z.object({ realmId: z.string().uuid(), userId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
-      const isSelf = input.userId === ctx.user.id;
+      if (input.userId === ctx.user.id) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Leave the Realm instead.' });
+      }
 
       await ctx.db.$transaction(async (tx) => {
         // Serialize with role changes and transfers: the guards below must read
@@ -637,7 +817,7 @@ export const realmsRouter = router({
           select: { role: true },
         });
         if (!caller) throw new TRPCError({ code: 'NOT_FOUND' });
-        if (!hasRealmRole(caller.role, isSelf ? 'MEMBER' : 'ADMIN')) {
+        if (!hasRealmRole(caller.role, 'ADMIN')) {
           throw new TRPCError({ code: 'FORBIDDEN' });
         }
 
@@ -645,16 +825,10 @@ export const realmsRouter = router({
           where: { realmId_userId: { realmId: input.realmId, userId: input.userId } },
         });
         if (!membership) throw new TRPCError({ code: 'NOT_FOUND' });
-        if (!isSelf && !canManageMember(caller.role, membership.role)) {
+        if (!canManageMember(caller.role, membership.role)) {
           throw new TRPCError({
             code: 'FORBIDDEN',
             message: 'The owner cannot be removed. Transfer ownership first.',
-          });
-        }
-        if (isSelf && membership.role === 'OWNER') {
-          throw new TRPCError({
-            code: 'FORBIDDEN',
-            message: 'Transfer ownership or delete the Realm instead of leaving it.',
           });
         }
 
@@ -676,9 +850,8 @@ export const realmsRouter = router({
     }),
 
   /**
-   * Make someone an Admin or a Member. Owner/Admin; the owner's role only
-   * changes through a transfer. Passing your own id with `MEMBER` demotes you
-   * to a member; leaving the Realm is `removeMember`.
+   * Make someone else an Admin or a Member. Owner/Admin; the owner's role only
+   * changes through a transfer, and nobody changes their own.
    */
   updateMemberRole: protectedProcedure
     .input(
@@ -689,6 +862,13 @@ export const realmsRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      if (input.userId === ctx.user.id) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'You cannot change your own role.',
+        });
+      }
+
       return ctx.db.$transaction(async (tx) => {
         // Same lock as removal/transfer, and every check runs *after* it: an
         // ownership transfer that commits between a pre-lock read and this

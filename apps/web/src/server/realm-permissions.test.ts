@@ -32,6 +32,7 @@ const PROJECT = '30000000-0000-4000-8000-000000000001';
 type Role = 'OWNER' | 'ADMIN' | 'MEMBER';
 
 const RAW_KEY = 'sk-live-0123456789abcdefghijklmnop';
+const ADMIN_RAW_KEY = 'sk-ant-9876543210zyxwvutsrqponmlk';
 const TEST_KEY = '0'.repeat(64);
 const originalKey = process.env.API_KEY_ENCRYPTION_KEY;
 
@@ -53,6 +54,19 @@ function world() {
       baseUrl: 'https://api.openai.com/v1',
       createdAt: new Date(),
       lastUsedAt: null,
+      user: { name: 'Olivia', email: 'owner@example.com' },
+    },
+    {
+      id: 'key-2',
+      realmId: REALM,
+      userId: ADMIN_ID,
+      provider: 'anthropic',
+      encryptedKey: encryptApiKey(ADMIN_RAW_KEY),
+      label: null,
+      baseUrl: null,
+      createdAt: new Date(),
+      lastUsedAt: null,
+      user: { name: 'Adam', email: 'admin@example.com' },
     },
   ];
 
@@ -89,7 +103,12 @@ function world() {
       findMany: vi.fn(async (args: { where: { realmId: string } }) =>
         keys.filter((key) => key.realmId === args.where.realmId),
       ),
-      findFirst: vi.fn(async () => keys[0]),
+      findFirst: vi.fn(
+        async (args: { where: { id?: string; provider?: string } }) =>
+          keys.find((key) =>
+            args.where.id ? key.id === args.where.id : key.provider === args.where.provider,
+          ) ?? null,
+      ),
       delete: vi.fn(async () => ({})),
     },
     project: {
@@ -150,19 +169,35 @@ afterAll(() => {
 });
 
 describe('raw API keys never reach the client', () => {
-  it('lets a member see that a key exists, but not the key, its mask or its endpoint', async () => {
+  it('lets a member see which keys exist and who added them, but not a key, mask or endpoint', async () => {
     const keys = await as(MEMBER_ID).apiKeys.list({ realmId: REALM });
-    expect(keys).toHaveLength(1);
-    expect(keys[0]).toMatchObject({ provider: 'openai', maskedKey: null, baseUrl: null });
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toMatchObject({
+      provider: 'openai',
+      addedBy: 'Olivia',
+      canManage: false,
+      maskedKey: null,
+      baseUrl: null,
+    });
     const sent = JSON.stringify(keys);
     expect(sent).not.toContain(RAW_KEY);
+    expect(sent).not.toContain(ADMIN_RAW_KEY);
     expect(sent).not.toContain('encryptedKey');
   });
 
-  it('shows an admin only the masked key, never the plaintext', async () => {
-    const [key] = await as(ADMIN_ID).apiKeys.list({ realmId: REALM });
-    expect(key?.maskedKey).toBe('sk-...nop');
-    expect(JSON.stringify(key)).not.toContain(RAW_KEY);
+  it("shows an admin the mask of their own key only, never another's or a plaintext", async () => {
+    const [ownerKey, adminKey] = await as(ADMIN_ID).apiKeys.list({ realmId: REALM });
+    expect(ownerKey).toMatchObject({ canManage: false, maskedKey: null, baseUrl: null });
+    expect(adminKey).toMatchObject({ canManage: true, addedByYou: true, maskedKey: 'sk-...mlk' });
+    const sent = JSON.stringify([ownerKey, adminKey]);
+    expect(sent).not.toContain(RAW_KEY);
+    expect(sent).not.toContain(ADMIN_RAW_KEY);
+  });
+
+  it("shows the owner every key's mask", async () => {
+    const keys = await as(OWNER_ID).apiKeys.list({ realmId: REALM });
+    expect(keys.map((key) => key.maskedKey)).toEqual(['sk-...nop', 'sk-...mlk']);
+    expect(keys.every((key) => key.canManage)).toBe(true);
   });
 
   it('does not let a member add, test or remove keys', async () => {
@@ -174,6 +209,32 @@ describe('raw API keys never reach the client', () => {
     await expectCode(member.apiKeys.test({ realmId: REALM, id: 'key-1' }), 'FORBIDDEN');
     await expectCode(member.apiKeys.delete({ realmId: REALM, id: 'key-1' }), 'FORBIDDEN');
     expect(member.db.apiKey.delete).not.toHaveBeenCalled();
+  });
+});
+
+describe('a key is changed only by whoever added it, or the owner', () => {
+  it("does not let an admin replace or remove the owner's key", async () => {
+    const admin = as(ADMIN_ID);
+    await expectCode(
+      admin.apiKeys.save({ realmId: REALM, provider: 'openai', key: 'sk-mine' }),
+      'FORBIDDEN',
+    );
+    await expectCode(admin.apiKeys.delete({ realmId: REALM, id: 'key-1' }), 'FORBIDDEN');
+    expect(admin.db.apiKey.delete).not.toHaveBeenCalled();
+  });
+
+  it('lets an admin remove their own key', async () => {
+    const admin = as(ADMIN_ID);
+    await expect(admin.apiKeys.delete({ realmId: REALM, id: 'key-2' })).resolves.toEqual({
+      success: true,
+    });
+    expect(admin.db.apiKey.delete).toHaveBeenCalledWith({ where: { id: 'key-2' } });
+  });
+
+  it("lets the owner remove an admin's key", async () => {
+    const owner = as(OWNER_ID);
+    await owner.apiKeys.delete({ realmId: REALM, id: 'key-2' });
+    expect(owner.db.apiKey.delete).toHaveBeenCalledWith({ where: { id: 'key-2' } });
   });
 });
 
@@ -217,9 +278,10 @@ describe('a member cannot change roles or membership', () => {
       member.realms.updateMemberRole({ realmId: REALM, userId: ADMIN_ID, role: 'MEMBER' }),
       'FORBIDDEN',
     );
+    // Nobody changes their own role, whatever it is.
     await expectCode(
       member.realms.updateMemberRole({ realmId: REALM, userId: MEMBER_ID, role: 'ADMIN' }),
-      'FORBIDDEN',
+      'BAD_REQUEST',
     );
     await expectCode(member.realms.removeMember({ realmId: REALM, userId: ADMIN_ID }), 'FORBIDDEN');
     await expectCode(
