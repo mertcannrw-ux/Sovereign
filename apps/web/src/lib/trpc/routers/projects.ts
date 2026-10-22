@@ -319,8 +319,7 @@ export const projectsRouter = router({
           return { success: true as const };
         }
 
-        await tx
-          .$executeRaw`UPDATE "projects" SET "sort_order" = ${position} WHERE "id" = ${input.id} AND "realm_id" = ${input.realmId}`;
+        await tx.$executeRaw`UPDATE "projects" SET "sort_order" = ${position} WHERE "id" = ${input.id} AND "realm_id" = ${input.realmId}`;
         return { success: true as const };
       });
     }),
