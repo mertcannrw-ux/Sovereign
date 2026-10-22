@@ -833,13 +833,7 @@ function DeleteAccountRow({ email, hasPassword }: { email: string; hasPassword: 
   );
 }
 
-function DeleteAccountForm({
-  email,
-  hasPassword,
-}: {
-  email: string;
-  hasPassword: boolean;
-}) {
+function DeleteAccountForm({ email, hasPassword }: { email: string; hasPassword: boolean }) {
   const summary = trpc.account.deletionSummary.useQuery();
   const deleteAccount = trpc.account.deleteAccount.useMutation(inline);
   const [typed, setTyped] = useState('');

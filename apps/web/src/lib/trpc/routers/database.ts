@@ -186,7 +186,10 @@ export const databaseRouter = router({
         // Surface constraint/identifier problems without echoing the whole
         // driver error (which can include the schema name and SQL).
         if (/already exists|duplicate key/i.test(message)) {
-          throw new TRPCError({ code: 'CONFLICT', message: 'A table with that name already exists.' });
+          throw new TRPCError({
+            code: 'CONFLICT',
+            message: 'A table with that name already exists.',
+          });
         }
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
@@ -272,7 +275,11 @@ export const databaseRouter = router({
             `SELECT * FROM (${statement}) AS _q LIMIT 501`,
           );
         });
-        return { rows: rows.slice(0, 500), rowCount: Math.min(rows.length, 500), truncated: rows.length > 500 };
+        return {
+          rows: rows.slice(0, 500),
+          rowCount: Math.min(rows.length, 500),
+          truncated: rows.length > 500,
+        };
       } catch (err) {
         console.error('Failed to execute query:', err);
         throw new TRPCError({

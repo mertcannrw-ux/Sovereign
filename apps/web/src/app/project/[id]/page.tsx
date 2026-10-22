@@ -560,7 +560,7 @@ function ProjectWorkspace() {
     return (
       <div className="flex h-screen flex-col items-center justify-center gap-3 bg-background px-6 text-center">
         <h1 className="text-lg font-bold text-foreground">This project can&apos;t be opened</h1>
-        <p className="max-w-md text-sm text-muted-foreground">
+        <p className="text-muted-foreground max-w-md text-sm">
           {code === 'FORBIDDEN' || code === 'UNAUTHORIZED'
             ? 'Your account no longer has access to this project. If you were removed from its Realm, ask an owner to invite you again.'
             : 'Something went wrong while loading it. Try again, or go back to your projects.'}

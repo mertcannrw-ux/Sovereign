@@ -30,7 +30,10 @@ export function validateGeneratePayload(body: unknown): GeneratePayloadValidatio
   const modelProvider = stringField(candidate.modelProvider, 64);
   const modelName = stringField(candidate.modelName, 200);
   if (candidate.message !== undefined && message === undefined) {
-    return { ok: false, error: `Message must be a string of at most ${MAX_MESSAGE_CHARS} characters` };
+    return {
+      ok: false,
+      error: `Message must be a string of at most ${MAX_MESSAGE_CHARS} characters`,
+    };
   }
 
   const directionResponse = candidate.directionResponse;

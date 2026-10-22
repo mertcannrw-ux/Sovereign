@@ -61,8 +61,7 @@ export const githubRouter = router({
     ) {
       throw new TRPCError({
         code: 'PRECONDITION_FAILED',
-        message:
-          'GitHub is your only sign-in method. Add a password before disconnecting it.',
+        message: 'GitHub is your only sign-in method. Add a password before disconnecting it.',
       });
     }
 
