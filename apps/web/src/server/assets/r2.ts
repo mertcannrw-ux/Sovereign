@@ -15,6 +15,18 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 // `/api/assets` route, which verifies both the DB record and project ownership.
 export const LOCAL_ASSET_ROOT = path.join(process.cwd(), '.private-assets');
 
+/**
+ * Resolve an object key to a path under LOCAL_ASSET_ROOT, refusing any key
+ * (e.g. one containing `..`) that would escape it.
+ */
+function resolveLocalAssetPath(objectKey: string): string {
+  const resolved = path.normalize(path.join(LOCAL_ASSET_ROOT, objectKey));
+  if (!resolved.startsWith(LOCAL_ASSET_ROOT + path.sep)) {
+    throw new Error(`Asset key escapes the local asset root: ${objectKey}`);
+  }
+  return resolved;
+}
+
 export interface R2ConfigStatus {
   /**
    * True only when durable object storage (R2/S3) is fully configured.
@@ -165,7 +177,7 @@ export async function uploadToR2(opts: {
   const key = opts.objectKey.startsWith('/') ? opts.objectKey.slice(1) : opts.objectKey;
 
   if (status.storageMode === 'local') {
-    const fullPath = path.join(LOCAL_ASSET_ROOT, key);
+    const fullPath = resolveLocalAssetPath(key);
     await fs.promises.mkdir(path.dirname(fullPath), { recursive: true });
     await fs.promises.writeFile(fullPath, opts.bytes);
   } else {
@@ -215,7 +227,7 @@ export async function deleteFromR2(objectKey: string): Promise<void> {
   const status = getR2ConfigStatus();
   if (status.storageMode === 'local') {
     const relativePath = objectKey.startsWith('/') ? objectKey.slice(1) : objectKey;
-    const fullPath = path.join(LOCAL_ASSET_ROOT, relativePath);
+    const fullPath = resolveLocalAssetPath(relativePath);
     await fs.promises.unlink(fullPath).catch((err) => {
       // ENOENT just means the object was already gone - fine. Any other error
       // (permissions, I/O) must propagate so the caller does not delete the DB
