@@ -198,6 +198,8 @@ export async function listProjectAssetObjectKeys(projectIds: string[]): Promise<
   return assets.map((asset) => asset.objectKey);
 }
 
+const ASSET_DELETE_BATCH_SIZE = 25;
+
 /**
  * Delete stored objects by key. Call only after the owning rows have committed:
  * object deletion is best-effort per key - a transient R2 failure must not
@@ -209,8 +211,6 @@ export async function listProjectAssetObjectKeys(projectIds: string[]): Promise<
  * hits S3 rate limits, and abandons the rest of the batch as soon as one call
  * throws.
  */
-const ASSET_DELETE_BATCH_SIZE = 25;
-
 export async function deleteAssetObjects(objectKeys: readonly string[]): Promise<void> {
   for (let start = 0; start < objectKeys.length; start += ASSET_DELETE_BATCH_SIZE) {
     await Promise.all(

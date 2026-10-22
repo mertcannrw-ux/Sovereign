@@ -78,12 +78,6 @@ describe('expireOpenCheckoutSessions', () => {
     expect(stripe.checkout.sessions.expire.mock.calls).toEqual([['cs_1'], ['cs_2']]);
   });
 
-  it('leaves the session it just created payable', async () => {
-    const stripe = fakeStripe({ sessions: [{ id: 'cs_1' }, { id: 'cs_2' }] });
-    await expireOpenCheckoutSessions(stripe, 'cus_1', 'cs_2');
-    expect(stripe.checkout.sessions.expire.mock.calls).toEqual([['cs_1']]);
-  });
-
   it('keeps going when a session completed or expired in the meantime', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const expire = vi

@@ -21,6 +21,7 @@ import {
 } from '@/server/deploy/user-apps';
 import { Prisma } from '@prisma-generated/prisma/client';
 import { lockRealm } from '@/server/realm-lock';
+import { countInFlightDeployments } from '@/server/deploy/in-flight';
 
 function assertDeployConfigured(): void {
   if (!isDeployConfigured()) {
@@ -198,13 +199,7 @@ export const deploymentsRouter = router({
             // publishes delete each other's chunks and leave the live app
             // referencing missing assets.
             await lockRealm(tx, project.realmId);
-            const inFlight = await tx.deployment.count({
-              where: {
-                projectId: project.id,
-                status: 'DEPLOYING',
-                createdAt: { gte: new Date(Date.now() - 10 * 60 * 1000) },
-              },
-            });
+            const inFlight = await countInFlightDeployments(tx, project.id);
             if (inFlight > 0) {
               throw new TRPCError({
                 code: 'CONFLICT',
@@ -320,13 +315,7 @@ export const deploymentsRouter = router({
       // mid-upload let the deploy finish afterwards and put it back online.
       const liveDeploymentIds = await ctx.db.$transaction(async (tx) => {
         await lockRealm(tx, project.realmId);
-        const inFlight = await tx.deployment.count({
-          where: {
-            projectId: project.id,
-            status: 'DEPLOYING',
-            createdAt: { gte: new Date(Date.now() - 10 * 60 * 1000) },
-          },
-        });
+        const inFlight = await countInFlightDeployments(tx, project.id);
         if (inFlight > 0) {
           throw new TRPCError({
             code: 'CONFLICT',

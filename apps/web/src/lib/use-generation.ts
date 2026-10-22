@@ -143,7 +143,9 @@ export interface UseGenerationResult {
  * retry briefly instead of showing a failure for a run the user just stopped.
  */
 const STOP_RESEND_WINDOW_MS = 15_000;
-const STOP_RESEND_DELAYS_MS = [200, 400, 800, 1_200] as const;
+// About 10 s in total: the lease is normally freed within a poll tick of the
+// abort, but a run settling a slow provider call or DB write can take longer.
+const STOP_RESEND_DELAYS_MS = [200, 400, 800, 1_200, 1_600, 2_400, 3_400] as const;
 
 function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) {

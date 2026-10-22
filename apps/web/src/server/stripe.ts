@@ -157,25 +157,20 @@ export async function getCustomerSubscriptionState(
 }
 
 /**
- * Expire the customer's open Checkout Sessions so at most one can ever be
- * paid: called after creating a session and after one completes (stale tabs can
- * no longer subscribe a second time).
- *
- * `keepSessionId` is the session just created. It must be excluded: a retry
- * inside the same idempotency bucket replays that session, so expiring it
- * would hand the caller a dead URL.
+ * Expire the customer's open Checkout Sessions once one of them completes, so
+ * stale tabs can no longer subscribe a second time. Called from the webhook
+ * only: expiring while creating a session made concurrent checkouts expire
+ * each other.
  */
 export async function expireOpenCheckoutSessions(
   stripe: Stripe,
   customerId: string,
-  keepSessionId?: string,
 ): Promise<void> {
   for await (const session of stripe.checkout.sessions.list({
     customer: customerId,
     status: 'open',
     limit: 100,
   })) {
-    if (session.id === keepSessionId) continue;
     try {
       await stripe.checkout.sessions.expire(session.id);
     } catch (error) {
