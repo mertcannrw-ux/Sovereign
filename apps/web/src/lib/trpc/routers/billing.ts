@@ -50,21 +50,37 @@ export const billingRouter = router({
     .input(z.object({ realmId: z.string().uuid() }))
     .query(async ({ ctx, input }) => {
       const { role } = await requireRealmRole(ctx, input.realmId, 'MEMBER');
-      const subscription = await ctx.db.subscription.findUnique({
-        where: { realmId: input.realmId },
-        select: {
-          status: true,
-          priceId: true,
-          stripeSubscriptionId: true,
-          currentPeriodEnd: true,
-          cancelAtPeriodEnd: true,
-        },
-      });
+      const [subscription, activeProjects, interests] = await Promise.all([
+        ctx.db.subscription.findUnique({
+          where: { realmId: input.realmId },
+          select: {
+            status: true,
+            priceId: true,
+            stripeSubscriptionId: true,
+            currentPeriodEnd: true,
+            cancelAtPeriodEnd: true,
+          },
+        }),
+        // Same definition as assertCanCreateProject: every project that has
+        // not been archived counts against the plan.
+        ctx.db.project.count({
+          where: { realmId: input.realmId, status: { not: 'ARCHIVED' } },
+        }),
+        ctx.db.planInterest.findMany({
+          where: { userId: ctx.user.id, plan: { in: ['pro', 'business'] } },
+          select: { plan: true },
+        }),
+      ]);
       const plan = planFromSubscription(subscription, getPlanPrices());
+      const interestedPlans = interests
+        .map((row) => row.plan)
+        .filter((plan): plan is 'pro' | 'business' => plan === 'pro' || plan === 'business');
 
       return {
         plan,
         limits: PLAN_LIMITS[plan],
+        activeProjects,
+        interestedPlans,
         status: subscription?.status ?? null,
         currentPeriodEnd: subscription?.currentPeriodEnd ?? null,
         cancelAtPeriodEnd: subscription?.cancelAtPeriodEnd ?? false,
