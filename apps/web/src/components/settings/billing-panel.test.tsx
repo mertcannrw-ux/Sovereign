@@ -27,7 +27,9 @@ vi.mock('@/lib/trpc/client', () => ({
         useMutation: () => ({ mutateAsync: mocks.checkout, isPending: false }),
       },
       createPortalSession: { useMutation: () => ({ mutateAsync: vi.fn(), isPending: false }) },
-      registerInterest: { useMutation: () => ({ mutate: mocks.registerInterest }) },
+      registerInterest: {
+        useMutation: () => ({ mutate: (input: unknown) => mocks.registerInterest(input) }),
+      },
     },
   },
 }));
@@ -36,6 +38,8 @@ function billing(overrides: Record<string, unknown> = {}) {
   return {
     plan: 'free',
     limits: { activeProjects: 3 },
+    activeProjects: 1,
+    interestedPlans: [],
     status: null,
     currentPeriodEnd: null,
     cancelAtPeriodEnd: false,
@@ -55,30 +59,34 @@ beforeEach(() => {
 });
 
 describe('BillingPanel before paid plans launch', () => {
-  it('labels the paid plans as coming soon without opening anything', () => {
+  it('labels both paid plans as coming soon', () => {
     render(<BillingPanel />);
     expect(screen.getAllByText('Coming soon')).toHaveLength(2);
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Notify me' })).toHaveLength(2);
     expect(mocks.registerInterest).not.toHaveBeenCalled();
   });
 
-  it('records interest and shows the coming soon window when subscribe is pressed', async () => {
+  it('records interest and confirms it on the plan row', async () => {
     render(<BillingPanel />);
-    await userEvent.click(screen.getByRole('button', { name: 'Upgrade to Pro' }));
+    await userEvent.click(screen.getAllByRole('button', { name: 'Notify me' })[0]!);
 
     expect(mocks.registerInterest).toHaveBeenCalledWith({ plan: 'pro' });
     expect(mocks.checkout).not.toHaveBeenCalled();
-    const dialog = screen.getByRole('dialog');
-    expect(dialog).toHaveTextContent('Pro is coming soon');
+    expect(screen.getByRole('button', { name: /You'll be notified/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Notify me' })).toBeEnabled();
+  });
 
-    await userEvent.click(screen.getByRole('button', { name: 'Got it' }));
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  it('restores the notified state saved on the server', () => {
+    mocks.billing = billing({ interestedPlans: ['pro'] });
+    render(<BillingPanel />);
+    expect(screen.getByRole('button', { name: /You'll be notified/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Notify me' })).toBeEnabled();
   });
 
   it('lets any member register interest, not only owners and admins', async () => {
     mocks.billing = billing({ canManage: false, billingConfigured: false });
     render(<BillingPanel />);
-    const button = screen.getByRole('button', { name: 'Upgrade to Business' });
+    const button = screen.getAllByRole('button', { name: 'Notify me' })[1]!;
     expect(button).toBeEnabled();
     await userEvent.click(button);
     expect(mocks.registerInterest).toHaveBeenCalledWith({ plan: 'business' });
@@ -86,18 +94,53 @@ describe('BillingPanel before paid plans launch', () => {
   });
 });
 
+describe('BillingPanel usage meter', () => {
+  it('shows the count and meter below the limit without a warning', () => {
+    render(<BillingPanel />);
+    const meter = screen.getByRole('progressbar', { name: 'Active projects' });
+    expect(meter).toHaveAttribute('aria-valuenow', '1');
+    expect(meter).toHaveAttribute('aria-valuemax', '3');
+    expect(screen.getByText('1 of 3')).toBeInTheDocument();
+    expect(screen.queryByText(/Limit reached/)).not.toBeInTheDocument();
+  });
+
+  it('warns at the limit and links to the projects list', () => {
+    mocks.billing = billing({ activeProjects: 3 });
+    render(<BillingPanel />);
+    const meter = screen.getByRole('progressbar', { name: 'Active projects' });
+    expect(meter).toHaveAttribute('aria-valuenow', '3');
+    expect(screen.getByText('3 of 3')).toBeInTheDocument();
+    const link = screen.getByRole('link', { name: 'Archive a project' });
+    expect(link).toHaveAttribute('href', '/dashboard');
+    expect(link.closest('p')).toHaveTextContent('Limit reached.');
+  });
+});
+
 describe('BillingPanel after paid plans launch', () => {
-  it('starts checkout instead of recording interest', async () => {
-    mocks.billing = billing({ paidPlansAvailable: true });
+  it('starts checkout and keeps both brands outlined below the limit', async () => {
+    mocks.billing = billing({ paidPlansAvailable: true, activeProjects: 1 });
     const assign = vi.fn();
     vi.stubGlobal('location', { ...window.location, assign, search: '' });
     render(<BillingPanel />);
     expect(screen.queryByText('Coming soon')).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Upgrade to Pro' }));
+    const pro = screen.getByRole('button', { name: 'Upgrade to Pro' });
+    const business = screen.getByRole('button', { name: 'Upgrade to Business' });
+    expect(pro).not.toHaveClass('bg-primary');
+    expect(business).not.toHaveClass('bg-primary');
+
+    await userEvent.click(pro);
     expect(mocks.checkout).toHaveBeenCalledWith({ realmId: 'realm-1', plan: 'pro' });
     expect(mocks.registerInterest).not.toHaveBeenCalled();
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     vi.unstubAllGlobals();
+  });
+
+  it('makes only Pro primary at the limit', () => {
+    mocks.billing = billing({ paidPlansAvailable: true, activeProjects: 3 });
+    render(<BillingPanel />);
+    expect(screen.getByRole('button', { name: 'Upgrade to Pro' })).toHaveClass('bg-primary');
+    expect(screen.getByRole('button', { name: 'Upgrade to Business' })).not.toHaveClass(
+      'bg-primary',
+    );
   });
 });
